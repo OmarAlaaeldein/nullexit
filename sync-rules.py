@@ -23,6 +23,7 @@ def main():
             black_list.remove(domain)
 
     # Generate AdGuard Syntax
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     with open(OUTPUT_PATH, 'w') as f:
         f.write("! Custom Compiled Rules (Auto-Generated)\n")
         

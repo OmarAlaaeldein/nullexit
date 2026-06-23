@@ -122,7 +122,7 @@ This gateway includes a Python utility to let you easily manage your own custom 
 1. Add domains you want to block to `black_list.txt` (e.g., `doubleclick.net`).
 2. Add domains you want to forcefully allow to `white_list.txt` (e.g., `weather-analytics-events.apple.com`).
 3. Run `python3 sync-rules.py` in your terminal. This script automatically resolves any contradictions (whitelists take priority) and compiles the rules into `adguard/work/userfilters/compiled_rules.txt`.
-4. Inside AdGuard Home, navigate to **Filters -> DNS Blocklists -> Add custom list** and point the URL to `/opt/adguardhome/work/userfilters/compiled_rules.txt`.
+4. Inside AdGuard Home, navigate to **Filters -> DNS Blocklists -> Add custom list** and point the URL to `file:///opt/adguardhome/work/userfilters/compiled_rules.txt`.
 
 ## 10. Future Work
 - **Native Linux Deployment:** Test and benchmark the architecture on a native Linux host (e.g., Raspberry Pi) to verify the native `~75MB` raw container footprint without the macOS hypervisor overhead.
