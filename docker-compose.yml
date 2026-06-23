@@ -14,8 +14,10 @@ services:
       - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
       - WIREGUARD_ENDPOINT_IP=162.159.192.1
       - WIREGUARD_ENDPOINT_PORT=2408
-      # Port Obfuscation Strategy
-      - WIREGUARD_PORT=${RANDOM_PORT:-443}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - "export WIREGUARD_PORT=$$((1024 + RANDOM % 64511)) && exec /gluetun-entrypoint"
       # MTU Fix (Critical): Prevent packet fragmentation from double-encryption
       - WIREGUARD_MTU=1280
     sysctls:
