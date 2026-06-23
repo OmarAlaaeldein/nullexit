@@ -44,3 +44,15 @@ services:
     depends_on:
       - warp
     restart: unless-stopped
+
+  routing-fix:
+    image: alpine:latest
+    container_name: routing-fix
+    network_mode: service:warp
+    cap_add:
+      - NET_ADMIN
+    command: sh -c "while true; do ip rule add to 100.64.0.0/10 lookup 52 pref 99 2>/dev/null; sleep 30; done"
+    depends_on:
+      - warp
+      - tailscale
+    restart: unless-stopped
