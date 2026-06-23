@@ -1,6 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
+cls
 
 echo Checking Gateway Status...
 docker compose ps --status running | findstr "warp" >nul
