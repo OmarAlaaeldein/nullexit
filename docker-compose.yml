@@ -16,6 +16,8 @@ services:
       - WIREGUARD_ENDPOINT_PORT=2408
       # MTU Fix (Critical): Prevent packet fragmentation from double-encryption
       - WIREGUARD_MTU=1280
+      # Split-Trust DNS: Distribute DNS queries among multiple privacy providers
+      - DOT_PROVIDERS=quad9,cloudflare
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv6.conf.all.forwarding=1
