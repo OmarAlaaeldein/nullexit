@@ -1,3 +1,5 @@
-# Add any domains you want to ALWAYS allow here.
-# Example:
-# google.com
+weather-analytics-events.apple.com
+notes-analytics-events.apple.com
+books-analytics-events.apple.com
+iadsdk.apple.com
+api-adservices.apple.com
