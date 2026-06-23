@@ -12,6 +12,8 @@ ads-api.twitter.com
 webview.unityads.unity3d.com
 data.mistat.india.xiaomi.com
 data.mistat.rus.xiaomi.com
+analyticsengine.s3.amazonaws.com
+analytics.s3.amazonaws.com
 log.byteoversea.com
 business-api.tiktok.com
 iot-eu-logser.realme.com
