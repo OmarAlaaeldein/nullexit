@@ -1,6 +1,6 @@
 services:
   warp:
-    image: qmcgaw/gluetun
+    image: qmcgaw/gluetun:v3.41.1
     container_name: warp
     cap_add:
       - NET_ADMIN
