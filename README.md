@@ -90,3 +90,6 @@ Building this required navigating intense firewall and routing conflicts between
 ## 7. Future Work
 - **Extreme Memory Starvation:** Investigate the absolute theoretical minimum memory allocation required for the Colima VM to successfully boot the Docker daemon and run this specific container stack before triggering a kernel panic (e.g., testing `256MB` or `384MB` allocations).
 - **Native Linux Deployment:** Test and benchmark the architecture on a native Linux host (e.g., Raspberry Pi) to verify the native `~75MB` raw container footprint without the macOS hypervisor overhead.
+
+## 8. Acknowledgements
+- **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTHKEY` lifecycle management entrypoint to prevent authentication crash loops.
