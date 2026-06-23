@@ -15,7 +15,7 @@ services:
       - WIREGUARD_ENDPOINT_IP=162.159.192.1
       - WIREGUARD_ENDPOINT_PORT=2408
       # Port Obfuscation Strategy
-      - WIREGUARD_PORT=443
+      - WIREGUARD_PORT=${RANDOM_PORT:-443}
       # MTU Fix (Critical): Prevent packet fragmentation from double-encryption
       - WIREGUARD_MTU=1280
     sysctls:
