@@ -98,6 +98,8 @@ This setup implements a highly secure, zero-trust "Tunnel-in-Tunnel" architectur
 
 This creates a **Double Encryption** scenario. While this inherently introduces a slight latency penalty due to the encryption overhead and geographical routing (bouncing to your home gateway before routing to the broader internet), it ensures total privacy from local ISPs, public Wi-Fi administrators, and even the host network itself.
 
+**Note on Threat Model:** The outer WARP tunnel terminates at Cloudflare. While your traffic is double-encrypted in transit to the gateway and then to the edge, you are ultimately trusting Cloudflare to route the decrypted (inner HTTPS) traffic. Cloudflare will see the destination IPs and SNIs of your requests, though the actual payload remains HTTPS encrypted.
+
 ### Threat Model & Trust Assumptions
 While this architecture effectively neutralizes local network threats (like man-in-the-middle attacks on cafe Wi-Fi) because traffic is heavily encrypted before touching a public network, it introduces a significant trust assumption:
 1. **Physical Mesh Integrity:** Your physical devices (phone, host computer) and their private keys are not compromised.
@@ -109,9 +111,17 @@ Building this required navigating intense firewall and routing conflicts between
 - **IPv6 Forwarding Bug:** Tailscale aggressively checks both IPv4 and IPv6 forwarding statuses in the kernel. If Docker disables IPv6 forwarding by default, Tailscale silently disables its Exit Node functionality. This is bypassed by explicitly setting `net.ipv6.conf.all.forwarding=1` in the Compose file.
 - **Strict Firewall Loops (The "DERP" bypass):** Gluetun's strict leak-prevention firewall (`iptables-nft`) intentionally drops unrecognized forwarded traffic. Furthermore, its policy routing forces all returning traffic out the `tun0` (WARP) interface, creating a blackhole for returning Tailscale packets. While most community setups accept degraded, slow DERP relay connections here, this architecture deploys an automated sidecar container (`routing-fix`). It persistently injects a high-priority `ip rule` (`ip rule add to 100.64.0.0/10 lookup 52 pref 99`), ensuring returning packets bypass the VPN blackhole and establish high-speed, direct P2P connections back into the Tailscale mesh.
 - **Kernel-Space vs Userspace Conflict:** Tailscale is forced into kernel-space networking (`TS_USERSPACE=false`) because userspace mode prevents the container from functioning as a true Exit Node. This can occasionally cause Gluetun's strict health-checks to flap and restart due to kernel-table modifications. This is an accepted trade-off; Docker's `restart: unless-stopped` automatically recovers it, preserving maximum throughput and Exit Node capabilities.
-- **macOS Memory Overhead (Colima):** Because macOS cannot run Linux containers natively, Colima must spin up a background Linux VM. While the actual containers (`warp`, `tailscale`, `routing-fix`) only consume roughly `~75MB` of RAM combined, the Colima VM requires a base memory allocation just to boot the Linux kernel and Docker daemon. We recommend running the VM stably at `0.5 GB` (512MB) of RAM (`colima start --memory 0.5`). Attempting to aggressively starve the VM to `0.3 GB` (300MB) will trigger an out-of-memory (`OOMKilled`) crash loop on the `warp` container during Wireguard/Unbound initialization.
+- **macOS Memory Overhead (Colima):** Because macOS cannot run Linux containers natively, Colima must spin up a background Linux VM. While the actual containers (`warp`, `tailscale`, `routing-fix`) only consume roughly `~75MB` of RAM combined, loading massive blocklists into AdGuard Home requires significant memory. We recommend running the VM stably at `0.6 GB` (614MB) of RAM (`colima start --memory 0.6`). Attempting to aggressively starve the VM to `0.3 GB` (300MB) will trigger an out-of-memory (`OOMKilled`) crash loop on the `adguardhome` container during initialization.
 
-## 9. Future Work
+## 9. Custom Ad-Blocking Rules Engine
+This gateway includes a Python utility to let you easily manage your own custom blacklists and whitelists without needing to learn strict AdGuard syntax.
+
+1. Add domains you want to block to `black_list.txt` (e.g., `doubleclick.net`).
+2. Add domains you want to forcefully allow to `white_list.txt` (e.g., `weather-analytics-events.apple.com`).
+3. Run `python3 sync-rules.py` in your terminal. This script automatically resolves any contradictions (whitelists take priority) and compiles the rules into `adguard/work/userfilters/compiled_rules.txt`.
+4. Inside AdGuard Home, navigate to **Filters -> DNS Blocklists -> Add custom list** and point the URL to `/opt/adguardhome/work/userfilters/compiled_rules.txt`.
+
+## 10. Future Work
 - **Native Linux Deployment:** Test and benchmark the architecture on a native Linux host (e.g., Raspberry Pi) to verify the native `~75MB` raw container footprint without the macOS hypervisor overhead.
 - **Post-Quantum Cryptography (PQC):** Tailscale currently relies on standard Curve25519 elliptic curve cryptography, which is theoretically vulnerable to future "harvest now, decrypt later" quantum attacks. To achieve true post-quantum resistance, future iterations of this gateway could completely eliminate the Tailscale container and replace it with a raw WireGuard mesh using [Rosenpass](https://rosenpass.eu/) to negotiate post-quantum Pre-Shared Keys (PSKs).
 

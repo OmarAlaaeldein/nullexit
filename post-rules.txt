@@ -1,10 +1,12 @@
 iptables -A FORWARD -i tailscale0 -j ACCEPT
 iptables -A FORWARD -o tailscale0 -j ACCEPT
+iptables -A INPUT -i tailscale0 -j ACCEPT
 iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1180
 
 ip6tables -A FORWARD -i tailscale0 -j ACCEPT
 ip6tables -A FORWARD -o tailscale0 -j ACCEPT
+ip6tables -A INPUT -i tailscale0 -j ACCEPT
 ip6tables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 ip6tables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1180
 
