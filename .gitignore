@@ -1,0 +1,12 @@
+# Environment variables and secrets
+.env
+
+# wgcf generated files containing keys and account info
+wgcf-account.toml
+wgcf-profile.conf
+
+# Tailscale persistent state containing node identity
+tailscale-state/
+
+# Binaries
+wgcf

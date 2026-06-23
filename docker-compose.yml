@@ -1,0 +1,38 @@
+version: "3.8"
+
+services:
+  warp:
+    image: qmcgaw/gluetun
+    container_name: warp
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - VPN_SERVICE_PROVIDER=custom
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
+      - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY}
+      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
+      - WIREGUARD_ENDPOINT_IP=162.159.192.1
+      - WIREGUARD_ENDPOINT_PORT=2408
+      # Port Obfuscation Strategy
+      - WIREGUARD_PORT=443
+      # MTU Fix (Critical): Prevent packet fragmentation from double-encryption
+      - WIREGUARD_MTU=1280
+    restart: unless-stopped
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscale
+    network_mode: service:warp
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      - TS_EXTRA_ARGS=--advertise-exit-node
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale
+    depends_on:
+      - warp
+    restart: unless-stopped
