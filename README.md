@@ -57,3 +57,8 @@ docker compose up -d
 3. Tap on "Exit Node" and select the newly deployed gateway node.
 4. Visit a site like [ipinfo.io](https://ipinfo.io/) or [whatismyip.com](https://www.whatismyip.com/).
 5. Your IP should now reflect a Cloudflare IP instead of your local ISP, confirming the tunnel-in-tunnel (Tailscale -> WARP) traffic flow is working successfully.
+
+## 5. Networking Notes
+
+- **Port Usage**: Tailscale and WARP use entirely different internal ports, preventing any conflicts. Tailscale operates on random/dynamic UDP ports for its peer-to-peer mesh connections. Meanwhile, WARP's internal WireGuard interface is explicitly bound to port 443 to help obfuscate traffic and bypass strict firewalls.
+- **No Exposed Host Ports**: Because all communication relies purely on outbound tunnels, this Docker Gateway does not map or expose any ports to your local host machine.
