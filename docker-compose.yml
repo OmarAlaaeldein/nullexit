@@ -16,10 +16,6 @@ services:
       - WIREGUARD_ENDPOINT_PORT=2408
       # MTU Fix (Critical): Prevent packet fragmentation from double-encryption
       - WIREGUARD_MTU=1280
-    entrypoint:
-      - /bin/sh
-      - -c
-      - "export WIREGUARD_PORT=$$((1024 + RANDOM % 64511)) && exec /gluetun-entrypoint"
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv6.conf.all.forwarding=1
@@ -68,7 +64,7 @@ services:
     depends_on:
       warp:
         condition: service_healthy
-    command: sh -c "while true; do ip rule show | grep -q '100.64.0.0/10' || ip rule add to 100.64.0.0/10 lookup 52 pref 99; sleep 30; done"
+    command: sh -c "while true; do ip rule show | grep -q '100.64.0.0/10' || ip rule add to 100.64.0.0/10 lookup 52 pref 99; sleep 5; done"
     restart: unless-stopped
     logging:
       driver: "json-file"
