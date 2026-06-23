@@ -44,6 +44,15 @@ services:
       - TS_USERSPACE=false
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -f "/var/lib/tailscale/tailscaled.state" ] && [ -s "/var/lib/tailscale/tailscaled.state" ]; then
+          echo "State found — unsetting TS_AUTHKEY to avoid expired key failure"
+          unset TS_AUTHKEY
+        fi
+        exec /usr/local/bin/containerboot
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
@@ -59,12 +68,30 @@ services:
     image: alpine:latest
     container_name: routing-fix
     network_mode: service:warp
+    pid: "service:tailscale"
     cap_add:
       - NET_ADMIN
     depends_on:
       warp:
         condition: service_healthy
-    command: sh -c "while true; do ip rule show | grep -q '100.64.0.0/10' || ip rule add to 100.64.0.0/10 lookup 52 pref 99; sleep 5; done"
+    command: >
+      sh -c "
+        was_missing=0
+        while true; do
+          if ip rule show | grep -q '100.64.0.0/10'; then
+            if [ $$was_missing -eq 1 ]; then
+              echo 'routing-fix: Rule restored — sending SIGHUP to tailscaled'
+              kill -HUP $$(pidof tailscaled) 2>/dev/null || true
+              was_missing=0
+            fi
+          else
+            ip rule add to 100.64.0.0/10 lookup 52 pref 99 2>/dev/null || true
+            echo 'routing-fix: Rule missing, re-injected'
+            was_missing=1
+          fi
+          sleep 5
+        done
+      "
     restart: unless-stopped
     logging:
       driver: "json-file"
