@@ -18,6 +18,10 @@ services:
       - WIREGUARD_MTU=1280
       # Latency-based DNS load balancing: Queries multiple privacy providers and uses the fastest response
       - DOT_PROVIDERS=quad9,cloudflare
+      # Built-in DNS blocking for ads, malicious domains, and tracking
+      - BLOCK_MALICIOUS=on
+      - BLOCK_SURVEILLANCE=on
+      - BLOCK_ADS=on
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv6.conf.all.forwarding=1
@@ -100,6 +104,18 @@ services:
       options:
         max-size: "1m"
         max-file: "1"
+
+  adguardhome:
+    image: adguard/adguardhome:latest
+    container_name: adguardhome
+    network_mode: service:warp
+    depends_on:
+      warp:
+        condition: service_healthy
+    volumes:
+      - ./adguard/work:/opt/adguardhome/work
+      - ./adguard/conf:/opt/adguardhome/conf
+    restart: unless-stopped
 
 volumes:
   tailscale_state:

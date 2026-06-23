@@ -14,3 +14,6 @@ wgcf
 # macOS App bundles
 *.app/
 *.app
+
+# AdGuard Home persistent state
+adguard/
