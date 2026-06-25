@@ -10,21 +10,16 @@ OUTPUT_PATH = "adguard/work/userfilters/compiled_rules.txt"
 PROFILES = {
     "light": [
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
         "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
         "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt"
     ],
     "medium": [
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
-        "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
         "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
         "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt"
     ],
     "heavy": [
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
-        "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
         "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
         "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt",
         "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
