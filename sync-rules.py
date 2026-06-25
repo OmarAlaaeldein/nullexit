@@ -176,7 +176,17 @@ def main():
         
         f.write("! --- Blacklist Rules ---\n")
         for domain in sorted(black_list):
-            if domain.startswith('/') or domain.startswith('|') or domain.endswith('|') or domain.endswith('^'):
+            if '$' in domain:
+                parts = domain.split('$', 1)
+                dom, mod = parts[0], parts[1]
+                if dom.startswith('||'):
+                    if dom.endswith('^'):
+                        f.write(f"{dom}${mod}\n")
+                    else:
+                        f.write(f"{dom}^${mod}\n")
+                else:
+                    f.write(f"||{dom}^${mod}\n")
+            elif domain.startswith('/') or domain.startswith('|') or domain.endswith('|') or domain.endswith('^'):
                 f.write(f"{domain}\n")
             else:
                 f.write(f"||{domain}^\n")
@@ -190,6 +200,27 @@ def main():
                 f.write(f"@@||{domain}^\n")
 
     print(f"\nSuccessfully compiled {len(black_list)} block rules and {len(white_list)} allow rules to {OUTPUT_PATH}")
+
+    # Delete AdGuard's cached filter file if it exists, to force AdGuard Home to reload the fresh compiled rules
+    cache_path = "adguard/work/data/filters/4.txt"
+    if os.path.exists(cache_path):
+        try:
+            os.remove(cache_path)
+            print(f"Removed stale AdGuard filter cache: {cache_path}")
+        except Exception as e:
+            print(f"Warning: Could not remove stale cache {cache_path} ({e})")
+
+    # Restart AdGuard Home container if docker is running to apply changes immediately
+    if os.path.exists("docker-compose.yml"):
+        try:
+            import subprocess
+            res = subprocess.run(["docker", "compose", "ps", "--status", "running", "-q", "adguardhome"], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                print("Restarting AdGuard Home container to apply changes immediately...")
+                subprocess.run(["docker", "compose", "restart", "adguardhome"], capture_output=True)
+                print("AdGuard Home restarted successfully.")
+        except Exception as e:
+            print(f"Warning: Could not restart AdGuard Home container ({e})")
 
 if __name__ == "__main__":
     main()
