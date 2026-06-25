@@ -194,3 +194,17 @@ youtu.be
 youtube-nocookie.com
 yt3.ggpht.com
 zee.cws.conviva.com
+|facebook.com|
+|www.facebook.com|
+|m.facebook.com|
+|graph.facebook.com|
+|b-api.facebook.com|
+|b-graph.facebook.com|
+|edge-mqtt.facebook.com|
+|api.facebook.com|
+|fb.com|
+|www.fb.com|
+|messenger.com|
+|www.messenger.com|
+fbcdn.net
+fbsbx.com
