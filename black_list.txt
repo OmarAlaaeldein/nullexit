@@ -56,3 +56,9 @@ udcm.yahoo.com
 v.jwpcdn.com
 weblb-wg.gslb.spotify.com
 webview.unityads.unity3d.com
+diagassets.apple.com
+iphonesubmissions.apple.com
+radarsubmissions.apple.com
+metrics.apple.com
+xp.apple.com
+
