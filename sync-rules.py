@@ -8,7 +8,9 @@ OUTPUT_PATH = "adguard/work/userfilters/compiled_rules.txt"
 
 # Remote lists to subscribe to
 REMOTE_BLACKLIST_URLS = [
-    "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt"
+    "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
+    "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
+    "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt"
 ]
 
 def load_domains(filepath):
