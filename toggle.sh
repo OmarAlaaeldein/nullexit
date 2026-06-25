@@ -258,34 +258,47 @@ else
   run_with_timeout 60 docker compose up -d
 
   # 6. Wait for the gateway container's Tailscale connection to be ready
-  TS_IP=$(cat ADGUARD_IP.txt 2>/dev/null || true)
   BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
   USE_EXIT_NODE=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
 
-  if [ -n "$TS_IP" ]; then
-    echo -n "Waiting for gateway container's Tailscale connection to be ready"
-    connected=false
-    for i in {1..30}; do
-      # Query the container directly via Docker socket (works while host Tailscale is fully closed)
-      if run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>/dev/null | grep -q "offers exit node"; then
-        connected=true
-        break
-      fi
-      echo -n "."
-      sleep 1
-    done
-    echo ""
-    if [ "$connected" = "true" ]; then
-      echo "Gateway container is online on the Tailscale mesh."
-    else
-      if [ "$BYPASS_PING" = "true" ]; then
-        echo "[Warning] Gateway container check timed out. Proceeding anyway (GATEWAY_BYPASS_PING is true)..."
-      else
-        echo "ERROR: Gateway container failed to initialize Tailscale (timed out)." >&2
-        cleanup_handler ERR $LINENO
-        exit 1
-      fi
+  echo -n "Waiting for gateway container's Tailscale connection to be ready"
+  connected=false
+  for i in {1..30}; do
+    # Query the container directly via Docker socket (works while host Tailscale is fully closed)
+    if run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>/dev/null | grep -q "offers exit node"; then
+      connected=true
+      break
     fi
+    echo -n "."
+    sleep 1
+  done
+  echo ""
+
+  if [ "$connected" = "true" ]; then
+    echo "Gateway container is online on the Tailscale mesh."
+  elif [ "$BYPASS_PING" = "true" ]; then
+    echo "[Warning] Gateway container check timed out. Proceeding anyway (GATEWAY_BYPASS_PING is true)..."
+  else
+    echo "ERROR: Gateway container failed to initialize Tailscale (timed out)." >&2
+    cleanup_handler ERR $LINENO
+    exit 1
+  fi
+
+  # 6b. Derive the gateway's Tailscale IP dynamically from the container.
+  # This replaces the old static ADGUARD_IP.txt file, which was fragile
+  # because Tailscale IPs are stable but not guaranteed across re-auths.
+  TS_IP=""
+  if [ "$connected" = "true" ]; then
+    TS_IP=$(run_with_timeout 10 docker compose exec -T tailscale tailscale ip -4 2>/dev/null | head -1 || true)
+  fi
+  # Fall back to ADGUARD_IP.txt if the dynamic query fails (e.g. container exec is broken)
+  if [ -z "$TS_IP" ]; then
+    TS_IP=$(cat ADGUARD_IP.txt 2>/dev/null || true)
+    if [ -n "$TS_IP" ]; then
+      echo "[Fallback] Using static IP from ADGUARD_IP.txt: $TS_IP"
+    fi
+  else
+    echo "Resolved gateway Tailscale IP dynamically: $TS_IP"
   fi
 
   # 7. Connect host Mac to Tailscale mesh
@@ -325,7 +338,7 @@ else
     echo "You may be prompted for your macOS admin password:"
     sudo networksetup -setdnsservers "$ACTIVE_SERVICE" "$TS_IP" 2>/dev/null || true
   else
-    echo -e "\n[Tip] To automatically hijack DNS, create an 'ADGUARD_IP.txt' file containing only your Tailscale IP."
+    echo -e "\n[Warning] Could not resolve gateway Tailscale IP. DNS hijacking skipped."
   fi
 
   # 9. Apply Tailscale Exit Node routing (in the background so it activates after script exit)

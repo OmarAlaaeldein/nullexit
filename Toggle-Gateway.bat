@@ -42,17 +42,35 @@ if %errorlevel% == 0 (
 
     docker compose up -d
     
-    if exist "ADGUARD_IP.txt" (
-        set /p TS_IP=<ADGUARD_IP.txt
-        if not "!TS_IP!"=="" (
-            echo.
-            echo Hijacking DNS to route through AdGuard ^(!TS_IP!^). Administrator permissions required.
-            netsh interface ipv4 set dnsservers "Wi-Fi" static !TS_IP! primary >nul 2>&1
-            netsh interface ipv4 set dnsservers "Ethernet" static !TS_IP! primary >nul 2>&1
+    echo.
+    echo Waiting for gateway container's Tailscale connection to be ready...
+    set TS_IP=
+    for /L %%i in (1,1,30) do (
+        if "!TS_IP!"=="" (
+            for /f "usebackq delims=" %%A in (`docker compose exec -T tailscale tailscale ip -4 2^>nul`) do if "!TS_IP!"=="" set "TS_IP=%%A"
+            if "!TS_IP!"=="" timeout /t 1 >nul
         )
-    ) else (
+    )
+    if not "!TS_IP!"=="" (
+        echo Resolved gateway Tailscale IP: !TS_IP!
         echo.
-        echo Tip: To automatically hijack DNS, create an 'ADGUARD_IP.txt' file containing only your Tailscale IP.
+        echo Hijacking DNS to route through AdGuard ^(!TS_IP!^). Administrator permissions required.
+        netsh interface ipv4 set dnsservers "Wi-Fi" static !TS_IP! primary >nul 2>&1
+        netsh interface ipv4 set dnsservers "Ethernet" static !TS_IP! primary >nul 2>&1
+    ) else (
+        if exist "ADGUARD_IP.txt" (
+            set /p TS_IP=<ADGUARD_IP.txt
+            if not "!TS_IP!"=="" (
+                echo [Fallback] Using static IP from ADGUARD_IP.txt: !TS_IP!
+                echo.
+                echo Hijacking DNS to route through AdGuard ^(!TS_IP!^). Administrator permissions required.
+                netsh interface ipv4 set dnsservers "Wi-Fi" static !TS_IP! primary >nul 2>&1
+                netsh interface ipv4 set dnsservers "Ethernet" static !TS_IP! primary >nul 2>&1
+            )
+        ) else (
+            echo.
+            echo [Warning] Could not resolve gateway Tailscale IP. DNS hijacking skipped.
+        )
     )
 
     echo.

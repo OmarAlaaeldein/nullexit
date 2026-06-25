@@ -344,15 +344,14 @@ until [[ -n "$TS_IP" ]]; do
         sleep 3; ELAPSED=$((ELAPSED + 3))
         if [[ $ELAPSED -ge $MAX ]]; then
             warn "Tailscale hasn't authenticated yet."
-            warn "Once it does, run: docker exec tailscale tailscale ip -4 > ADGUARD_IP.txt"
+            warn "Once it does, re-run toggle.sh — it will resolve the IP dynamically."
             break
         fi
     fi
 done
 
 if [[ -n "$TS_IP" ]]; then
-    echo "$TS_IP" > ADGUARD_IP.txt
-    ok "Tailscale IP: ${TS_IP} → saved to ADGUARD_IP.txt"
+    ok "Tailscale IP: ${TS_IP} (resolved dynamically by toggle.sh on each startup)"
 fi
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
