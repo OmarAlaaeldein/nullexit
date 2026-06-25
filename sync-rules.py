@@ -12,14 +12,27 @@ PROFILES = {
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
         "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
-        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt"
+        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt",
+        # Cascaded light list additions
+        "https://abp.oisd.nl/basic/",
+        "https://adaway.org/hosts.txt",
+        "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
+        "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains"
     ],
     "medium": [
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
         "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
         "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
-        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt"
+        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt",
+        # Cascaded from light
+        "https://abp.oisd.nl/basic/",
+        "https://adaway.org/hosts.txt",
+        "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
+        "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains",
+        # Medium list additions
+        "https://someonewhocares.org/hosts/zero/hosts",
+        "https://urlhaus.abuse.ch/downloads/hostfile/"
     ],
     "heavy": [
         "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
@@ -27,7 +40,18 @@ PROFILES = {
         "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
         "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
         "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt",
-        "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"
+        "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+        # Cascaded from light
+        "https://abp.oisd.nl/basic/",
+        "https://adaway.org/hosts.txt",
+        "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
+        "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains",
+        # Cascaded from medium
+        "https://someonewhocares.org/hosts/zero/hosts",
+        "https://urlhaus.abuse.ch/downloads/hostfile/",
+        # Heavy list additions
+        "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV-AGH.txt",
+        "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/GameConsoleAdblockList.txt"
     ]
 }
 
@@ -73,7 +97,10 @@ def fetch_remote_domains(url):
             content = response.read().decode('utf-8')
             domains = set()
             for line in content.splitlines():
-                # Strip comments
+                # Strip comments and metadata headers (both # and ! / [)
+                line = line.strip()
+                if not line or line.startswith('!') or line.startswith('['):
+                    continue
                 line = line.split('#')[0].strip()
                 if not line:
                     continue
