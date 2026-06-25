@@ -86,7 +86,55 @@ def load_domains(filepath):
     with open(filepath, 'r') as f:
         return {line.strip().lower() for line in f if line.strip() and not line.startswith('#')}
 
+CACHE_DIR = "adguard/work/userfilters/cache"
+
+def parse_domains_from_content(content):
+    domains = set()
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith('!') or line.startswith('['):
+            continue
+        line = line.split('#')[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', parts[0]):
+                domain = parts[1]
+            else:
+                domain = parts[0]
+        elif len(parts) == 1:
+            domain = parts[0]
+        else:
+            continue
+        
+        domain = domain.lower().strip()
+        if domain and domain not in ("localhost", "0.0.0.0", "127.0.0.1", "broadcasthost"):
+            domains.add(domain)
+    return domains
+
 def fetch_remote_domains(url):
+    import hashlib
+    import time
+    
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    url_hash = hashlib.md5(url.encode()).hexdigest()
+    cache_file = os.path.join(CACHE_DIR, f"{url_hash}.txt")
+    
+    # Check if we have a valid cached copy (less than 24 hours old)
+    if os.path.exists(cache_file):
+        file_age = time.time() - os.path.getmtime(cache_file)
+        if file_age < 86400:
+            print(f"Loading remote blacklist from cache: {url}")
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                domains = parse_domains_from_content(content)
+                print(f" -> Loaded from cache (copy is {file_age/3600:.1f} hours old, {len(domains)} domains).")
+                return domains
+            except Exception as e:
+                print(f" -> Warning: Failed to read cache file {cache_file} ({e}). Re-fetching...")
+    
     print(f"Fetching remote blacklist from: {url} ...")
     try:
         req = urllib.request.Request(
@@ -95,36 +143,30 @@ def fetch_remote_domains(url):
         )
         with urllib.request.urlopen(req, timeout=15) as response:
             content = response.read().decode('utf-8')
-            domains = set()
-            for line in content.splitlines():
-                # Strip comments and metadata headers (both # and ! / [)
-                line = line.strip()
-                if not line or line.startswith('!') or line.startswith('['):
-                    continue
-                line = line.split('#')[0].strip()
-                if not line:
-                    continue
-                # Parse hosts format: "0.0.0.0 domain.com" or just "domain.com"
-                parts = line.split()
-                if len(parts) >= 2:
-                    # check if the first part is an IP address
-                    if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', parts[0]):
-                        domain = parts[1]
-                    else:
-                        domain = parts[0]
-                elif len(parts) == 1:
-                    domain = parts[0]
-                else:
-                    continue
+            
+            # Save raw content to cache
+            try:
+                with open(cache_file, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            except Exception as e:
+                print(f" -> Warning: Failed to save cache file ({e})")
                 
-                domain = domain.lower().strip()
-                # Exclude localhost/common routing loops
-                if domain and domain not in ("localhost", "0.0.0.0", "127.0.0.1", "broadcasthost"):
-                    domains.add(domain)
-            print(f" -> Successfully fetched {len(domains)} domains.")
+            domains = parse_domains_from_content(content)
+            print(f" -> Successfully fetched and cached {len(domains)} domains.")
             return domains
     except Exception as e:
-        print(f" -> Warning: Failed to fetch {url} ({e}). Using local lists only for this source.")
+        if os.path.exists(cache_file):
+            print(f" -> Warning: Failed to fetch {url} ({e}). Falling back to expired local cache.")
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                domains = parse_domains_from_content(content)
+                print(f" -> Loaded from expired cache ({len(domains)} domains).")
+                return domains
+            except Exception as e2:
+                print(f" -> Warning: Failed to read expired cache ({e2}). Using local lists only.")
+        else:
+            print(f" -> Warning: Failed to fetch {url} ({e}). Using local lists only for this source.")
         return set()
 
 def optimize_subdomains(domains, list_name="blocklist"):

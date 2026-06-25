@@ -62,15 +62,7 @@ services:
       - TS_USERSPACE=false
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        if [ -f "/var/lib/tailscale/tailscaled.state" ] && [ -s "/var/lib/tailscale/tailscaled.state" ]; then
-          echo "State found — unsetting TS_AUTHKEY to avoid expired key failure"
-          unset TS_AUTHKEY
-        fi
-        exec /usr/local/bin/containerboot
+      - TS_AUTH_ONCE=true
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:

@@ -63,4 +63,9 @@ iphonesubmissions.apple.com
 radarsubmissions.apple.com
 metrics.apple.com
 xp.apple.com
+heads-fa.spotify.com
+heads4.spotify.com
+pixel.spotify.com
+segs.spotify.com
+audio-fa.spotify.com
 
