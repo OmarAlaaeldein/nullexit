@@ -5,6 +5,7 @@
 ## 1. Prerequisites
 - Docker and Docker Compose installed.
 - A Tailscale account.
+  - *macOS Host:* We recommend installing the Tailscale GUI application via Homebrew (`brew install --cask tailscale-app`). Note that because the GUI app is sandboxed, you cannot run a Tailscale SSH server on this macOS host. However, you can still easily SSH outbound to any other device on your tailnet by using its MagicDNS address directly (e.g., `ssh user@device.tailnet-name.ts.net`).
 - `wgcf` tool to generate a WARP WireGuard profile.
 
 ## 2. Generate WARP WireGuard Profile
