@@ -12,6 +12,7 @@ import socket
 import struct
 import sys
 import os
+import threading
 
 LISTEN_ADDR = "127.0.0.1"
 LISTEN_PORT = 53
@@ -73,7 +74,9 @@ def main() -> None:
     while True:
         try:
             data, client_addr = sock.recvfrom(512)  # max DNS UDP size
-            handle_query(data, client_addr, sock)
+            # Spawn a thread for each query to handle them concurrently.
+            # This prevents queueing and timeouts during DNS bursts (e.g., opening many tabs).
+            threading.Thread(target=handle_query, args=(data, client_addr, sock), daemon=True).start()
         except KeyboardInterrupt:
             break
         except Exception:
