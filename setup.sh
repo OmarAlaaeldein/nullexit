@@ -15,7 +15,7 @@ die()  { echo -e "\n  ${RED}✗ $*${NC}\n"; exit 1; }
 # ─── 1. Docker ───────────────────────────────────────────────────────────────
 step "Checking Docker"
 
-if ! command -v docker &>/dev/null; then
+if ! command -v docker >> output.log 2>&1; then
     echo ""
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "  Docker is not installed. Two options:"
@@ -34,7 +34,7 @@ if ! command -v docker &>/dev/null; then
     die "Install Docker, then re-run this script."
 fi
 
-if ! docker info &>/dev/null; then
+if ! docker info >> output.log 2>&1; then
     echo ""
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "  Docker is installed but not running."
@@ -47,7 +47,7 @@ if ! docker info &>/dev/null; then
     die "Start Docker, then re-run this script."
 fi
 
-if ! docker compose version &>/dev/null; then
+if ! docker compose version >> output.log 2>&1; then
     die "Docker Compose v2 not found. Update Docker or install the compose plugin:\n  https://docs.docker.com/compose/install/"
 fi
 
@@ -62,7 +62,7 @@ step "Checking Tailscale (host)"
 
 # Resolve the tailscale binary: CLI (brew/package) or bundled macOS app
 TAILSCALE_BIN=""
-if command -v tailscale &>/dev/null; then
+if command -v tailscale >> output.log 2>&1; then
     TAILSCALE_BIN="tailscale"
 elif [[ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]]; then
     TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
@@ -72,7 +72,7 @@ if [[ -z "$TAILSCALE_BIN" ]]; then
     warn "Tailscale not found on host — installing..."
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        if command -v brew &>/dev/null; then
+        if command -v brew >> output.log 2>&1; then
             step "Installing Tailscale CLI formula via Homebrew (standalone, no .app GUI)..."
             brew install tailscale -q
             TAILSCALE_BIN="tailscale"
@@ -92,7 +92,7 @@ if [[ -z "$TAILSCALE_BIN" ]]; then
 
     elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
         curl -fsSL https://tailscale.com/install.sh | sh
-        sudo systemctl enable --now tailscaled 2>/dev/null || true
+        sudo systemctl enable --now tailscaled 2>> output.log || true
         TAILSCALE_BIN="tailscale"
 
     else
@@ -101,14 +101,14 @@ if [[ -z "$TAILSCALE_BIN" ]]; then
 
     ok "Tailscale installed."
 else
-    ok "Tailscale is already installed ($(${TAILSCALE_BIN} version 2>/dev/null | head -1))."
+    ok "Tailscale is already installed ($(${TAILSCALE_BIN} version 2>> output.log | head -1))."
 fi
 
 # Authenticate the host machine if it isn't already connected.
 # This is an interactive step — it opens a browser login URL.
 # We do it now, before containers start, so Toggle-Gateway can
 # safely run 'tailscale down/up' from day one.
-if ! ${TAILSCALE_BIN} status &>/dev/null; then
+if ! ${TAILSCALE_BIN} status >> output.log 2>&1; then
     echo ""
     echo "  Your host machine needs to join your Tailscale network."
     echo "  A browser window or login URL will appear — authenticate, then"
@@ -127,11 +127,11 @@ fi
 # ─── 3. wgcf ─────────────────────────────────────────────────────────────────
 step "Checking wgcf (Cloudflare WARP key tool)"
 
-if ! command -v wgcf &>/dev/null; then
+if ! command -v wgcf >> output.log 2>&1; then
     warn "wgcf not found — installing..."
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        command -v brew &>/dev/null || die "Homebrew not found.\nInstall wgcf manually: https://github.com/ViRb3/wgcf/releases"
+        command -v brew >> output.log 2>&1 || die "Homebrew not found.\nInstall wgcf manually: https://github.com/ViRb3/wgcf/releases"
         brew install wgcf -q
 
     elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -165,8 +165,8 @@ step "Generating Cloudflare WARP profile"
 if [[ -f "wgcf-profile.conf" ]]; then
     warn "wgcf-profile.conf already exists — skipping key generation."
 else
-    wgcf register --accept-tos 2>/dev/null || die "wgcf register failed. Check your internet connection."
-    wgcf generate 2>/dev/null           || die "wgcf generate failed."
+    wgcf register --accept-tos 2>> output.log || die "wgcf register failed. Check your internet connection."
+    wgcf generate 2>> output.log           || die "wgcf generate failed."
     ok "WARP profile generated."
 fi
 
@@ -255,7 +255,7 @@ ok "Directories ready."
 # ─── 9. Compile DNS filter rules ─────────────────────────────────────────────
 step "Compiling DNS filter rules (this may take a minute)"
 
-if command -v python3 &>/dev/null; then
+if command -v python3 >> output.log 2>&1; then
     python3 sync-rules.py
     ok "Rules compiled."
 else
@@ -275,7 +275,7 @@ step "Waiting for AdGuard Home setup wizard"
 echo "  (up to 60 seconds...)"
 
 MAX=60; ELAPSED=0
-until docker exec warp curl -sf http://127.0.0.1:3000 &>/dev/null; do
+until docker exec warp curl -sf http://127.0.0.1:3000 >> output.log 2>&1; do
     sleep 2; ELAPSED=$((ELAPSED + 2))
     [[ $ELAPSED -ge $MAX ]] && die "AdGuard Home didn't come up.\nDebug with: docker compose logs adguardhome"
 done
@@ -342,7 +342,7 @@ echo "  (Tailscale only starts once AdGuard's healthcheck passes — up to 90s)"
 
 MAX=90; ELAPSED=0; TS_IP=""
 until [[ -n "$TS_IP" ]]; do
-    TS_IP=$(docker exec tailscale tailscale ip -4 2>/dev/null || true)
+    TS_IP=$(docker exec tailscale tailscale ip -4 2>> output.log || true)
     if [[ -z "$TS_IP" ]]; then
         sleep 3; ELAPSED=$((ELAPSED + 3))
         if [[ $ELAPSED -ge $MAX ]]; then

@@ -6,3 +6,10 @@ iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set
 
 iptables -t nat -A PREROUTING -i tailscale0 -p udp --dport 53 -j REDIRECT --to-port 5335
 iptables -t nat -A PREROUTING -i tailscale0 -p tcp --dport 53 -j REDIRECT --to-port 5335
+
+# Also redirect DNS from Docker bridge interface so the host can reach AdGuard via localhost:53
+iptables -t nat -A PREROUTING -i eth0 -p udp --dport 53 -j REDIRECT --to-port 5335
+iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j REDIRECT --to-port 5335
+
+# Block IPv6 exit-node traffic to prevent leakage (Gluetun/WARP is IPv4-only)
+ip6tables -A FORWARD -i tailscale0 -j DROP

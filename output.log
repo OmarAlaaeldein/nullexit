@@ -1,0 +1,30 @@
+/usr/bin/python3
+/opt/homebrew/bin/tailscale
+./toggle.sh: line 45: 81532 Terminated: 15          ( sleep "$timeout_sec"; if kill -0 "$cmd_pid" 2>> output.log; then
+    echo -e "\n[Timeout] Command '$*' exceeded $timeout_sec seconds. Terminating..." 1>&2; kill -15 "$cmd_pid" 2>> output.log || true; sleep 2; if kill -0 "$cmd_pid" 2>> output.log; then
+        kill -9 "$cmd_pid" 2>> output.log || true;
+    fi;
+fi )
+/usr/bin/python3
+time="2026-06-26T04:46:44-04:00" level=info msg="colima is running using macOS Virtualization.Framework"
+time="2026-06-26T04:46:44-04:00" level=info msg="arch: aarch64"
+time="2026-06-26T04:46:44-04:00" level=info msg="runtime: docker"
+time="2026-06-26T04:46:44-04:00" level=info msg="mountType: virtiofs"
+time="2026-06-26T04:46:44-04:00" level=info msg="docker socket: unix:///Users/omar/.colima/default/docker.sock"
+time="2026-06-26T04:46:44-04:00" level=info msg="containerd socket: unix:///Users/omar/.colima/default/containerd.sock"
+./toggle.sh: line 45: 81770 Terminated: 15          ( sleep "$timeout_sec"; if kill -0 "$cmd_pid" 2>> output.log; then
+    echo -e "\n[Timeout] Command '$*' exceeded $timeout_sec seconds. Terminating..." 1>&2; kill -15 "$cmd_pid" 2>> output.log || true; sleep 2; if kill -0 "$cmd_pid" 2>> output.log; then
+        kill -9 "$cmd_pid" 2>> output.log || true;
+    fi;
+fi )
+./toggle.sh: line 45: 81798 Terminated: 15          ( sleep "$timeout_sec"; if kill -0 "$cmd_pid" 2>> output.log; then
+    echo -e "\n[Timeout] Command '$*' exceeded $timeout_sec seconds. Terminating..." 1>&2; kill -15 "$cmd_pid" 2>> output.log || true; sleep 2; if kill -0 "$cmd_pid" 2>> output.log; then
+        kill -9 "$cmd_pid" 2>> output.log || true;
+    fi;
+fi )
+Tailscale is stopped.
+100.109.94.19  omars-macbook  user@  macOS    -                                                    
+100.74.218.10  amadeus        user@  windows  offline, last seen 1h ago                            
+100.100.21.8   f8621af24572   user@  linux    active; offers exit node; relay "tor", tx 260 rx 92  
+100.78.15.80   iphone-11      user@  iOS      offline, last seen 14h ago                           
+100.87.42.87   omars-s24      user@  android  offline, last seen 20m ago                           
