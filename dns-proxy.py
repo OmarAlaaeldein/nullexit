@@ -14,10 +14,10 @@ import sys
 import os
 import threading
 
-LISTEN_ADDR = "127.0.0.1"
-LISTEN_PORT = 53
-TARGET_HOST = "127.0.0.1"
-TARGET_PORT = 5354
+LISTEN_ADDR = os.environ.get("LISTEN_ADDR", "127.0.0.1")
+LISTEN_PORT = int(os.environ.get("LISTEN_PORT", 53))
+TARGET_HOST = os.environ.get("TARGET_HOST", "127.0.0.1")
+TARGET_PORT = int(os.environ.get("TARGET_PORT", 5354))
 
 
 def handle_query(data: bytes, client_addr: tuple, sock: socket.socket) -> None:
