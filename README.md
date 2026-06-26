@@ -103,6 +103,7 @@ For convenience (e.g., temporarily disabling the gateway for gaming), this repos
 
 - **Port Usage**: Tailscale and WARP use entirely different internal ports, preventing any conflicts. Tailscale operates on random/dynamic UDP ports for its peer-to-peer mesh connections. Meanwhile, WARP's outbound WireGuard connection is explicitly targeting port 2408, which is the standard Cloudflare WARP destination port.
 - **No Exposed Host Ports**: Because all communication relies purely on outbound tunnels, **nullexit** does not map or expose any ports to your local host machine.
+- **Latency Overhead (Double Encryption)**: Using this gateway introduces an inevitable latency penalty due to the "tunnel-in-tunnel" double encryption. For example, empirical testing shows that connecting to the exit node from a phone on the *exact same Wi-Fi network* results in a ping of ~67ms, compared to ~11ms when connected directly. **For gaming or any latency-sensitive applications, you should disable the mesh/exit node and connect directly.**
 
 ## 8. Architecture & Security Insights
 
