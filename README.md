@@ -108,7 +108,17 @@ For convenience (e.g., temporarily disabling the gateway for gaming), this repos
 
 ## 8. Architecture & Security Insights
 
-This setup implements a highly secure, zero-trust "Tunnel-in-Tunnel" architecture by aggressively routing a Tailscale Exit Node directly through a Gluetun-managed Cloudflare WARP tunnel.
+### Threat Model: Passive Dragnet vs. Targeted Surveillance
+Many privacy setups fail by attempting to defend against state-level targeted actors (e.g., using Tor), which destroys internet speeds, breaks apps, and introduces severe latency for a threat model that rarely applies to regular individuals. **nullexit** is calibrated for the real world. 
+
+As revealed by the Snowden disclosures, there are two distinct types of collection:
+1. **Bulk/Passive Surveillance**: Upstream taps at the ISP and backbone level that collect everything automatically and query it later. This scales infinitely with no marginal cost per person.
+2. **Targeted/Active Surveillance**: Subpoenas or physical access targeting a specific individual. This requires a paper trail, legal effort, and immense friction.
+
+**nullexit** is designed exclusively to defeat the first. By tunneling all DNS and HTTP traffic through WARP, you completely blind your ISP, cellular provider, and local Wi-Fi networks. Your ISP never sees the plaintext traffic to log in the first place, entirely removing you from the passive dragnet and opportunistic data harvesting. You move yourself into the "requires active effort" category. At the same time, because we accept that defending against physical device access is an exercise in diminishing returns, we don't cripple the network—allowing us to retain 7ms native latency and full bandwidth.
+
+### Implementation Details
+- **SOCKS5 vs. Default Gateways**: A standard container uses Docker's `172.18.0.1` bridge gateway, which translates directly to the host Mac's Wi-Fi interface (exposing traffic to the ISP). We bypass this by exclusively binding traffic to the SOCKS5 proxy running inside the Cloudflare WARP container.
 
 ### Traffic Flow & Double Encryption
 1. **Device to Gateway (Tailscale):** Traffic leaving your client device (e.g., your phone) is encrypted using Tailscale's WireGuard implementation. It travels securely over the internet or cellular network to your **nullexit** gateway.
