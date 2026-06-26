@@ -23,7 +23,7 @@ echo "routing-fix: Setting up routing for SOCKS5 proxy through WARP (tun0)..."
 # Dynamically detect Docker subnet from eth0
 DOCKER_NET=$(ip route show dev eth0 | grep -v default | head -1 | awk '{print $1}')
 DOCKER_GW=$(ip route show default | head -1 | awk '{print $3}')
-WARP_ENDPOINT=162.159.192.1
+WARP_ENDPOINT=${WARP_ENDPOINT:-162.159.192.1}
 echo "routing-fix: Docker network: ${DOCKER_NET}, gateway: ${DOCKER_GW}"
 
 # Table 200: Used by ip rule 100 (from 172.18.0.2) for SOCKS5 proxy traffic
