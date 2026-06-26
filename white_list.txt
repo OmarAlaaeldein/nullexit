@@ -194,6 +194,23 @@ youtu.be
 youtube-nocookie.com
 yt3.ggpht.com
 zee.cws.conviva.com
+
+# YouTube family — base domains so every subdomain (video stream servers on
+# *.googlevideo.com, image hosts on *.ytimg.com, profile thumbnails on
+# *.ggpht.com, etc.) is automatically allowlisted via the AdGuard '||domain^'
+# wildcard. The specific s.youtube.com / manifest.googlevideo.com entries
+# above are kept for clarity but will be optimized away by sync-rules.py
+# because their parents are now in this list.
+youtube.com
+googlevideo.com
+ytimg.com
+ggpht.com
+
+edge-mqtt.facebook.com
+gateway.instagram.com
+i.instagram.com
+whatsapp.net
+
 facebook.com
 fb.com
 fbcdn.net

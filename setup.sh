@@ -73,15 +73,18 @@ if [[ -z "$TAILSCALE_BIN" ]]; then
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
         if command -v brew &>/dev/null; then
-            step "Installing Tailscale GUI App via Homebrew Cask..."
-            brew install --cask tailscale-app -q
-            TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-            
-            echo ""
-            warn "Note: The Tailscale GUI application on macOS is sandboxed."
-            warn "Because it is sandboxed, the host cannot run a Tailscale SSH server."
-            warn "To SSH to any device on the tailnet, use its MagicDNS address directly"
-            warn "via your standard terminal ssh client (e.g. ssh user@device.tailnet-name.ts.net)."
+            step "Installing Tailscale CLI formula via Homebrew (standalone, no .app GUI)..."
+            brew install tailscale -q
+            TAILSCALE_BIN="tailscale"
+
+            step "Starting tailscaled as a per-user LaunchAgent (auto-starts at login)..."
+            if brew services start tailscale 2>&1 | grep -qE 'Successfully|started'; then
+                ok "tailscaled LaunchAgent registered."
+            else
+                warn "Could not auto-start tailscaled. Run 'brew services start tailscale' manually."
+                warn "For a system-wide LaunchDaemon that runs before login, run instead:"
+                warn "    sudo brew services start tailscale"
+            fi
             echo ""
         else
             die "Homebrew not found. Install Tailscale manually:\n  https://tailscale.com/download/mac\n  Then re-run this script."
