@@ -59,6 +59,16 @@ docker compose up -d
 4. Visit a site like [ipinfo.io](https://ipinfo.io/) or [whatismyip.com](https://www.whatismyip.com/).
 5. Your IP should now reflect a Cloudflare IP instead of your local ISP, confirming the tunnel-in-tunnel (Tailscale -> WARP) traffic flow is working successfully.
 
+### Enable Ad-Blocking on Mobile (MagicDNS)
+To ensure your phone and other Tailnet devices receive AdGuard filtering while using the exit node, you must configure MagicDNS:
+1. Go to the **Tailscale Admin Console → DNS**.
+2. Under **Global Nameservers**, click **Add Nameserver → Custom...**
+3. Enter the Tailscale IP of your gateway container (e.g., `100.100.21.8`).
+4. Toggle ON **Override local DNS**.
+5. Enable **MagicDNS** if it isn't already.
+
+**How this works:** MagicDNS assigns `100.100.100.100` as the DNS server for your phone. When your phone makes a DNS request, the local Tailscale app intercepts it and forwards it across the mesh to your Global Nameserver (`100.100.21.8:53`). Our gateway container automatically intercepts port 53 traffic using `PREROUTING` iptables rules and seamlessly redirects it into AdGuard (port `5335`), stripping out ads before forwarding the query securely through Cloudflare WARP.
+
 ## 5. AdGuard Home DNS Filtering
 
 **nullexit** includes a seamlessly integrated instance of **AdGuard Home** to act as a network-wide ad and tracker sinkhole for all your Tailscale devices.
