@@ -58,7 +58,21 @@ add_fwd_related_established() {
   fi
 }
 
+add_magicdns_redirect() {
+  if ! iptables -t nat -C PREROUTING -i tailscale0 -p udp --dport 53 -j REDIRECT --to-port 5335 2>/dev/null; then
+    iptables -t nat -A PREROUTING -i tailscale0 -p udp --dport 53 -j REDIRECT --to-port 5335 2>/dev/null || true
+    iptables -t nat -A PREROUTING -i tailscale0 -p tcp --dport 53 -j REDIRECT --to-port 5335 2>/dev/null || true
+  fi
+  if command -v iptables-legacy >/dev/null 2>&1; then
+    if ! iptables-legacy -t nat -C PREROUTING -i tailscale0 -p udp --dport 53 -j REDIRECT --to-port 5335 2>/dev/null; then
+      iptables-legacy -t nat -A PREROUTING -i tailscale0 -p udp --dport 53 -j REDIRECT --to-port 5335 2>/dev/null || true
+      iptables-legacy -t nat -A PREROUTING -i tailscale0 -p tcp --dport 53 -j REDIRECT --to-port 5335 2>/dev/null || true
+    fi
+  fi
+}
+
 add_fwd_related_established
+add_magicdns_redirect
 
 echo 'routing-fix: Routes applied.'
 
@@ -81,6 +95,9 @@ while true; do
   # backends. Gluetun may reset the nftables ruleset on VPN reconnect,
   # and Tailscale may reset the legacy ruleset on auth refresh.
   add_fwd_related_established
+
+  # MagicDNS Support
+  add_magicdns_redirect
 
   sleep 5
 done
