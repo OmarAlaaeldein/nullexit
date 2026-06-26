@@ -60,6 +60,22 @@ add_fwd_related_established() {
 
 add_fwd_related_established
 
+# Policy Routing for Tailscale P2P:
+# Tailscale sends its encrypted mesh UDP packets from port 41641.
+# If these go out tun0 (WARP), Cloudflare's strict NAT drops the returning
+# hole-punch packets, causing Tailscale to fail P2P and fall back to DERP relays (high latency).
+# We mark packets originating from port 41641 and force them out the main table (eth0).
+add_tailscale_p2p_bypass() {
+  if ! iptables -t mangle -C OUTPUT -p udp --sport 41641 -j MARK --set-mark 0x8888 2>/dev/null; then
+    iptables -t mangle -A OUTPUT -p udp --sport 41641 -j MARK --set-mark 0x8888 2>/dev/null || true
+  fi
+  if ! ip rule show | grep -q 'fwmark 0x8888'; then
+    ip rule add fwmark 0x8888 lookup 254 pref 98 2>/dev/null || true
+  fi
+}
+
+add_tailscale_p2p_bypass
+
 echo 'routing-fix: Routes applied.'
 
 # Re-assert loop (every 5 seconds)
@@ -81,6 +97,9 @@ while true; do
   # backends. Gluetun may reset the nftables ruleset on VPN reconnect,
   # and Tailscale may reset the legacy ruleset on auth refresh.
   add_fwd_related_established
+  
+  # Ensure P2P packets bypass WARP to maintain low latency
+  add_tailscale_p2p_bypass
 
   sleep 5
 done
