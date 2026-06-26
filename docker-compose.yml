@@ -6,6 +6,11 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    ports:
+      - "5354:5335/udp"    # AdGuard DNS (5335 is used by SSH on host, use 5354 instead)
+      - "5354:5335/tcp"    # AdGuard DNS (TCP)
+      - "80:80/tcp"        # AdGuard web interface
+      - "41641:41641/udp"  # Tailscale WireGuard (direct connection to host)
     environment:
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
@@ -26,6 +31,10 @@ services:
       - BLOCK_MALICIOUS=off
       - BLOCK_SURVEILLANCE=off
       - BLOCK_ADS=off
+      # CRITICAL: Whitelist Tailscale's CGNAT range so P2P connections work.
+      # Without this, Gluetun's strict firewall drops Tailscale peer traffic,
+      # forcing all connections through slow DERP relays.
+      - FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10
     sysctls:
       - net.ipv4.ip_forward=1
     volumes:
@@ -56,8 +65,12 @@ services:
       - NET_ADMIN
       - NET_RAW
       - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv6.conf.all.forwarding=1
     environment:
       - TS_EXTRA_ARGS=--advertise-exit-node
+      - PORT=41641
       - TS_USERSPACE=false
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
@@ -86,19 +99,41 @@ services:
         condition: service_healthy
     command: >
       sh -c "
+        # ── Phase 1: One-time routing setup ──────────────────────────────
+        #
+        # Fix: Route exit-node traffic through WARP (tun0), not Docker bridge
+        # (eth0). Tailscale forwards exit-node packets in userspace, bypassing
+        # the kernel's policy routing (table 51820). Changing the main table's
+        # default to tun0 ensures Tailscale's socket uses the WARP tunnel.
+        #
+        # The existing rule 100 (from 172.18.0.2 lookup 200) still routes
+        # gluetun's own traffic (including the WARP WireGuard handshake)
+        # through eth0, so the tunnel itself stays up.
+        sleep 5
+        echo 'routing-fix: Setting main route default to tun0 (WARP)...'
+        ip route replace default dev tun0 2>> /dev/null || \
+          echo 'routing-fix: WARNING — could not set tun0 as default (tun0 may not be ready)'
+        # Ensure Docker subnet still routes through eth0 (bypasses VPN)
+        ip route replace 172.18.0.0/16 dev eth0 2>> /dev/null || true
+
+        # ── Phase 2: Monitor and re-inject Tailscale CGNAT rule ──────────
         was_missing=0
         while true; do
+          # Re-assert the default route periodically (gluetun may reset it)
+          ip route replace default dev tun0 2>> /dev/null || true
+          ip route replace 172.18.0.0/16 dev eth0 2>> /dev/null || true
+
           if ip rule show | grep -q '100.64.0.0/10'; then
             if [ $$was_missing -eq 1 ]; then
               TS_PID=$$(pidof tailscaled)
               if [ -n "$$TS_PID" ]; then
                 echo 'routing-fix: Rule restored — sending SIGHUP to tailscaled'
-                kill -HUP $$TS_PID 2>/dev/null || true
+                kill -HUP $$TS_PID 2>> /dev/null || true
               fi
               was_missing=0
             fi
           else
-            ip rule add to 100.64.0.0/10 lookup 52 pref 99 2>/dev/null || true
+            ip rule add to 100.64.0.0/10 lookup 52 pref 99 2>> /dev/null || true
             echo 'routing-fix: Rule missing, re-injected'
             was_missing=1
           fi

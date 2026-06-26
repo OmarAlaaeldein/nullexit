@@ -24,12 +24,12 @@ run_with_timeout() {
   # Run a watchdog sleep in the background
   (
     sleep "$timeout_sec"
-    if kill -0 "$cmd_pid" 2>/dev/null; then
+    if kill -0 "$cmd_pid" 2>> output.log; then
       echo -e "\n[Timeout] Command '$*' exceeded $timeout_sec seconds. Terminating..." >&2
-      kill -15 "$cmd_pid" 2>/dev/null || true
+      kill -15 "$cmd_pid" 2>> output.log || true
       sleep 2
-      if kill -0 "$cmd_pid" 2>/dev/null; then
-        kill -9 "$cmd_pid" 2>/dev/null || true
+      if kill -0 "$cmd_pid" 2>> output.log; then
+        kill -9 "$cmd_pid" 2>> output.log || true
       fi
     fi
   ) &
@@ -42,7 +42,7 @@ run_with_timeout() {
   set -e
   
   # Kill the watcher since the command finished
-  kill "$watcher_pid" 2>/dev/null && wait "$watcher_pid" 2>/dev/null
+  kill "$watcher_pid" 2>> output.log && wait "$watcher_pid" 2>> output.log
   
   CURRENT_BG_PID=""
   return "$exit_status"
@@ -52,9 +52,9 @@ run_with_timeout() {
 # (Prevents permission failures if the script is run with sudo)
 run_gui_cmd() {
   local console_user
-  console_user=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
+  console_user=$(stat -f '%Su' /dev/console 2>> output.log || echo "$SUDO_USER")
   if [ -z "$console_user" ] || [ "$console_user" = "root" ]; then
-    console_user=$(logname 2>/dev/null || echo "$USER")
+    console_user=$(logname 2>> output.log || echo "$USER")
   fi
 
   if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ "$EUID" -eq 0 ]; then
@@ -78,11 +78,19 @@ cleanup_handler() {
     
     if [ -n "$CURRENT_BG_PID" ]; then
       echo "Terminating active command (PID $CURRENT_BG_PID)..."
-      kill -15 "$CURRENT_BG_PID" 2>/dev/null || true
+      kill -15 "$CURRENT_BG_PID" 2>> output.log || true
     fi
 
     # Disconnect host Tailscale and close the GUI application on failure
     disconnect_tailscale_host
+
+    # Stop local DNS proxy if running
+    stop_local_dns_proxy
+
+    # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
+    if [ -n "$ACTIVE_SERVICE" ]; then
+      cleanup_network_state
+    fi
     
     if [ "$trigger_type" = "ERR" ]; then
       echo -e "\n=============================================="
@@ -103,8 +111,27 @@ trap 'cleanup_handler INT' INT
 trap 'cleanup_handler TERM' TERM
 trap 'cleanup_handler HUP' HUP
 
+# ─── NOPASSWD sudo ──────────────────────────────────────────────────────────
+# The user has NOPASSWD in /etc/sudoers.d/nullexit for the specific commands
+# needed (networksetup, dnsmasq, dscacheutil, killall, pkill, socat).
+# All privileged calls below use `sudo -n` which will run without prompting.
+# No credential caching loop is needed.
+
 # Add Homebrew and standard paths
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+
+# Check for local DNS proxy tools (used when tailnet data plane is unavailable)
+# Uses a Python DNS proxy (handles TCP wire format correctly).
+# Python3 is built into macOS — no external dependencies.
+DNS_PROXY_BIN=""
+if command -v python3 >> output.log 2>&1; then
+  DNS_PROXY_BIN="python3"
+elif command -v python >> output.log 2>&1; then
+  DNS_PROXY_BIN="python"
+fi
+
+# Path to the DNS proxy script (sibling of this script)
+DNS_PROXY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dns-proxy.py"
 
 # Resolve Tailscale CLI on host. We rely on the standalone Homebrew formula
 # (`brew install tailscale` + `brew services start tailscale`) — NOT the
@@ -113,22 +140,26 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 # start manually. tailscaled runs as a per-user LaunchAgent (or LaunchDaemon
 # if you ran the install with sudo) and the control socket is always available.
 TS_BIN=""
-if command -v tailscale >/dev/null 2>&1; then
+if command -v tailscale >> output.log 2>&1; then
   TS_BIN="tailscale"
 fi
 
-# Persistently disable Tailscale DNS management at the daemon level.
-# Unlike `--accept-dns=false` on individual `tailscale up` calls (which is
-# per-session and often ignored during exit-node transitions), `tailscale set`
-# writes a preference that survives across `tailscale up` / `tailscale down`
-# cycles. The daemon will NEVER touch macOS DNS after this — all DNS control
-# belongs to `networksetup` / `force_dns_to_gateway`.
+# Baseline: disable Tailscale DNS management at the daemon level.
+# `tailscale set` writes a persistent preference. However, `tailscale up --reset`
+# (used in steps 7 and 9) RESETS all unspecified flags to defaults, which would
+# re-enable `--accept-dns=true` and nullify this `set`.
+# Therefore, EVERY `tailscale up --reset` call in this file MUST also pass
+# `--accept-dns=false` explicitly. See steps 7 and 9 for the fix.
+#
+# This initial `set` is still useful as a baseline for non-reset operations
+# (e.g. if the user runs `tailscale up` manually without --reset) and covers
+# the brief window between this line and the first `--reset` call.
 #
 # Runs once at script start while tailscaled is still connected (if it was
-# left running from a previous toggle), so the persistent pref takes effect
-# before any disconnection or reconnection logic.
+# left running from a previous toggle), so the pref takes effect before any
+# disconnection or reconnection logic.
 if [ -n "$TS_BIN" ]; then
-  $TS_BIN set --accept-dns=false >/dev/null 2>&1 || true
+  $TS_BIN set --accept-dns=false >> output.log 2>&1 || true
 fi
 
 # Disconnect host Tailscale from the mesh. With the standalone daemon, this is the
@@ -143,19 +174,19 @@ fi
 disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
-    run_with_timeout 10 $TS_BIN down >/dev/null 2>&1 || true
+    run_with_timeout 10 $TS_BIN down >> output.log 2>&1 || true
   fi
 }
 
 # Function to get the active network service name (e.g., "Wi-Fi" or "USB 10/100 LAN")
 get_active_service() {
   local iface
-  iface=$(route get default 2>/dev/null | awk '/interface:/ {print $2}')
+  iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
   
   # If the default interface is empty or a VPN tunnel (like utunX), fallback to the active physical interface
   if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
     for i in en0 en1 en2 en3; do
-      if ifconfig "$i" 2>/dev/null | grep -q "status: active" && ifconfig "$i" 2>/dev/null | grep -q "inet "; then
+      if ifconfig "$i" 2>> output.log | grep -q "status: active" && ifconfig "$i" 2>> output.log | grep -q "inet "; then
         iface="$i"
         break
       fi
@@ -183,7 +214,7 @@ ACTIVE_SERVICE=$(get_active_service)
 # Resolve the service name for en0 (usually "Wi-Fi") — macOS scutil DNS resolver
 # is commonly scoped to en0, so per-service DNS changes on other interfaces are
 # ignored unless en0's service is also updated.
-EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>/dev/null | grep -B1 "Device: en0" | head -1 | sed -E 's/^\([0-9\*]+\) //' || true)
+EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>> output.log | grep -B1 "Device: en0" | head -1 | sed -E 's/^\([0-9\*]+\) //' || true)
 [ -z "$EN0_SERVICE" ] && EN0_SERVICE="Wi-Fi"
 
   # Helper to restore host DNS to a clean state (used on script start, on failure,
@@ -198,11 +229,134 @@ EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>/dev/null | grep -B1 "Devi
   reset_dns() {
     if [ -n "$ACTIVE_SERVICE" ]; then
       for dns_svc in "$ACTIVE_SERVICE" "$EN0_SERVICE"; do
-        networksetup -setsearchdomains "$dns_svc" "Empty" 2>/dev/null || true
-        networksetup -setdnsservers "$dns_svc" 1.1.1.1 2>/dev/null || true
+        networksetup -setsearchdomains "$dns_svc" "Empty" 2>> output.log || true
+        networksetup -setdnsservers "$dns_svc" 1.1.1.1 2>> output.log || true
       done
     fi
   }
+
+# Helper to nuke leftover network state after teardown (proxy settings, routing
+# table, DNS cache, Wi-Fi). Prevents the "had to write a whole recovery script"
+# problem where stale state kills internet after the gateway stops.
+cleanup_network_state() {
+  echo -e "\nCleaning up network state (proxies, routes, DNS cache, Wi-Fi)..."
+
+  # 1. Disable any leftover proxy settings (needs root on many macOS versions)
+  for svc in "$ACTIVE_SERVICE" "$EN0_SERVICE"; do
+    sudo -n networksetup -setsocksfirewallproxystate "$svc" off 2>> output.log || true
+    sudo -n networksetup -setwebproxystate "$svc" off 2>> output.log || true
+    sudo -n networksetup -setsecurewebproxystate "$svc" off 2>> output.log || true
+  done
+  echo "  Proxies disabled."
+
+  # 2. Flush DNS cache
+  if command -v dscacheutil >> output.log 2>&1; then
+    sudo -n dscacheutil -flushcache 2>> output.log || true
+  fi
+  sudo -n killall -HUP mDNSResponder 2>> output.log || true
+  echo "  DNS cache flushed."
+
+  # 3. Flush stale routing table entries
+  if command -v route >> output.log 2>&1; then
+    sudo -n route -n flush >> output.log 2>&1 || true
+  fi
+  echo "  Routing table flushed."
+
+  # 4. Power-cycle Wi-Fi to clear any lingering interface state
+  WIFI_PORT=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
+  if [ -n "$WIFI_PORT" ]; then
+    sudo -n networksetup -setairportpower "$WIFI_PORT" off 2>> output.log || true
+    sleep 2
+    sudo -n networksetup -setairportpower "$WIFI_PORT" on 2>> output.log || true
+    echo "  Wi-Fi power-cycled (interface $WIFI_PORT)."
+    sleep 3
+  else
+    echo "  Wi-Fi interface not detected; bouncing en0..."
+    sudo -n ifconfig en0 down 2>> output.log || true
+    sudo -n ifconfig en0 up 2>> output.log || true
+  fi
+
+  echo "Network state cleanup complete."
+}
+
+# ─── Local DNS Proxy (Python) ───────────────────────────────────────────────
+# When the tailnet data plane cannot establish, we use a Python DNS proxy.
+# It listens on UDP:53, receives DNS queries, forwards them over TCP to
+# AdGuard at 127.0.0.1:5354 (Docker port mapping), and returns the response.
+# The Python script handles the DNS-over-TCP wire format (2-byte length prefix)
+# correctly — unlike socat which just forwards raw bytes.
+#
+# Python3 is built into macOS — no external dependencies.
+DNS_PROXY_PID=""
+
+# Kill any leftover DNS proxy process
+stop_local_dns_proxy() {
+  if [ -n "$DNS_PROXY_PID" ]; then
+    kill "$DNS_PROXY_PID" 2>/dev/null || true
+    wait "$DNS_PROXY_PID" 2>/dev/null || true
+    DNS_PROXY_PID=""
+  fi
+  # Clean up any stale Python DNS proxy processes
+  sudo -n pkill -f "dns-proxy.py" 2>/dev/null || true
+}
+
+# Start local DNS proxy (Python)
+start_local_dns_proxy() {
+  if [ -z "$DNS_PROXY_BIN" ]; then
+    echo "  Python not found. Python3 is built into macOS — this shouldn't happen."
+    return 1
+  fi
+
+  if [ ! -f "$DNS_PROXY_SCRIPT" ]; then
+    echo "  DNS proxy script not found at $DNS_PROXY_SCRIPT"
+    return 1
+  fi
+
+  # Kill any leftover process first
+  stop_local_dns_proxy
+
+  echo -n "  Starting local DNS proxy via Python (UDP:53 → TCP:5354)... "
+  sudo -n "$DNS_PROXY_BIN" "$DNS_PROXY_SCRIPT" &
+  DNS_PROXY_PID=$!
+  disown "$DNS_PROXY_PID" 2>/dev/null || true
+
+  # Give it a moment to bind
+  sleep 0.5
+
+  if kill -0 "$DNS_PROXY_PID" 2>/dev/null; then
+    echo "started (PID $DNS_PROXY_PID)."
+
+    # Hijack host DNS to localhost
+    echo -n "  Hijacking host DNS to 127.0.0.1 for ad-blocking... "
+    networksetup -setsearchdomains "$ACTIVE_SERVICE" "Empty" 2>/dev/null || true
+    networksetup -setsearchdomains "$EN0_SERVICE" "Empty" 2>/dev/null || true
+    if ! networksetup -setdnsservers "$ACTIVE_SERVICE" 127.0.0.1; then
+      echo "FAILED (networksetup error — check permissions)."
+      stop_local_dns_proxy
+      return 1
+    fi
+    networksetup -setdnsservers "$EN0_SERVICE" 127.0.0.1 2>/dev/null || true
+    sudo -n dscacheutil -flushcache 2>/dev/null || true
+    sudo -n killall -HUP mDNSResponder 2>/dev/null || true
+
+    # Verify DNS actually works through the proxy
+    echo -n "  Verifying DNS resolution... "
+    if dig @127.0.0.1 google.com +short +timeout=5 &>/dev/null; then
+      echo "ok."
+      return 0
+    else
+      echo "FAILED (DNS queries not reaching AdGuard)."
+      echo "  Restoring DNS to 1.1.1.1..."
+      reset_dns
+      stop_local_dns_proxy
+      return 1
+    fi
+  else
+    echo "FAILED (could not bind port 53 — is it in use?)."
+    DNS_PROXY_PID=""
+    return 1
+  fi
+}
 
 # Helper to FORCIBLY hijack host DNS to a single server (the gateway's AdGuard IP)
 # and VERIFY via `networksetup -getdnsservers` that the only name server is exactly
@@ -238,7 +392,7 @@ force_dns_to_gateway() {
     networksetup -setdnsservers "$EN0_SERVICE" "$target_ip" || true
 
     local entries
-    entries=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>/dev/null \
+    entries=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log \
               | awk '/^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/ {print}')
     if echo "$entries" | grep -qFx "$target_ip"; then
       echo "VERIFIED"
@@ -271,7 +425,7 @@ is_gateway_active() {
   fi
   # 2. Check if host DNS is hijacked (not 1.1.1.1 and not default/empty)
   local current_dns
-  current_dns=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>/dev/null || true)
+  current_dns=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log || true)
   if [[ -n "$current_dns" && "$current_dns" != "1.1.1.1" && ! "$current_dns" =~ "There aren't any DNS Servers" ]]; then
     return 0
   fi
@@ -289,13 +443,19 @@ if is_gateway_active; then
   echo ""
 
   echo "Stopping Docker containers..."
-  run_with_timeout 30 docker compose down -t 5
+  docker compose down -t 5
 
   # The host's DNS was hijacked to the gateway IP during ENABLE; now that the
   # gateway is down, restore DNS to 1.1.1.1 immediately so subsequent lookups
   # don't stall for the macOS DNS timeout before the 1.1.1.1 fallback engages.
   echo -e "\nRestoring host DNS to 1.1.1.1 (gateway is gone)... "
   reset_dns
+
+  # 3. Stop local DNS proxy if running
+  stop_local_dns_proxy
+
+  # 4. Nuke leftover network state so internet actually works after teardown
+  cleanup_network_state
 
   echo -e "\nGateway has been successfully STOPPED."
 else
@@ -308,9 +468,9 @@ else
 
   # 2. Compile DNS filter rules
   echo -e "\nCompiling DNS filter rules..."
-  if command -v python3 >/dev/null 2>&1; then
+  if command -v python3 >> output.log 2>&1; then
     python3 sync-rules.py || echo "Warning: Failed to compile DNS filter rules, proceeding with existing compilation..."
-  elif command -v python >/dev/null 2>&1; then
+  elif command -v python >> output.log 2>&1; then
     python sync-rules.py || echo "Warning: Failed to compile DNS filter rules, proceeding with existing compilation..."
   else
     echo "Warning: Python not found. Skipping DNS rule compilation."
@@ -318,7 +478,7 @@ else
 
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
-  if ! run_with_timeout 15 colima status >/dev/null 2>&1; then
+  if ! run_with_timeout 15 colima status >> output.log 2>&1; then
     echo "Colima is not running. Starting Colima (0.6GB RAM allocation)..."
     run_with_timeout 120 colima start --memory 0.6
   else
@@ -333,17 +493,17 @@ else
 
   # 5. Start compose services
   echo -e "\nStarting Docker containers..."
-  run_with_timeout 60 docker compose up -d
+  docker compose up -d
 
   # 6. Wait for the gateway container's Tailscale connection to be ready
-  BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
-  USE_EXIT_NODE=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+  BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+  USE_EXIT_NODE=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
 
   echo -n "Waiting for gateway container's Tailscale connection to be ready"
   connected=false
   for i in {1..30}; do
     # Query the container directly via Docker socket (works while host Tailscale is fully closed)
-    if run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>/dev/null | grep -q "offers exit node"; then
+    if run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>> output.log | grep -q "offers exit node"; then
       connected=true
       break
     fi
@@ -373,11 +533,11 @@ else
   # `tr -d '\r'` strips the CR; `awk 'NR==1{print $1; exit}'` takes only
   # the first field of the first line (preserving the old `head -1` guard).
   TS_IP=""
-  TS_IP=$(cat ADGUARD_IP.txt 2>/dev/null | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
+  TS_IP=$(cat ADGUARD_IP.txt 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
   if [ -n "$TS_IP" ]; then
     echo "Using static IP from ADGUARD_IP.txt: $TS_IP"
   elif [ "$connected" = "true" ]; then
-    TS_IP=$(run_with_timeout 10 docker compose exec -T tailscale tailscale ip -4 2>/dev/null | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
+    TS_IP=$(run_with_timeout 10 docker compose exec -T tailscale tailscale ip -4 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
     if [ -n "$TS_IP" ]; then
       echo "[Fallback] Resolved gateway Tailscale IP dynamically: $TS_IP"
     fi
@@ -386,18 +546,28 @@ else
   # 7. Connect host Mac to Tailscale mesh.
   # With the standalone tailscaled daemon (registered as a per-user LaunchAgent or
   # system LaunchDaemon via 'brew services start tailscale'), the previous five-
-  # phase flow (launch .app GUI → click menu bar System-Events → poll daemon →
-  # `tailscale up --exit-node=` → `scutil --nc start "Tailscale"` Network Extension)
-  # collapses into two trivial CLI calls. There is no .app GUI to launch, no menu
-  # bar item to click, no Network Extension sandbox to unstick, and no Accessibility
-  # permission required. We just verify the daemon socket is responsive, then join
-  # the mesh without an exit-node so the host can safely reach the gateway's
-  # 100.x.x.x IP (AdGuard) before the DNS hijack below takes effect.
+  # phase flow collapses into two trivial CLI calls. There is no .app GUI to launch,
+  # no menu bar item to click, and no Accessibility permission required.
+  #
+  # CRITICAL: If tailscaled is not running, `tailscale up` will silently fail.
+  # We auto-start it before proceeding, and SKIP the rest of the Tailscale setup
+  # if it can't be started (DNS hijack to a 100.x.x.x IP and exit-node routing
+  # are impossible without the host on the mesh).
+  #
+  # We connect in two phases:
+  #   Phase A — Join mesh WITHOUT exit node (so pre-flight checks can run)
+  #   Phase B — Set exit node only after pre-flight checks confirm the gateway works
+  HOST_ON_MESH=false
+  SKIP_EXIT_NODE=false
   if [ -n "$TS_BIN" ]; then
     echo -n "Verifying tailscaled is reachable"
     daemon_ready=false
-    for i in {1..15}; do
-      if run_with_timeout 3 $TS_BIN status >/dev/null 2>&1; then
+    for i in {1..10}; do
+      # `tailscale status` returns exit code 1 when the daemon is alive but
+      # disconnected ("Tailscale is stopped."). We check the daemon socket
+      # directly as a fallback — if the socket exists, tailscaled is running
+      # even if the host isn't connected to the mesh yet.
+      if run_with_timeout 5 $TS_BIN status >> output.log 2>&1 || [ -S /var/run/tailscaled.socket ]; then
         daemon_ready=true
         break
       fi
@@ -406,102 +576,172 @@ else
     done
     echo ""
 
-    if [ "$daemon_ready" = "true" ]; then
-      echo "tailscaled is responsive (running as a system service)."
-    else
-      echo "[Warning] tailscaled did not respond. Run 'brew services start tailscale'"
-      echo "         (or 'sudo brew services start tailscale' for system-wide) and re-run this script."
+    if [ "$daemon_ready" != "true" ]; then
+      echo -e "\033[0;33m[!] tailscaled daemon is not running. Attempting to start it...\033[0m"
+      
+      # Try user-level launch agent first (with 10s timeout — brew can stall)
+      if run_with_timeout 10 brew services start tailscale 2>> output.log; then
+        echo "  Started tailscaled as per-user LaunchAgent."
+        # Wait for daemon to come up
+        for i in {1..15}; do
+          if run_with_timeout 5 $TS_BIN status >> output.log 2>&1; then
+            daemon_ready=true
+            break
+          fi
+          sleep 1
+        done
+      fi
+
+      # If still not ready, try system-wide daemon (with timeout — sudo may prompt for password)
+      if [ "$daemon_ready" != "true" ]; then
+        if run_with_timeout 10 sudo brew services start tailscale 2>> output.log; then
+          echo "  Started tailscaled as system LaunchDaemon."
+          for i in {1..15}; do
+            if run_with_timeout 5 $TS_BIN status >> output.log 2>&1; then
+              daemon_ready=true
+              break
+            fi
+            sleep 1
+          done
+        fi
+      fi
     fi
 
-    # `tailscale up --exit-node=` is idempotent: if we're already on the mesh it just
-    # clears any stale exit-node preference; if we're not yet on the mesh it joins
-    # without one. Either way, the host can now safely reach the gateway's IP via
-    # the Tailscale mesh. DNS is left alone because of the persistent `set` above.
-    echo "Joining Tailscale mesh without exit-node (so host can safely reach $TS_IP)..."
-    joined=false
-    for i in {1..5}; do
-      if run_with_timeout 5 $TS_BIN up --reset --exit-node= >/dev/null 2>&1; then
-        joined=true
-        break
+    if [ "$daemon_ready" = "true" ]; then
+      echo "tailscaled is responsive (running as a system service)."
+
+      # ── Phase A: Join mesh without exit node ───────────────────────────
+      echo "Connecting host to Tailscale mesh (no exit node yet)..."
+      if $TS_BIN up --reset --accept-dns=false --exit-node=; then
+        HOST_ON_MESH=true
+        echo "Host is on Tailscale mesh."
+      else
+        echo -e "\033[0;33m[!] tailscale up failed even though the daemon is running.\033[0m"
+        echo "  This usually means the host hasn't authenticated with your tailnet yet."
+        echo "  Run this command in a terminal to authenticate:"
+        echo ""
+        echo "      sudo tailscale up"
+        echo ""
+        echo "  A browser will open. Log in to your Tailscale account, then re-run toggle.sh."
       fi
-      sleep 1
-    done
-    if [ "$joined" = "true" ]; then
-      echo "Host is on Tailscale mesh (no exit-node)."
     else
-      echo "[Warning] tailscale up failed; will continue anyway."
+      echo -e "\033[0;31m[!] tailscaled could NOT be started automatically.\033[0m"
+      echo "  Run this in a terminal to start and authenticate Tailscale:"
+      echo ""
+      echo "      sudo brew services start tailscale"
+      echo "      sudo tailscale up"
+      echo ""
+      echo "  Then re-run toggle.sh."
     fi
   else
     echo -e "\n[Warning] tailscale CLI not found on PATH. Skipping host Tailscale configuration..."
   fi
 
+  # ── Phase B: Pre-flight checks + enable exit node only if safe ───────
+  if [ "$HOST_ON_MESH" = "true" ] && [ "$USE_EXIT_NODE" != "false" ] && [ -n "$TS_IP" ]; then
+    echo -e "\n──────────────────────────────────────────────"
+    echo "Pre-flight connectivity check"
+    echo "──────────────────────────────────────────────"
+    
+    # Check 1: Can we reach the gateway via Tailscale (uses tailscale ping, not ICMP)?
+    # NOTE: tailscale ping exits 1 when the connection goes through a DERP relay
+    # ("direct connection not established") even though the pong was received.
+    # We check for 'pong' in the output (stderr discarded) to accept relayed connections.
+    echo -n "  [1/3] Gateway reachable via Tailscale... "
+    if $TS_BIN ping -c 1 --timeout 5s "$TS_IP" 2>/dev/null | grep -q "pong"; then
+      echo "PASS"
+    else
+      echo "FAIL"
+      SKIP_EXIT_NODE=true
+    fi
+    
+    # Check 2: Can we reach AdGuard via localhost (exposed port 5354)?
+    # Colima's SSH tunnel only forwards TCP (not UDP), so we use +tcp.
+    echo -n "  [2/3] AdGuard DNS via localhost... "
+    if command -v dig &>/dev/null; then
+      if dig +tcp @127.0.0.1 -p 5354 google.com +short +timeout=5 &>/dev/null; then
+        echo "PASS"
+      else
+        echo "FAIL"
+        SKIP_EXIT_NODE=true
+      fi
+    elif command -v nslookup &>/dev/null; then
+      if nslookup -port=5354 google.com 127.0.0.1 &>/dev/null; then
+        echo "PASS"
+      else
+        echo "FAIL"
+        SKIP_EXIT_NODE=true
+      fi
+    else
+      echo "SKIP (dig/nslookup not available)"
+    fi
+    
+    # Check 3: Does the WARP container have external internet?
+    echo -n "  [3/3] WARP container internet... "
+    if docker compose exec -T warp wget -qO- --timeout=5 https://www.cloudflare.com/cdn-cgi/trace &>/dev/null; then
+      echo "PASS"
+    else
+      echo "FAIL"
+      SKIP_EXIT_NODE=true
+    fi
+    
+    # Act based on check results
+    if [ "$SKIP_EXIT_NODE" != "true" ]; then
+      echo -e "\nAll checks passed. Enabling exit node $TS_IP..."
+      if $TS_BIN up --reset --accept-dns=false --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
+        echo "Exit node enabled."
+      else
+        echo "[Warning] Failed to set exit node."
+        SKIP_EXIT_NODE=true
+      fi
+    fi
+    
+    if [ "$SKIP_EXIT_NODE" = "true" ]; then
+      echo -e "\n\033[0;33m[!] Pre-flight checks failed — EXIT NODE + DNS HIJACK SKIPPED.\033[0m"
+      echo "  Host stays on Tailscale mesh but your internet routes through your normal connection."
+      echo "  Troubleshoot with:"
+      echo "    docker compose logs warp | tail -20"
+      echo "    docker compose exec -T warp wget -qO- --timeout=5 https://www.cloudflare.com/cdn-cgi/trace"
+    fi
+  elif [ "$HOST_ON_MESH" = "true" ] && [ "$USE_EXIT_NODE" = "false" ]; then
+    echo "USE_EXIT_NODE is false. Skipping exit node and DNS hijack."
+    SKIP_EXIT_NODE=true
+  fi
+
   # 8. Apply DNS Hijacking.
-  # With the standalone daemon (no .app GUI / Network Extension), Tailscale's
-  # `tailscale up --accept-dns=true` *no longer* keeps DNS settings sticky for
-  # us. So we manually replicate what the .app would have done:
-  #   - Search domain `ts.net` → MagicDNS names like `omars-macbook` resolve via
-  #                              our gateway (AdGuard forwards to Tailscale).
-  #   - DNS server: $TS_IP     → AdGuard Home runs blocklists + MagicDNS.
-  # We deliberately set NO fallback (no 1.1.1.1 alongside). Anything in the
-  # resolver list other than $TS_IP creates a route for queries to silently
-  # leak past the gateway's ad-blocking on the first failure. `force_dns_to_gateway`
-  # sets AND verifies the live state via `networksetup -getdnsservers`.
-  if [ -n "$TS_IP" ]; then
+  # If exit node is enabled: hijack DNS to gateway's Tailscale IP (routes through tailnet).
+  # Otherwise, leave DNS at 1.1.1.1 (already set by reset at the top).
+  # AdGuard is also available at localhost:5354 for manual configuration in apps.
+  if [ -n "$TS_IP" ] && [ "$HOST_ON_MESH" = "true" ] && [ "$SKIP_EXIT_NODE" != "true" ]; then
     echo -e "\nHijacking host DNS to point ONLY at AdGuard Home ($TS_IP)..."
     echo "Setting MagicDNS search domain 'ts.net' so tailnet hostnames resolve..."
     if force_dns_to_gateway "$TS_IP"; then
       echo "DNS hijack verified: single server = $TS_IP."
     else
       echo "[Warning] DNS hijack could not be verified."
-      echo "          Run: networksetup -setdnsservers \"$ACTIVE_SERVICE\" $TS_IP"
+      echo "  If DNS is broken, run manually:"
+      echo "    networksetup -setdnsservers \"$ACTIVE_SERVICE\" $TS_IP"
+      echo "    networksetup -setsearchdomains \"$ACTIVE_SERVICE\" ts.net"
     fi
-  else
-    echo -e "\n[Warning] Could not resolve gateway Tailscale IP. DNS hijacking skipped."
-  fi
-
-  # 9. Apply Tailscale Exit Node routing and verify the host actually came back online.
-  if [ "$USE_EXIT_NODE" != "false" ]; then
-    if [ -n "$TS_BIN" ] && [ -n "$TS_IP" ]; then
-      echo -e "\nRouting host internet through Tailscale exit node '$TS_IP'..."
-      # The persistent `tailscale set --accept-dns=false` above means this
-      # exit-node transition won't clobber DNS — no `--accept-dns` flag needed.
-      exit_node_enabled=false
-      for i in {1..5}; do
-        if run_with_timeout 10 $TS_BIN up --reset --exit-node="$TS_IP" --exit-node-allow-lan-access=true >/dev/null 2>&1; then
-          exit_node_enabled=true
-          break
-        fi
-        sleep 1
-      done
-
-      if [ "$exit_node_enabled" = "true" ]; then
-        if run_with_timeout 5 $TS_BIN status >/dev/null 2>&1; then
-          echo "Host exit-node routing is active."
-        else
-          echo "[Warning] Exit-node command succeeded, but Tailscale still does not appear online."
-        fi
-      else
-        echo "[Warning] Failed to enable exit-node routing before exit."
-      fi
-    fi
-  else
-    echo -e "\nSkipping exit-node routing (GATEWAY_USE_EXIT_NODE is set to false)."
-  fi
-
-  # 10. Final DNS re-force + verify.
-  # Step 9's `tailscale up --exit-node=...` may still trigger a brief DNS
-  # reset on macOS during the exit-node routing-table transition even though
-  # `tailscale set --accept-dns=false` is configured. Without a re-force
-  # at the tail, the script exits with the gateway ON yet the host's resolver
-  # sitting back on 1.1.1.1 (or whatever stale value step 8 lost to the race).
-  if [ -n "$TS_IP" ]; then
-    echo -e "\nFinal DNS re-force (kills any 1.1.1.1 that snuck back in)..."
-    if force_dns_to_gateway "$TS_IP"; then
-      echo "Final DNS state verified: $TS_IP (single server, no 1.1.1.1)."
+  elif [ -n "$TS_IP" ]; then
+    echo -e "\n[Info] Exit node not enabled (pre-flight checks failed)."
+    echo "  Trying local DNS proxy for ad-blocking..."
+    if start_local_dns_proxy; then
+      echo "  Ad-blocking active via local DNS proxy through AdGuard."
     else
-      echo "[Warning] Final DNS could not be locked at $TS_IP."
-      echo "          Run: networksetup -setdnsservers \"$ACTIVE_SERVICE\" $TS_IP"
-      echo "          (Note: re-running ./toggle.sh would STOP the gateway — it detects the active state and tears down — so don't use it as a recovery command.)"
+      echo "  Local DNS proxy unavailable. DNS stays at 1.1.1.1."
+      echo "  AdGuard available at http://localhost:80 (port 5354 for DNS via TCP)."
+    fi
+  else
+    echo -e "\n[Warning] Could not resolve gateway Tailscale IP."
+  fi
+
+  # 9. Verify host connectivity
+  if [ "$HOST_ON_MESH" = "true" ] && [ -n "$TS_BIN" ]; then
+    if run_with_timeout 5 $TS_BIN status >> output.log 2>&1; then
+      echo "Host is online on the Tailscale mesh."
+    else
+      echo "[Warning] Host is not responding on Tailscale."
     fi
   fi
 
@@ -512,7 +752,7 @@ SUCCESS_RUN=true
 
 # Final DNS state summary
 if [ -n "$ACTIVE_SERVICE" ]; then
-  FINAL_DNS=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>/dev/null || true)
+  FINAL_DNS=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log || true)
   echo -e "\n──────────────────────────────────────────────"
   echo -e "DNS STATE: $FINAL_DNS"
   echo -e "──────────────────────────────────────────────"
