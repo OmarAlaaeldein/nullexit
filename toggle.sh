@@ -279,6 +279,50 @@ cleanup_network_state() {
   echo "Network state cleanup complete."
 }
 
+# ─── SOCKS5 Proxy (WARP Tunnel) ────────────────────────────────────────────
+# When Tailscale's exit node can't route through WARP (due to userspace
+# forwarding), we use a SOCKS5 proxy running inside the warp container's
+# network namespace. Connections created by this proxy go through the
+# kernel routing table (table 200 -> tun0 -> WARP), unlike Tailscale's
+# userspace exit node which bypasses it.
+#
+# The SOCKS5 proxy is exposed on localhost:1080 via Docker port mapping.
+# `networksetup -setsocksfirewallproxy` on macOS routes system TCP traffic
+# through the proxy, which then goes through WARP.
+#
+# IMPORTANT: CLI tools like curl do NOT respect macOS system proxy settings.
+# They must use --socks5-hostname or the ALL_PROXY env variable explicitly.
+
+SOCKS_PROXY_PORT=1080
+
+enable_socks_proxy() {
+  local svc="$1"
+  if [ -z "$svc" ]; then
+    svc="$ACTIVE_SERVICE"
+  fi
+  
+  echo -n "  Enabling system-wide SOCKS5 proxy on $svc (localhost:$SOCKS_PROXY_PORT)... "
+  sudo -n networksetup -setsocksfirewallproxy "$svc" 127.0.0.1 $SOCKS_PROXY_PORT 2>> output.log || true
+  sudo -n networksetup -setsocksfirewallproxystate "$svc" on 2>> output.log || true
+  
+  # Also set on en0 service for macOS resolver consistency
+  if [ "$svc" != "$EN0_SERVICE" ]; then
+    sudo -n networksetup -setsocksfirewallproxy "$EN0_SERVICE" 127.0.0.1 $SOCKS_PROXY_PORT 2>> output.log || true
+    sudo -n networksetup -setsocksfirewallproxystate "$EN0_SERVICE" on 2>> output.log || true
+  fi
+  
+  echo "done."
+  echo "  All TCP traffic now routed through gateway -> WARP tunnel -> internet."
+  echo "  (CLI tools: export ALL_PROXY=socks5://127.0.0.1:$SOCKS_PROXY_PORT)"
+}
+
+disable_socks_proxy() {
+  for svc in "$ACTIVE_SERVICE" "$EN0_SERVICE"; do
+    sudo -n networksetup -setsocksfirewallproxystate "$svc" off 2>> output.log || true
+  done
+  echo "  SOCKS5 proxy disabled."
+}
+
 # ─── Local DNS Proxy (Python) ───────────────────────────────────────────────
 # When the tailnet data plane cannot establish, we use a Python DNS proxy.
 # It listens on UDP:53, receives DNS queries, forwards them over TCP to
@@ -499,15 +543,44 @@ else
   BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
   USE_EXIT_NODE=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
 
-  echo -n "Waiting for gateway container's Tailscale connection to be ready"
+  echo "Waiting for gateway container's Tailscale to connect to the tailnet..."
+  echo "  (This can take 30-60s — Tailscale goes through: NoState → Starting → Running → Online)"
   connected=false
-  for i in {1..30}; do
-    # Query the container directly via Docker socket (works while host Tailscale is fully closed)
-    if run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>> output.log | grep -q "offers exit node"; then
+  consecutive_failures=0
+  for i in {1..60}; do
+    # Run tailscale status and capture its output so the user can see what's happening.
+    # Previously this was hidden behind 2>> output.log, making it impossible to debug hangs.
+    ts_output=$(run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>&1 || true)
+    
+    if echo "$ts_output" | grep -q "offers exit node"; then
       connected=true
       break
     fi
-    echo -n "."
+    
+    # Track consecutive failures to detect a stuck state.
+    # If we see 40+ consecutive 'NoState' responses, give up early —
+    # the daemon is alive but can't connect to the coordination server.
+    if echo "$ts_output" | grep -q "NoState"; then
+      consecutive_failures=$((consecutive_failures + 1))
+      if [ "$consecutive_failures" -ge 40 ]; then
+        echo ""
+        echo "  [attempt $i/60] Stuck in 'NoState' for $consecutive_failures checks."
+        echo "    Tailscale daemon is running but can't reach the coordination server."
+        break
+      fi
+    else
+      consecutive_failures=0
+    fi
+    
+    # Print a condensed status every 10 seconds so the user can see progress
+    if [ $((i % 10)) -eq 0 ]; then
+      ts_short=$(echo "$ts_output" | head -1 | tr -d '\r\n')
+      echo "  [attempt $i/60] $ts_short"
+    elif [ $((i % 5)) -eq 0 ]; then
+      echo -n "[$i]"
+    else
+      echo -n "."
+    fi
     sleep 1
   done
   echo ""
@@ -517,7 +590,18 @@ else
   elif [ "$BYPASS_PING" = "true" ]; then
     echo "[Warning] Gateway container check timed out. Proceeding anyway (GATEWAY_BYPASS_PING is true)..."
   else
-    echo "ERROR: Gateway container failed to initialize Tailscale (timed out)." >&2
+    echo "ERROR: Gateway container failed to initialize Tailscale (timed out after 60s)." >&2
+    echo "  The container was seen in the following states during the wait:" >&2
+    echo "$ts_output" | sed 's/^/    /' >&2
+    echo "" >&2
+    echo "  This could mean:" >&2
+    echo "    1. Tailscale auth key has expired — check TS_AUTHKEY in .env" >&2
+    echo "    2. Network issue inside the container — check: docker compose logs tailscale" >&2
+    echo "    3. gluetun VPN tunnel not connecting — check: docker compose logs warp | tail -20" >&2
+    echo "" >&2
+    echo "  Diagnose manually:" >&2
+    echo "    docker compose exec -T tailscale tailscale status" >&2
+    echo "    docker compose exec -T tailscale tailscale netcheck" >&2
     cleanup_handler ERR $LINENO
     exit 1
   fi
@@ -579,20 +663,7 @@ else
     if [ "$daemon_ready" != "true" ]; then
       echo -e "\033[0;33m[!] tailscaled daemon is not running. Attempting to start it...\033[0m"
       
-      # Try user-level launch agent first (with 10s timeout — brew can stall)
-      if run_with_timeout 10 brew services start tailscale 2>> output.log; then
-        echo "  Started tailscaled as per-user LaunchAgent."
-        # Wait for daemon to come up
-        for i in {1..15}; do
-          if run_with_timeout 5 $TS_BIN status >> output.log 2>&1; then
-            daemon_ready=true
-            break
-          fi
-          sleep 1
-        done
-      fi
-
-      # If still not ready, try system-wide daemon (with timeout — sudo may prompt for password)
+      # Try system-wide daemon (with timeout — sudo may prompt for password)
       if [ "$daemon_ready" != "true" ]; then
         if run_with_timeout 10 sudo brew services start tailscale 2>> output.log; then
           echo "  Started tailscaled as system LaunchDaemon."
@@ -648,7 +719,7 @@ else
     # ("direct connection not established") even though the pong was received.
     # We check for 'pong' in the output (stderr discarded) to accept relayed connections.
     echo -n "  [1/3] Gateway reachable via Tailscale... "
-    if $TS_BIN ping -c 1 --timeout 5s "$TS_IP" 2>/dev/null | grep -q "pong"; then
+    if $TS_BIN ping --until-direct=false -c 3 --timeout 5s "$TS_IP" 2>/dev/null | grep -q "pong"; then
       echo "PASS"
     else
       echo "FAIL"
@@ -702,6 +773,8 @@ else
       echo "  Troubleshoot with:"
       echo "    docker compose logs warp | tail -20"
       echo "    docker compose exec -T warp wget -qO- --timeout=5 https://www.cloudflare.com/cdn-cgi/trace"
+      echo ""
+      echo "  Falling back to SOCKS5 proxy for traffic routing..."
     fi
   elif [ "$HOST_ON_MESH" = "true" ] && [ "$USE_EXIT_NODE" = "false" ]; then
     echo "USE_EXIT_NODE is false. Skipping exit node and DNS hijack."
@@ -731,6 +804,24 @@ else
     else
       echo "  Local DNS proxy unavailable. DNS stays at 1.1.1.1."
       echo "  AdGuard available at http://localhost:80 (port 5354 for DNS via TCP)."
+    fi
+    
+    # Enable SOCKS5 proxy for traffic routing through WARP
+    # (enabled whenever exit node is skipped, regardless of HOST_ON_MESH)
+    echo -e "\n  Enabling SOCKS5 proxy for TCP traffic routing through gateway WARP tunnel..."
+    echo "  (SOCKS5 proxy runs inside gateway container, routes through tun0 -> WARP)"
+    enable_socks_proxy "$ACTIVE_SERVICE"
+
+    # Verify the SOCKS5 proxy works through WARP
+    echo -n "  Verifying SOCKS5 proxy routes through WARP... "
+    if curl --socks5-hostname 127.0.0.1:$SOCKS_PROXY_PORT --max-time 10 -s https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "warp=on"; then
+      echo "ok (warp=on)."
+      echo "  All TCP traffic now encrypted through Cloudflare WARP tunnel."
+    else
+      echo "FAILED (proxy not routing through WARP)."
+      echo "  Disabling SOCKS5 proxy — internet stays on direct connection."
+      disable_socks_proxy
+      echo "  SOCKS proxy available at localhost:$SOCKS_PROXY_PORT for manual configuration."
     fi
   else
     echo -e "\n[Warning] Could not resolve gateway Tailscale IP."

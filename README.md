@@ -117,7 +117,7 @@ Building this required navigating intense firewall and routing conflicts between
 - **IPv6 Forwarding Bug:** Tailscale aggressively checks both IPv4 and IPv6 forwarding statuses in the kernel. If Docker disables IPv6 forwarding by default, Tailscale silently disables its Exit Node functionality. This is bypassed by explicitly setting `net.ipv6.conf.all.forwarding=1` in the Compose file.
 - **Strict Firewall Loops (The "DERP" bypass):** Gluetun's strict leak-prevention firewall (`iptables-nft`) intentionally drops unrecognized forwarded traffic. Furthermore, its policy routing forces all returning traffic out the `tun0` (WARP) interface, creating a blackhole for returning Tailscale packets. While most community setups accept degraded, slow DERP relay connections here, this architecture deploys an automated sidecar container (`routing-fix`). It persistently injects a high-priority `ip rule` (`ip rule add to 100.64.0.0/10 lookup 52 pref 99`), ensuring returning packets bypass the VPN blackhole and establish high-speed, direct P2P connections back into the Tailscale mesh.
 - **Kernel-Space vs Userspace Conflict:** Tailscale is forced into kernel-space networking (`TS_USERSPACE=false`) because userspace mode prevents the container from functioning as a true Exit Node. This can occasionally cause Gluetun's strict health-checks to flap and restart due to kernel-table modifications. This is an accepted trade-off; Docker's `restart: unless-stopped` automatically recovers it, preserving maximum throughput and Exit Node capabilities.
-- **macOS Memory Overhead (Colima):** Because macOS cannot run Linux containers natively, Colima must spin up a background Linux VM. While the actual containers (`warp`, `tailscale`, `routing-fix`) only consume roughly `~75MB` of RAM combined, loading massive blocklists into AdGuard Home requires significant memory. We recommend running the VM stably at `0.6 GB` (614MB) of RAM (`colima start --memory 0.6`). To prevent out-of-memory (`OOMKilled`) crash loops on this tight memory limit, the rules compiler uses **subdomain deduplication** (shrinking lists by **~60%** with zero loss in blocking coverage) and customizable **memory profiles** (`light`, `medium`, `heavy`). See Section 9 for details.
+- **macOS Memory Overhead (Colima):** Because macOS cannot run Linux containers natively, Colima must spin up a background Linux VM. While the actual containers (`warp`, `tailscale`, `routing-fix`) only consume roughly `~75MB` of RAM combined, loading massive blocklists into AdGuard Home requires significant memory. We recommend running the VM stably at `0.6 GB` (614MB) of RAM (`colima start --memory 0.6`). To prevent out-of-memory (`OOMKilled`) crash loops on this tight memory limit, the rules compiler uses **subdomain deduplication** (shrinking lists by **~60%** with zero loss in blocking coverage) and customizable **memory profiles** (`light`, `medium`, `heavy`). See Section 10 for details.
 - **Host DNS/Exit-Node Deadlock (The Catch-22):** If the macOS host is configured to route all traffic through the Tailscale Exit Node (which is hosted by **nullexit**), and the **nullexit** gateway is stopped or restarting, the host Mac loses all internet connectivity. This creates a deadlock: Colima and the Docker daemon cannot fetch remote blocklists, pull images, or authenticate with Tailscale/WARP control servers because the host's network is completely blackholed. 
   To resolve this, we implemented ten key safeguards in our toggle script:
   1. **Immediate DNS Recovery:** The script immediately sets the macOS host DNS to `1.1.1.1` at the very start of execution (for both starting and stopping). This ensures that if the script gets stuck or fails, the host is never left with a dead or unreachable DNS.
@@ -135,7 +135,94 @@ Building this required navigating intense firewall and routing conflicts between
   2. *Modifier Ordering Syntax:* When attempting to override wildcard whitelist rules with modifiers (e.g. blocking `an.facebook.com` using `$important` while whitelisting the rest of Facebook), the AdGuard separator `^` must precede the modifier. Writing `||domain$important^` is invalid and ignored; it must be written as `||domain^$important`. The rules engine now automatically checks for custom modifiers and structures them correctly.
 
 
-## 9. Custom Ad-Blocking Rules Engine
+## 9. Resolved Issues
+
+This section documents the bugs, architecture limitations, and edge cases that were discovered and resolved during development. Each entry includes the problem, root cause, and solution.
+
+### 9.1 DNS Proxy: TCP Wire Format Mismatch (socat / dnsmasq)
+
+**Problem:** When the Tailscale data plane is unavailable (DERP relay only), the script falls back to a local DNS proxy that forwards queries from host UDP:53 to Docker's TCP:5354 (AdGuard). The `socat` and `dnsmasq` approaches both failed.
+
+- **socat** forwards raw bytes — it does not prepend the 2-byte length prefix that DNS-over-TCP requires. AdGuard parses the stream incorrectly and returns garbage.
+- **dnsmasq** tries UDP first to reach the upstream (`127.0.0.1#5354`), but Colima's SSH tunnel only forwards TCP. With a single upstream server, dnsmasq doesn't fall back to TCP even with `--timeout=1`.
+
+**Solution:** Replaced both with a **Python DNS proxy** (`dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
+
+### 9.2 Exit Node Traffic Bypasses WARP (Userspace Forwarding)
+
+**Problem:** Tailscale's Docker container (`tailscale/tailscale`) handles exit-node packet forwarding in userspace. When a packet arrives at the gateway, Tailscale decrypts it and creates a new socket in userspace to send it to the destination. This socket bypasses the kernel's routing stack and iptables entirely — it never hits the `FORWARD` chain, never matches policy routing rules, and therefore never goes through WARP's `tun0` interface.
+
+Even after fixing the routing table defaults, iptables counters showed 0 packets on `tailscale0` `FORWARD` rules despite the exit node actively forwarding traffic.
+
+**Solution:** Replaced the Tailscale exit node approach with a **SOCKS5 proxy** (`socks5-proxy.py`) running inside the WARP container's network namespace. The proxy creates outbound connections that DO respect the kernel routing table (table 200 → `tun0` → WARP). On the host, `networksetup -setsocksfirewallproxy` routes all system TCP traffic through the proxy. Verified with `curl --socks5-hostname` against Cloudflare's `/cdn-cgi/trace` — shows `warp=on`.
+
+Architecture after the fix:
+```
+DNS:  Browser → 127.0.0.1:53 → Python proxy → TCP:5354 → AdGuard → WARP
+TCP:  Apps → SOCKS5:1080 → gateway container → tun0 → WARP → internet
+Mesh: SSH/ping 100.x.x.x → utun5 → WireGuard → peers (independent of proxy)
+```
+
+### 9.3 Pre-Flight Check 1: Wrong `tailscale ping` Flag
+
+**Problem:** Check 1 of the pre-flight connectivity checks used `--c 1` (double dash) but `tailscale ping` accepts `-c 1` (single dash). The invalid flag caused the command to exit with code 1, marking the check as FAIL even though the gateway was reachable.
+
+**Fix:** Changed `--c 1` to `-c 1`.
+
+### 9.4 Pre-Flight Check 1: DERP Relay Exit Code
+
+**Problem:** Even with the correct `-c 1` flag, `tailscale ping` exits with code 1 when the connection goes through a DERP relay (`direct connection not established`) — even though a pong was successfully received (28ms via DERP(tor)). The check treated relayed connections as failures.
+
+**Fix:** Changed the check from relying on exit code to piping stdout through `grep -q "pong"`. This accepts relayed connections as valid (they work fine for the exit node use case), while still failing on true timeouts or unreachable peers.
+
+### 9.5 Container Default Route Bypasses WARP
+
+**Problem:** Inside the WARP container's network namespace, the main routing table's default route was via `eth0` (Docker bridge), not `tun0` (WARP tunnel). While gluetun uses policy routing (rule 101 → table 51820 → `tun0`) for most traffic, traffic originating from the container's own IP (`172.18.0.2`) hits rule 100 (`from 172.18.0.2 lookup 200`), whose default was also via `eth0`. This caused the SOCKS5 proxy's outbound connections to bypass WARP.
+
+**Fix:** Updated the `routing-fix` container to:
+1. Change the main table's default route to `default dev tun0`
+2. Change table 200's default route to `default dev tun0`
+3. Add a specific route for the WARP WireGuard endpoint (`162.159.192.1`) through `eth0` via the Docker gateway in table 200, preventing a tunnel loop
+4. Re-assert all routes every 5 seconds (gluetun may reset them on health checks)
+5. Dynamically detect the Docker subnet from `ip route show dev eth0` instead of hardcoding `172.18.0.0/16`
+
+### 9.6 IPv6 Exit-Node Leak
+
+**Problem:** Tailscale supports IPv6, but WARP/gluetun is IPv4-only. IPv6 packets forwarded through the exit node would leak through the Docker bridge unencrypted.
+
+**Fix:** Added `ip6tables -A FORWARD -i tailscale0 -j DROP` to `post-rules.txt`, blocking all IPv6 forwarded traffic from the Tailscale interface.
+
+### 9.7 Hardcoded Docker Subnet in Routing Fix
+
+**Problem:** The `routing-fix` container hardcoded `172.18.0.0/16` and `172.18.0.1` for the Docker bridge subnet and gateway. If Docker's bridge network changed (after `docker network prune`, Colima restart, or on a different machine), these routes would be wrong.
+
+**Fix:** Detection is now dynamic using `ip route show`:
+- `DOCKER_NET=$(ip route show dev eth0 | grep -v default | head -1 | awk '{print $1}')`
+- `DOCKER_GW=$(ip route show default | awk '{print $3}')`
+
+This extracts the actual subnet and gateway directly from the routing table, working with any subnet size (`/16`, `/24`, `/20`, etc.).
+
+### 9.8 SOCKS5 Proxy Threading Race Condition
+
+**Problem:** The `forward` function in `socks5-proxy.py` called `select.select([src, dst], [], [])` which raised `ValueError: file descriptor cannot be a negative integer (-1)` when one thread closed a socket while the other thread was selecting on it.
+
+**Fix:** Added `ValueError` exception handling around `select.select()` and `recv()` calls. When a file descriptor becomes negative, the thread breaks out of the forwarding loop cleanly instead of crashing.
+
+### 9.9 Docker Healthcheck: Multi-line Python in CMD Array
+
+**Problem:** The socks-proxy healthcheck used a `CMD` array with a multi-line Python string. YAML collapsed the newlines, causing the `#` comment to comment out the rest of the code and the `assert` statement to be mangled into `as`.
+
+**Fix:** Changed from `["CMD", "python3", "-c", "..."]` to `["CMD-SHELL", "python3 -c '...'"]` with a single-line Python expression. Uses a real SOCKS5 handshake (sends `[5, 1, 0]`, expects `[5, 0]`) instead of a simple TCP port check.
+
+### 9.10 Sudo Credential Caching Removed
+
+**Problem:** The script used `sudo -v` at startup to cache sudo credentials, plus a background `SUDO_KEEPER_PID` loop refreshing them every 60 seconds. This required interactive password entry even with NOPASSWD sudoers configured, because `sudo -v` itself prompts.
+
+**Fix:** Removed the entire `sudo -v` + `SUDO_KEEPER_PID` section. All privileged commands now use `sudo -n` (non-interactive), which works silently because the user has NOPASSWD rules in `/etc/sudoers.d/nullexit` for the specific commands needed (`networksetup`, `python3`, `dscacheutil`, `killall`, `pkill`, `route`, `ifconfig`).
+
+---
+
+## 10. Custom Ad-Blocking Rules Engine
 **nullexit** includes a self-contained Python utility (`sync-rules.py`) to manage your own black/whitelist rules **and** subscribe to high-quality remote DNS blocklists — without needing to learn strict AdGuard syntax. It is zero-dependency (Python standard library only).
 
 ### Memory Profiles & Optimizations
@@ -180,7 +267,7 @@ The `toggle.sh` script reads two optional `.env` settings:
 For a detailed write-up of the DNS deadlock, CLI hang, and Tailscale GUI launch issues that motivated the safeguards in `toggle.sh`, see [stability_incident_report.md](stability_incident_report.md).
 
 
-## 10. Future Work
+## 11. Future Work
 - **Native Linux Deployment:** Test and benchmark the architecture on a native Linux host (e.g., Raspberry Pi) to verify the native `~75MB` raw container footprint without the macOS hypervisor overhead.
 - **Post-Quantum Cryptography (PQC):** Tailscale currently relies on standard Curve25519 elliptic curve cryptography, which is theoretically vulnerable to future "harvest now, decrypt later" quantum attacks. To achieve true post-quantum resistance, future iterations of this gateway could completely eliminate the Tailscale container and replace it with a raw WireGuard mesh using [Rosenpass](https://rosenpass.eu/) to negotiate post-quantum Pre-Shared Keys (PSKs).
 - **Decentralized Post-Quantum Blockchain Messaging:** To definitively defeat mass-surveillance dragnet tactics, future integrations could implement a hybrid protocol that is practically unbreakable against passive mass surveillance. By digitizing classic intelligence tradecraft, this architecture relies on five pillars:
@@ -193,9 +280,9 @@ For a detailed write-up of the DNS deadlock, CLI hang, and Tailscale GUI launch 
 
   The underlying principle is absolute: any network behavior that is conditional on a message existing is a protocol-level side channel. This approach ensures that the only remaining vulnerabilities are targeted physical or endpoint compromises, creating an incredibly robust, zero-trust communication channel.
 
-## 11. Acknowledgements
+## 12. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 
-## 12. License
+## 13. License
 
 This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](file:///Users/omar/Developer/nullexit/LICENSE) file for details.

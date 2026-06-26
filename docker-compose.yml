@@ -11,6 +11,7 @@ services:
       - "5354:5335/tcp"    # AdGuard DNS (TCP)
       - "80:80/tcp"        # AdGuard web interface
       - "41641:41641/udp"  # Tailscale WireGuard (direct connection to host)
+      - "1080:1080/tcp"    # SOCKS5 proxy (routed through WARP tunnel)
     environment:
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
@@ -34,7 +35,9 @@ services:
       # CRITICAL: Whitelist Tailscale's CGNAT range so P2P connections work.
       # Without this, Gluetun's strict firewall drops Tailscale peer traffic,
       # forcing all connections through slow DERP relays.
-      - FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10
+      # FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10
+    dns:
+      - 1.1.1.1
     sysctls:
       - net.ipv4.ip_forward=1
     volumes:
@@ -86,60 +89,45 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  socks-proxy:
+    image: python:3.13-alpine
+    container_name: socks-proxy
+    network_mode: service:warp
+    depends_on:
+      warp:
+        condition: service_healthy
+    volumes:
+      - ./socks5-proxy.py:/socks5-proxy.py:ro
+    command: python3 /socks5-proxy.py --bind 0.0.0.0 --port 1080
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import socket,struct; s=socket.create_connection((\"127.0.0.1\",1080), timeout=3); s.send(bytes([5,1,0])); r=s.recv(2); s.close(); exit(0 if r==bytes([5,0]) else 1)'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "1"
+
   routing-fix:
     image: alpine:3.20
     container_name: routing-fix
     network_mode: service:warp
-    # Share PID namespace with tailscale to allow 'pidof tailscaled' for SIGHUP signaling
-    pid: "service:tailscale"
+    # NOTE: Deliberately NOT sharing tailscale's PID namespace — the shared
+    # namespace caused routing-fix to be killed whenever tailscale restarted
+    # (e.g. during gluetun health-check flaps), which dropped all routing
+    # table changes and left traffic leaking through eth0 instead of tun0.
     cap_add:
       - NET_ADMIN
     depends_on:
       warp:
         condition: service_healthy
-    command: >
-      sh -c "
-        # ── Phase 1: One-time routing setup ──────────────────────────────
-        #
-        # Fix: Route exit-node traffic through WARP (tun0), not Docker bridge
-        # (eth0). Tailscale forwards exit-node packets in userspace, bypassing
-        # the kernel's policy routing (table 51820). Changing the main table's
-        # default to tun0 ensures Tailscale's socket uses the WARP tunnel.
-        #
-        # The existing rule 100 (from 172.18.0.2 lookup 200) still routes
-        # gluetun's own traffic (including the WARP WireGuard handshake)
-        # through eth0, so the tunnel itself stays up.
-        sleep 5
-        echo 'routing-fix: Setting main route default to tun0 (WARP)...'
-        ip route replace default dev tun0 2>> /dev/null || \
-          echo 'routing-fix: WARNING — could not set tun0 as default (tun0 may not be ready)'
-        # Ensure Docker subnet still routes through eth0 (bypasses VPN)
-        ip route replace 172.18.0.0/16 dev eth0 2>> /dev/null || true
-
-        # ── Phase 2: Monitor and re-inject Tailscale CGNAT rule ──────────
-        was_missing=0
-        while true; do
-          # Re-assert the default route periodically (gluetun may reset it)
-          ip route replace default dev tun0 2>> /dev/null || true
-          ip route replace 172.18.0.0/16 dev eth0 2>> /dev/null || true
-
-          if ip rule show | grep -q '100.64.0.0/10'; then
-            if [ $$was_missing -eq 1 ]; then
-              TS_PID=$$(pidof tailscaled)
-              if [ -n "$$TS_PID" ]; then
-                echo 'routing-fix: Rule restored — sending SIGHUP to tailscaled'
-                kill -HUP $$TS_PID 2>> /dev/null || true
-              fi
-              was_missing=0
-            fi
-          else
-            ip rule add to 100.64.0.0/10 lookup 52 pref 99 2>> /dev/null || true
-            echo 'routing-fix: Rule missing, re-injected'
-            was_missing=1
-          fi
-          sleep 5
-        done
-      "
+    volumes:
+      - ./routing-fix.sh:/routing-fix.sh:ro
+    command: sh -c "apk add --no-cache iptables iproute2 && sh /routing-fix.sh"
     restart: unless-stopped
     logging:
       driver: "json-file"
