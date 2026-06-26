@@ -148,18 +148,22 @@ This section documents the bugs, architecture limitations, and edge cases that w
 
 **Solution:** Replaced both with a **Python DNS proxy** (`dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
 
-### 9.2 Exit Node Traffic Bypasses WARP (Userspace Forwarding)
+### 9.2 Exit Node Routing Conflict & The SOCKS5 Failover
 
-**Problem:** Tailscale's Docker container (`tailscale/tailscale`) handles exit-node packet forwarding in userspace. When a packet arrives at the gateway, Tailscale decrypts it and creates a new socket in userspace to send it to the destination. This socket bypasses the kernel's routing stack and iptables entirely — it never hits the `FORWARD` chain, never matches policy routing rules, and therefore never goes through WARP's `tun0` interface.
+**Problem:** For days, Tailscale's exit node refused to return traffic back to the client (`rx 0`), leading to the assumption that Tailscale's userspace forwarding was bypassing `iptables` and ignoring the WARP `tun0` interface. In a desperate attempt to fix this, a **SOCKS5 proxy** (`socks5-proxy.py`) was introduced as a replacement.
 
-Even after fixing the routing table defaults, iptables counters showed 0 packets on `tailscale0` `FORWARD` rules despite the exit node actively forwarding traffic.
+**The Real Root Cause:** Tailscale's userspace forwarding was *not* the problem. The issue was an environment variable in Gluetun (`FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10`) that instructed the VPN container to hijack all Tailscale CGNAT traffic and forcibly route it out the unencrypted Docker bridge (`eth0`). This blackholed all return packets back to the client.
 
-**Solution:** Replaced the Tailscale exit node approach with a **SOCKS5 proxy** (`socks5-proxy.py`) running inside the WARP container's network namespace. The proxy creates outbound connections that DO respect the kernel routing table (table 200 → `tun0` → WARP). On the host, `networksetup -setsocksfirewallproxy` routes all system TCP traffic through the proxy. Verified with `curl --socks5-hostname` against Cloudflare's `/cdn-cgi/trace` — shows `warp=on`.
+**Solution:** Removed the offending `FIREWALL_OUTBOUND_SUBNETS` variable, immediately restoring the Tailscale exit node. Instead of removing the SOCKS5 proxy, we repurposed it into a **bulletproof failover** for when restrictive Wi-Fi networks block Tailscale UDP ports.
 
 Architecture after the fix:
 ```
-DNS:  Browser → 127.0.0.1:53 → Python proxy → TCP:5354 → AdGuard → WARP
-TCP:  Apps → SOCKS5:1080 → gateway container → tun0 → WARP → internet
+PRIMARY (Exit Node):
+DNS/TCP/UDP: Apps → Tailscale Exit Node → gateway container → tun0 → WARP → internet
+
+FAILOVER (SOCKS5 - if Tailscale is blocked by local Wi-Fi):
+DNS: Browser → 127.0.0.1:53 → Python proxy → TCP:5354 → AdGuard → WARP
+TCP: Apps → SOCKS5:1080 → gateway container → tun0 → WARP → internet
 Mesh: SSH/ping 100.x.x.x → utun5 → WireGuard → peers (independent of proxy)
 ```
 
