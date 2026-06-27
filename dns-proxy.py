@@ -12,7 +12,7 @@ import socket
 import struct
 import sys
 import os
-import threading
+from concurrent.futures import ThreadPoolExecutor
 
 LISTEN_ADDR = os.environ.get("LISTEN_ADDR", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("LISTEN_PORT", 53))
@@ -71,17 +71,19 @@ def main() -> None:
 
     print(f"dns-proxy: listening on UDP {LISTEN_ADDR}:{LISTEN_PORT} → TCP {TARGET_HOST}:{TARGET_PORT}", flush=True)
 
+    # Use a thread pool to handle concurrent DNS queries efficiently without thread exhaustion
+    executor = ThreadPoolExecutor(max_workers=64)
+
     while True:
         try:
             data, client_addr = sock.recvfrom(512)  # max DNS UDP size
-            # Spawn a thread for each query to handle them concurrently.
-            # This prevents queueing and timeouts during DNS bursts (e.g., opening many tabs).
-            threading.Thread(target=handle_query, args=(data, client_addr, sock), daemon=True).start()
+            executor.submit(handle_query, data, client_addr, sock)
         except KeyboardInterrupt:
             break
         except Exception:
             pass
 
+    executor.shutdown(wait=False)
     sock.close()
 
 
