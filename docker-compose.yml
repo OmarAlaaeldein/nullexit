@@ -114,7 +114,7 @@ services:
         max-file: "1"
 
   routing-fix:
-    image: alpine:3.20
+    image: alpine:3.24
     container_name: routing-fix
     network_mode: service:warp
     # NOTE: Deliberately NOT sharing tailscale's PID namespace — the shared
