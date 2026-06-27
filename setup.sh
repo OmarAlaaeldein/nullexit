@@ -196,23 +196,14 @@ ok "Auth key accepted."
 
 # ─── 6. AdGuard Home admin password ─────────────────────────────────────────
 step "AdGuard Home admin account"
-echo ""
 
-while true; do
-    read -rsp "  Set admin password (min 6 chars): " ADGUARD_PASSWORD; echo ""
-    if [[ ${#ADGUARD_PASSWORD} -lt 6 ]]; then
-        warn "Password too short. Try again."
-        continue
-    fi
-    read -rsp "  Confirm password:                " ADGUARD_CONFIRM; echo ""
-    [[ "$ADGUARD_PASSWORD" == "$ADGUARD_CONFIRM" ]] && break
-    warn "Passwords don't match. Try again."
-done
+# Hardcoded default credentials to prevent lockout
+# Username: admin
+# Password: nullexit
+ADGUARD_PASSWORD="nullexit"
+ADGUARD_PWD_ESC="nullexit"
+ok "Default password set to 'nullexit'."
 
-ok "Password set."
-
-# Escape password for safe embedding in JSON strings passed through sh -c
-ADGUARD_PWD_ESC=$(printf '%s' "$ADGUARD_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
 # ─── 7. Write .env ───────────────────────────────────────────────────────────
 step "Writing .env"

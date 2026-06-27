@@ -96,6 +96,15 @@ In automated headless browser tests (Lighthouse) loading ad-heavy sites like CNN
 
 While the initial network ping (First Contentful Paint) is marginally slower due to the double-encryption tunnel (Tailscale + WARP), the real-world browsing experience is measurably faster and much smoother because your browser doesn't have to execute dozens of heavy tracking scripts.
 
+### Dashboard Access & Parental Controls
+The AdGuard Home configuration is fully automated by `setup.sh`. To prevent accidental lockouts, the setup script hardcodes the default dashboard credentials. 
+
+To manage your rules, access the AdGuard Dashboard:
+1. Navigate to `http://<tailscale-ip-of-gateway>:3000` (or `http://100.100.21.8:3000` if using the static IP).
+2. Log in with Username: **`admin`** | Password: **`nullexit`**
+
+**Family & Parental Protection:** Because this exit node operates at the DNS level, it is incredibly powerful for family mesh networks. Inside the AdGuard dashboard, you can enable **Safe Search** (which intercepts and forces Google, Bing, and YouTube into family-safe modes at the network level, preventing users from bypassing it in their browser settings). You can also block specific apps (like TikTok) or subscribe to custom NSFW blocklists to instantly protect all devices connected to the exit node.
+
 ## 6. Quick Toggle Scripts (macOS & Windows)
 
 For convenience (e.g., temporarily disabling the gateway for gaming), this repository includes native quick-toggle scripts for both operating systems. 
