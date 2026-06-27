@@ -523,10 +523,16 @@ else
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
-    echo "Colima is not running. Starting Colima (0.65GB RAM allocation, vz VM, network address)..."
-    run_with_timeout 120 colima start --memory 0.65 --vm-type vz --network-address
+    echo "Colima is not running. Starting Colima (0.5GB RAM allocation, vz VM, network address)..."
+    run_with_timeout 120 colima start --memory 0.5 --vm-type vz --network-address
   else
     echo "Colima is already running."
+  fi
+
+  # 3b. Configure swap file inside the VM to prevent OOM on low-memory limits
+  if ! run_with_timeout 15 colima ssh -- grep -q 'swapfile' /proc/swaps >> output.log 2>&1; then
+    echo "Configuring 512MB swap file inside the VM to prevent OOM..."
+    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=512 status=none && chmod 600 /swapfile && mkswap /swapfile; fi && swapon /swapfile" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
   fi
 
   # 4. Clean up corrupted AdGuardHome configurations
