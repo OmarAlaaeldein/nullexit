@@ -64,6 +64,40 @@ run_gui_cmd() {
   fi
 }
 
+PID_FILE="/tmp/nullexit-caffeinate.pid"
+
+# Start macOS caffeinate to prevent sleep while gateway is running
+start_sleep_prevention() {
+  if ! command -v caffeinate >/dev/null 2>&1; then
+    echo "  [Warning] caffeinate tool not found. Sleep prevention unavailable."
+    return 1
+  fi
+
+  # Stop any existing sleep prevention process first to avoid duplicates
+  stop_sleep_prevention
+
+  echo "  Enabling system sleep prevention (caffeinate)..."
+  # Run caffeinate to prevent idle system sleep, redirecting all output.
+  # This prevents the system from sleeping while leaving the screen free to turn off.
+  nohup caffeinate -i >> output.log 2>&1 &
+  local caffe_pid=$!
+  echo "$caffe_pid" > "$PID_FILE"
+  echo "  Sleep prevention active (PID $caffe_pid). Your Mac won't sleep while the gateway is running."
+}
+
+# Stop macOS caffeinate when gateway is stopped
+stop_sleep_prevention() {
+  if [ -f "$PID_FILE" ]; then
+    local caffe_pid
+    caffe_pid=$(cat "$PID_FILE")
+    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o comm= 2>/dev/null | grep -q caffeinate; then
+      echo "  Stopping system sleep prevention (caffeinate PID $caffe_pid)..."
+      kill "$caffe_pid" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+  fi
+}
+
 # Cleanup handler to restore DNS to 1.1.1.1 on error or user interrupt (Ctrl+C / SIGTERM / SIGHUP)
 cleanup_handler() {
   local exit_code=$?
@@ -86,6 +120,9 @@ cleanup_handler() {
 
     # Stop local DNS proxy if running
     stop_local_dns_proxy
+
+    # Stop sleep prevention
+    stop_sleep_prevention
 
     # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
     if [ -n "$ACTIVE_SERVICE" ]; then
@@ -498,6 +535,9 @@ if is_gateway_active; then
   # 3. Stop local DNS proxy if running
   stop_local_dns_proxy
 
+  # Stop sleep prevention
+  stop_sleep_prevention
+
   # 4. Nuke leftover network state so internet actually works after teardown
   cleanup_network_state
 
@@ -843,6 +883,9 @@ else
   fi
 
   echo -e "\nGateway has been successfully STARTED."
+
+  # Prevent system from going to sleep while gateway is running
+  start_sleep_prevention
 fi
 
 SUCCESS_RUN=true

@@ -165,6 +165,22 @@ else
   warn "Docker not available — skipping"
 fi
 
+# ─── 6b. Stopping sleep prevention (caffeinate) ──────────────────────────────
+step "Stopping sleep prevention"
+PID_FILE="/tmp/nullexit-caffeinate.pid"
+if [ -f "$PID_FILE" ]; then
+  CAFFE_PID=$(cat "$PID_FILE")
+  if [ -n "$CAFFE_PID" ] && kill -0 "$CAFFE_PID" 2>/dev/null && ps -p "$CAFFE_PID" -o comm= 2>/dev/null | grep -q caffeinate; then
+    kill "$CAFFE_PID" 2>/dev/null || true
+    ok "Sleep prevention stopped (PID $CAFFE_PID)"
+  else
+    warn "Sleep prevention process not running, cleaning up stale PID file"
+  fi
+  rm -f "$PID_FILE"
+else
+  ok "Sleep prevention was not active"
+fi
+
 # ─── 7. Power-cycle Wi-Fi ────────────────────────────────────────────────────
 step "Power-cycling Wi-Fi"
 WIFI_PORT=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
