@@ -230,7 +230,7 @@ When modifying DNS rules, two hard-to-debug issues can block legitimate traffic 
 
 ### Debugging & Development
 - **Logs:** If the `toggle.sh` script fails silently or behaves unexpectedly, all standard error output from its background processes and CLI calls is dumped into `output.log` in this directory. Always check `output.log` first.
-- **Development Reference:** Before debugging, troubleshooting, or attempting to modify the routing architecture, **you MUST read** [`archive/devref.md`](archive/devref.md). This file contains the complete development history, a deep-dive analysis of the `rx 0` CGNAT bug, and an explanation of the conflicting macOS/Docker iptables stacks (`nftables` vs `legacy`). Do not attempt to fix network issues without reading it.
+- **Development Reference:** Before debugging, troubleshooting, or attempting to modify the routing architecture, **you MUST read** [`devref.md`](devref.md). This file contains the complete development history, a deep-dive analysis of the `rx 0` CGNAT bug, and an explanation of the conflicting macOS/Docker iptables stacks (`nftables` vs `legacy`). Do not attempt to fix network issues without reading it.
 
 
 ## 10. Custom Ad-Blocking Rules Engine
