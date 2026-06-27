@@ -275,7 +275,7 @@ step "Waiting for AdGuard Home setup wizard"
 echo "  (up to 60 seconds...)"
 
 MAX=60; ELAPSED=0
-until docker exec warp curl -sf http://127.0.0.1:3000 >> output.log 2>&1; do
+until docker exec routing-fix curl -sf http://127.0.0.1:3000 >> output.log 2>&1; do
     sleep 2; ELAPSED=$((ELAPSED + 2))
     [[ $ELAPSED -ge $MAX ]] && die "AdGuard Home didn't come up.\nDebug with: docker compose logs adguardhome"
 done
@@ -287,7 +287,7 @@ step "Configuring AdGuard Home"
 
 # Run all API calls in a single docker exec sh -c so the session cookie file
 # is shared across calls without leaving the container.
-docker exec warp sh -c "
+docker exec routing-fix sh -c "
   set -e
 
   # Step 1: Complete the setup wizard (sets admin creds + DNS port to 5335)
