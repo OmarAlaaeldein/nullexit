@@ -570,9 +570,11 @@ else
   fi
 
   # 3b. Configure swap file inside the VM to prevent OOM on low-memory limits
+  # We also set vm.swappiness=10 so the Linux kernel strictly prefers physical RAM
+  # and avoids unnecessarily wearing out the SSD with proactive background swapping.
   if ! run_with_timeout 15 colima ssh -- grep -q 'swapfile' /proc/swaps >> output.log 2>&1; then
     echo "Configuring 512MB swap file inside the VM to prevent OOM..."
-    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=512 status=none && chmod 600 /swapfile && mkswap /swapfile; fi && swapon /swapfile" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
+    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=512 status=none && chmod 600 /swapfile && mkswap /swapfile; fi && swapon /swapfile && sysctl vm.swappiness=10" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
   fi
 
   # 4. Clean up corrupted AdGuardHome configurations
