@@ -117,6 +117,11 @@ As revealed by the Snowden disclosures, there are two distinct types of collecti
 
 **nullexit** is designed exclusively to defeat the first. By tunneling all DNS and HTTP traffic through WARP, you completely blind your ISP, cellular provider, and local Wi-Fi networks. Your ISP never sees the plaintext traffic to log in the first place, entirely removing you from the passive dragnet and opportunistic data harvesting. You move yourself into the "requires active effort" category. At the same time, because we accept that defending against physical device access is an exercise in diminishing returns, we don't cripple the network—allowing us to retain 7ms native latency and full bandwidth.
 
+### Host-Level Firewall Protection (Inbound & Outbound)
+While the `nullexit` gateway encrypts your traffic over the network, your host machine remains vulnerable to rogue local applications. To achieve complete security, it is highly recommended to run a dual-firewall setup on your host machine:
+1. **Inbound Firewall (macOS Native)**: Enable the built-in macOS Application Firewall (`System Settings -> Network -> Firewall`). This drops unsolicited incoming connection attempts and random port scans from the local network.
+2. **Outbound Firewall (LuLu)**: The built-in macOS firewall does *not* block outbound traffic. If malware attempts to exfiltrate data or bypass your gateway's secure DNS by using a hardcoded DNS-over-HTTPS (DoH) resolver, the Apple firewall will silently allow it. To prevent this, install [LuLu](https://objective-see.org/products/lulu.html) (free & open-source). LuLu intercepts every outbound connection attempt at the kernel level, allowing you to explicitly block unauthorized applications from phoning home or bypassing the Tailscale mesh.
+
 ### Implementation Details
 - **SOCKS5 vs. Default Gateways**: A standard container uses Docker's `172.18.0.1` bridge gateway, which translates directly to the host Mac's Wi-Fi interface (exposing traffic to the ISP). We bypass this by exclusively binding traffic to the SOCKS5 proxy running inside the Cloudflare WARP container.
 
