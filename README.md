@@ -96,6 +96,21 @@ In automated headless browser tests (Lighthouse) loading ad-heavy sites like CNN
 
 While the initial network ping (First Contentful Paint) is marginally slower due to the double-encryption tunnel (Tailscale + WARP), the real-world browsing experience is measurably faster and much smoother because your browser doesn't have to execute dozens of heavy tracking scripts.
 
+### Automated Benchmarking
+If you want to verify these speedups on your own machine, this repository includes an automated benchmark suite in the `benchmarks/` directory.
+
+Simply run:
+```bash
+./benchmarks/benchmark.sh
+```
+This script will automatically:
+1. Run a raw Python download test (`test_load.py`) and a headless Google Chrome `Lighthouse` HTML render test with the gateway **ON**.
+2. Seamlessly toggle the gateway **OFF**.
+3. Re-run all tests to establish a baseline.
+4. Toggle the gateway back **ON**.
+
+You can then compare the physical download speed and CPU "Time to Interactive" scores right in your terminal.
+
 ### Dashboard Access & Parental Controls
 The AdGuard Home configuration is fully automated by `setup.sh`. To prevent accidental lockouts, the setup script hardcodes the default dashboard credentials. 
 
