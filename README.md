@@ -72,15 +72,13 @@ docker compose up -d
 4. Visit a site like [ipinfo.io](https://ipinfo.io/) or [whatismyip.com](https://www.whatismyip.com/).
 5. Your IP should now reflect a Cloudflare IP instead of your local ISP, confirming the tunnel-in-tunnel (Tailscale -> WARP) traffic flow is working successfully.
 
-### Enable Ad-Blocking on Mobile (MagicDNS)
-To ensure your phone and other Tailnet devices receive AdGuard filtering while using the exit node, you must configure MagicDNS:
-1. Go to the **Tailscale Admin Console → DNS**.
-2. Under **Global Nameservers**, click **Add Nameserver → Custom...**
-3. Enter the Tailscale IP of your gateway container (e.g., `100.100.21.8`).
-4. Toggle ON **Override local DNS**.
-5. Enable **MagicDNS** if it isn't already.
+### Zero-Config Ad-Blocking (MagicDNS)
+To ensure your phone and other Tailnet devices receive AdGuard filtering while using the exit node, you only need standard MagicDNS enabled — no custom Global Nameservers are required.
 
-**How this works:** MagicDNS assigns `100.100.100.100` as the DNS server for your phone. When your phone makes a DNS request, the local Tailscale app intercepts it and forwards it across the mesh to your Global Nameserver (`100.100.21.8:53`). Our gateway container automatically intercepts port 53 traffic using `PREROUTING` iptables rules and seamlessly redirects it into AdGuard (port `5335`), stripping out ads before forwarding the query securely through Cloudflare WARP.
+1. Go to the **Tailscale Admin Console → DNS**.
+2. Ensure **MagicDNS** is enabled. (This sets `100.100.100.100` as the local DNS server for your devices).
+
+**How this works:** When a device (like your phone) routes its traffic through the **nullexit** exit node, all traffic — including DNS queries to `100.100.100.100` — passes through the gateway container. Our container automatically intercepts *any* traffic destined for port 53 using `PREROUTING` iptables rules. It seamlessly redirects those queries into the AdGuard container (port `5335`), stripping out ads before forwarding the query securely through Cloudflare WARP. You don't need to manually configure the container's Tailscale IP as a DNS server.
 
 ## 5. AdGuard Home DNS Filtering
 
