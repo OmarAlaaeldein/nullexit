@@ -83,6 +83,9 @@ To ensure your phone and other Tailnet devices receive AdGuard filtering while u
 
 **How this works:** When a device (like your phone) routes its traffic through the **nullexit** exit node, all traffic — including DNS queries to `100.100.100.100` — passes through the gateway container. Our container automatically intercepts *any* traffic destined for port 53 using `PREROUTING` iptables rules. It seamlessly redirects those queries into the AdGuard container (port `5335`), stripping out ads before forwarding the query securely through Cloudflare WARP. You don't need to manually configure the container's Tailscale IP as a DNS server.
 
+> [!WARNING]
+> **Bandwidth Doubling on the Host Network:** When a remote device (like your phone on cellular or another Wi-Fi network) uses the exit node, the exit node machine must first download the traffic from the internet (via WARP), and then immediately upload it to your phone (via the Tailscale mesh). This means streaming a 1GB video on your phone will consume **1GB of download AND 1GB of upload (2GB total)** on the Wi-Fi or Ethernet network the exit node is connected to. Be mindful of this if your exit node machine is connected to a metered network or a cellular hotspot with strict data caps. *(Your phone's remote network will only consume the standard 1GB of download).*
+
 ## 5. AdGuard Home DNS Filtering
 
 **nullexit** includes a seamlessly integrated instance of **AdGuard Home** to act as a network-wide ad and tracker sinkhole for all your Tailscale devices.
