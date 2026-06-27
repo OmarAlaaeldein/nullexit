@@ -1,0 +1,402 @@
+# nullexit — Development Reference & Resolved Issues
+
+> **Last updated:** June 27, 2026
+> **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
+
+---
+
+## 1. What Is nullexit?
+
+nullexit is a **Tunnel-in-Tunnel VPN gateway** that chains **Tailscale** (mesh VPN) through **Cloudflare WARP** (exit VPN). It runs on a macOS host inside Docker containers managed by **Colima** (lightweight Linux VM). The goal: any device on the user's Tailscale mesh can use this gateway as an exit node, and all traffic exits through Cloudflare WARP — achieving double encryption, ISP invisibility, and network-wide ad-blocking via **AdGuard Home**.
+
+### Traffic Flow
+```
+Phone/Laptop → Tailscale mesh (WireGuard) → Mac host → Docker container
+  → Tailscale decrypts → Gluetun re-encrypts → WARP tun0 → Cloudflare → Internet
+```
+
+### SOCKS5 Failover Path (if exit node is unavailable)
+```
+DNS:  Browser → host 127.0.0.1:53 → Python proxy → TCP:5354 → AdGuard → WARP DNS
+TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WARP → Internet
+```
+
+---
+
+## 2. Architecture
+
+### Containers (all share `warp`'s network namespace via `network_mode: service:warp`)
+| Container | Image | Role |
+|-----------|-------|------|
+| `warp` | `qmcgaw/gluetun:v3.41.1` | Gluetun WireGuard client → Cloudflare WARP. Owns the network namespace. Strict firewall. |
+| `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
+| `socks-proxy` | `python:3.13-alpine` | RFC 1928 SOCKS5 proxy. Outbound connections go through kernel routing → tun0 → WARP. |
+| `routing-fix` | `alpine:3.24` | Sidecar that maintains routing tables + iptables rules every 5 seconds. |
+| `adguardhome` | `adguard/adguardhome:v0.107.77` | DNS sinkhole for ads/trackers. Listens on port 5335. Upstream DNS: `127.0.0.1:53` (through WARP). |
+
+### Port Mappings (on host via Colima)
+| Host Port | Container Port | Protocol | Purpose |
+|-----------|---------------|----------|---------|
+| 5354 | 5335 | TCP+UDP | AdGuard DNS |
+| 80 | 80 | TCP | AdGuard web UI |
+| 41641 | 41641 | UDP | Tailscale WireGuard direct |
+| 1080 | 1080 | TCP | SOCKS5 proxy |
+
+### Host Components
+- **Colima VM** — Linux VM running Docker (512MB RAM + 512MB swap)
+- **tailscaled** — Standalone Tailscale daemon via `brew install tailscale` + `brew services start tailscale` (NOT the GUI `.app`)
+- **macOS network settings** — DNS, SOCKS proxy, routing all manipulated by `toggle.sh`
+
+---
+
+## 3. Key Files
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `toggle.sh` | ~900 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
+| `setup.sh` | ~392 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
+| `docker-compose.yml` | ~160 | Service definitions for all 5 containers. |
+| `routing-fix.sh` | ~90 | Maintains routing tables (table 200 for SOCKS5, table 199 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Runs in a 5-second loop. |
+| `post-rules.txt` | ~16 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
+| `socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
+| `dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
+| `sync-rules.py` | ~300 | Ad-blocking rule compiler. Fetches remote blocklists, deduplicates subdomains (~60% reduction), compiles to AdGuard syntax. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache. |
+| `recover.sh` | ~280 | Nuclear recovery script. Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
+| `black_list.txt` | ~70 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
+| `white_list.txt` | ~120 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
+| `.env` | ~14 | WARP WireGuard keys, Tailscale auth key, rule profile. **Contains secrets.** |
+| `ADGUARD_IP.txt` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
+
+---
+
+## 4. toggle.sh Flow
+
+### State Detection
+`is_gateway_active()` returns true if EITHER containers are running OR host DNS is not `1.1.1.1`. This dual check prevents the script from starting when it should stop (e.g., containers crashed but DNS is still hijacked).
+
+### START Path (gateway OFF → ON)
+1. **Reset DNS to 1.1.1.1** — Prevents deadlocks during startup
+2. **Disconnect host Tailscale** — `tailscale down` (prevents exit-node routing during container boot)
+3. **Compile DNS rules** — `python3 sync-rules.py`
+4. **Boot Colima VM** — `colima start --memory 0.5` if not running
+5. **Configure VM swap** — 512MB swap file inside the VM to prevent OOM
+6. **Clean corrupted AdGuard config** — Remove empty `AdGuardHome.yaml`
+7. **Start containers** — `docker compose up -d`
+8. **Wait for gateway Tailscale** — Poll `tailscale status` for "offers exit node" (up to 60s, abort at 40 consecutive NoState)
+9. **Resolve gateway IP** — From `ADGUARD_IP.txt` or `docker compose exec tailscale tailscale ip -4`
+10. **Connect host to mesh** — Verify `tailscaled` is running (auto-start if needed), then `tailscale up --reset --accept-dns=false --exit-node=`
+11. **Pre-flight checks** — [1/3] `tailscale ping` gateway, [2/3] `dig +tcp` AdGuard DNS, [3/3] WARP container internet
+12. **If all pass** → Set exit node + hijack DNS to gateway IP (single server, no fallback)
+13. **If any fail** → Enable SOCKS5 proxy + local DNS proxy as fallback
+14. **Final DNS re-force** — `force_dns_to_gateway` called again after exit-node transition (tailscaled clobbers DNS briefly)
+15. **Enable sleep prevention** — `caffeinate -i` in background to prevent idle sleep
+
+### STOP Path (gateway ON → OFF)
+1. Disconnect host Tailscale (`tailscale down`)
+2. `docker compose down -t 5`
+3. Reset DNS to 1.1.1.1
+4. Stop local DNS proxy
+5. **Stop sleep prevention** — Kill caffeinate process
+6. Full network state cleanup (proxies off, DNS cache flush, route flush, Wi-Fi power cycle)
+
+### Safety Mechanisms
+- `run_with_timeout()` — Pure-bash watchdog for every system command (15s–120s)
+- `cleanup_handler()` — Trap on ERR/INT/TERM/HUP restores DNS to 1.1.1.1, kills caffeinate, and tears down Tailscale
+- `force_dns_to_gateway()` — Sets DNS and VERIFIES via `networksetup -getdnsservers` (3 attempts with backoff)
+- `SUCCESS_RUN` flag — Cleanup only runs if script didn't complete successfully
+- `start_sleep_prevention()` / `stop_sleep_prevention()` — Manages `caffeinate -i` via PID file at `/tmp/nullexit-caffeinate.pid`
+
+---
+
+## 5. Routing & Firewall Architecture (Inside Container)
+
+### IP Rules (`ip rule show`)
+| Priority | Match | Table | Purpose |
+|----------|-------|-------|---------|
+| 99 | `to 100.64.0.0/10` | 199 | CGNAT range → Tailscale routes (injected by routing-fix) |
+| 100 | `from 172.18.0.2` | 200 | Container's own traffic (SOCKS5 proxy) → tun0 |
+| 101 | all | 51820 | Gluetun's WireGuard fwmark → tun0 |
+
+### Table 200 (SOCKS5 proxy traffic)
+- `162.159.192.1 via $DOCKER_GW dev eth0` — WARP endpoint exception (prevents tunnel loop)
+- `default dev tun0` — Everything else through WARP
+
+### iptables (TWO separate stacks!)
+- **nftables backend** (`iptables`) — Used by Gluetun's `post-rules.txt`. FORWARD policy DROP.
+- **legacy backend** (`iptables-legacy`) — Used by Tailscale's `ts-forward`. FORWARD policy ACCEPT.
+- Both stacks apply to every packet. FORWARD RELATED,ESTABLISHED must exist in BOTH.
+
+### post-rules.txt (loaded by Gluetun)
+```
+FORWARD: ACCEPT for tailscale0 in/out
+INPUT: ACCEPT for tailscale0
+NAT POSTROUTING: MASQUERADE on tun0
+MANGLE: TCP MSS clamp to 1180
+NAT PREROUTING: Redirect DNS (53) → 5335 on tailscale0 and eth0
+ip6tables: DROP FORWARD on tailscale0
+```
+
+---
+
+## 6. macOS Quirks to Remember
+
+1. **Colima SSH tunnel is TCP-only** — UDP ports (like 5354/udp) are NOT accessible from host. Use `dig +tcp` or the Python DNS proxy (UDP→TCP converter).
+2. **`docker compose exec -T` injects `\r`** — Always `tr -d '\r'` when capturing output for comparisons or `networksetup` commands.
+3. **`brew services` can get stuck** — Fix with `sudo brew services restart tailscale`. Common state: `brew services list` shows `started` but `tailscale status` shows "Tailscale is stopped."
+4. **No `timeout` command** — macOS lacks GNU `timeout`. Use the `run_with_timeout()` bash function.
+5. **`sudo -v` prompts even with NOPASSWD** — Use `sudo -n` (non-interactive) everywhere.
+6. **DNS is scoped to en0** — macOS scutil DNS resolver is scoped to en0 (Wi-Fi). DNS changes on other interfaces (like USB Ethernet) are ignored unless en0's service is also updated. The script always sets DNS on BOTH `$ACTIVE_SERVICE` and `$EN0_SERVICE`.
+7. **tailscaled clobbers DNS during exit-node transition** — `force_dns_to_gateway` is called a second time at the end of the ENABLE branch to counteract this.
+8. **`tailscale up --reset`** resets all unspecified flags to defaults — Every `--reset` call MUST also pass `--accept-dns=false` explicitly or tailscaled re-enables DNS management.
+
+---
+
+## 7. Environment Variables
+
+### `.env` File
+| Variable | Purpose |
+|----------|---------|
+| `WIREGUARD_PRIVATE_KEY` | WARP WireGuard private key (from `wgcf generate`) |
+| `WIREGUARD_PUBLIC_KEY` | WARP WireGuard public key |
+| `WIREGUARD_ADDRESSES` | WARP WireGuard address (e.g., `172.16.0.2/32`) |
+| `TS_AUTHKEY` | Tailscale auth key for the container |
+| `GATEWAY_RULE_PROFILE` | Rule compilation tier: `light`, `medium`, `heavy` |
+| `GATEWAY_BYPASS_PING` | (Optional) `true` to proceed even if pre-flight checks fail |
+| `GATEWAY_USE_EXIT_NODE` | (Optional) `false` to skip exit node, DNS-only mode |
+
+---
+
+## 8. Diagnostic Commands
+
+### Container Health
+```bash
+docker ps --format '{{.Names}} {{.Status}}'
+docker compose exec -T tailscale tailscale status
+docker compose exec -T warp wget -qO- --timeout=5 https://www.cloudflare.com/cdn-cgi/trace
+```
+
+### SOCKS5 Proxy
+```bash
+curl --socks5-hostname 127.0.0.1:1080 --max-time 5 -s https://www.cloudflare.com/cdn-cgi/trace
+```
+
+### AdGuard DNS
+```bash
+dig +tcp @127.0.0.1 -p 5354 google.com +short +timeout=5
+```
+
+### Firewall & Routing
+```bash
+# nftables FORWARD chain
+docker compose exec -T warp iptables -L FORWARD -v --line-numbers
+# Legacy FORWARD chain
+docker compose exec -T warp iptables-legacy -L FORWARD -v --line-numbers
+# IP rules + routing tables
+docker compose exec -T warp ip rule show
+docker compose exec -T warp ip route show table 199
+docker compose exec -T warp ip route show table 200
+```
+
+### Host macOS
+```bash
+tailscale status
+brew services list | grep tailscale
+networksetup -getdnsservers Wi-Fi
+networksetup -getsocksfirewallproxy Wi-Fi
+sysctl net.inet.ip.forwarding
+```
+
+---
+
+## 9. Development Issue Tracker
+
+This section documents issues encountered during development, their status, and resolutions.
+
+### 9.1 Exit Node Return Path (`rx 0`) — RESOLVED
+**Symptom:** Gateway showed `tx 936 rx 0` — transmitted but never received return traffic.
+
+**Root Cause:** `docker-compose.yml` included `FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10`. Gluetun created a strict routing rule (`ip rule add to 100.64.0.0/10 lookup 199`, priority 99) that forced all Tailscale CGNAT traffic to bypass the VPN via the Docker bridge. Return packets were sent to the macOS host instead of back through `tailscale0`.
+
+**Fix:** Removed `FIREWALL_OUTBOUND_SUBNETS` entirely. `routing-fix.sh` now injects `lookup 52`, and return packets correctly flow back into `tailscale0`. The SOCKS5 proxy was repurposed as a bulletproof failover.
+
+### 9.2 Gluetun Resets nftables FORWARD Rules
+**Symptom:** FORWARD RELATED,ESTABLISHED rule disappears after Gluetun health check.
+
+**Fix:** `routing-fix.sh` re-adds to both iptables backends every 5 seconds. Legacy backend (policy ACCEPT) acts as safety net.
+
+### 9.3 docker compose exec `\r` Injection
+**Fix:** All `docker compose exec` output piped through `tr -d '\r'`.
+
+### 9.4 Colima VM Memory / OOM
+**Symptom:** AdGuard gets OOMKilled loading large blocklists at 0.6GB VM RAM.
+
+**Fix:** VM set to 512MB RAM + 512MB swap file inside VM. Subdomain deduplication reduces rules by ~60%. Memory profiles (`light`/`medium`/`heavy`) let users trade off coverage for memory.
+
+### 9.5 tailscaled Daemon Broken State
+**Symptom:** `brew services list` shows `started` but `tailscale status` shows "stopped".
+
+**Fix:** `sudo brew services restart tailscale`. Toggle script now detects and auto-restarts.
+
+### 9.6 Stderr Invisibly Swallowed
+**Symptom:** Failures were silent due to stderr redirected to `output.log`.
+
+**Fix:** Tailscale wait loop now shows output. Critical commands show errors inline.
+
+### 9.7 Missing iptables in routing-fix Container
+**Root Cause:** `alpine:3.20` does not have iptables installed. Commands failed silently with `2>/dev/null || true`.
+
+**Fix:** Updated `docker-compose.yml` to `apk add --no-cache iptables iproute2` before `routing-fix.sh`.
+
+### 9.8 DOCKER_GW Variable Parsing Bug
+**Root Cause:** `ip route show default` printed two lines; `awk '{print $3}'` picked up both, causing route commands to fail.
+
+**Fix:** Added `head -1` to the parsing chain.
+
+---
+
+## 10. Resolved Issues (from README)
+
+These bugs and edge cases were discovered and resolved during development.
+
+### 10.1 DNS Proxy: TCP Wire Format Mismatch (socat / dnsmasq)
+
+**Problem:** When the Tailscale data plane is unavailable (DERP relay only), the script falls back to a local DNS proxy that forwards queries from host UDP:53 to Docker's TCP:5354 (AdGuard). The `socat` and `dnsmasq` approaches both failed.
+
+- **socat** forwards raw bytes — it does not prepend the 2-byte length prefix that DNS-over-TCP requires. AdGuard parses the stream incorrectly and returns garbage.
+- **dnsmasq** tries UDP first to reach the upstream (`127.0.0.1#5354`), but Colima's SSH tunnel only forwards TCP. With a single upstream server, dnsmasq doesn't fall back to TCP even with `--timeout=1`.
+
+**Solution:** Replaced both with a **Python DNS proxy** (`dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
+
+### 10.2 Exit Node Routing Conflict & The SOCKS5 Failover
+
+**Problem:** For days, Tailscale's exit node refused to return traffic back to the client (`rx 0`), leading to the assumption that Tailscale's userspace forwarding was bypassing `iptables` and ignoring the WARP `tun0` interface. In a desperate attempt to fix this, a **SOCKS5 proxy** (`socks5-proxy.py`) was introduced as a replacement.
+
+**The Real Root Cause:** Tailscale's userspace forwarding was *not* the problem. The issue was an environment variable in Gluetun (`FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10`) that instructed the VPN container to hijack all Tailscale CGNAT traffic and forcibly route it out the unencrypted Docker bridge (`eth0`). This blackholed all return packets back to the client.
+
+**Solution:** Removed the offending `FIREWALL_OUTBOUND_SUBNETS` variable, immediately restoring the Tailscale exit node. Instead of removing the SOCKS5 proxy, we repurposed it into a **bulletproof failover** for when restrictive Wi-Fi networks block Tailscale UDP ports.
+
+Architecture after the fix:
+```
+PRIMARY (Exit Node):
+DNS/TCP/UDP: Apps → Tailscale Exit Node → gateway container → tun0 → WARP → internet
+
+FAILOVER (SOCKS5 - if Tailscale is blocked by local Wi-Fi):
+DNS: Browser → 127.0.0.1:53 → Python proxy → TCP:5354 → AdGuard → WARP
+TCP: Apps → SOCKS5:1080 → gateway container → tun0 → WARP → internet
+Mesh: SSH/ping 100.x.x.x → utun5 → WireGuard → peers (independent of proxy)
+```
+
+### 10.3 Pre-Flight Check 1: Wrong `tailscale ping` Flag
+
+**Problem:** Check 1 of the pre-flight connectivity checks used `--c 1` (double dash) but `tailscale ping` accepts `-c 1` (single dash). The invalid flag caused the command to exit with code 1, marking the check as FAIL even though the gateway was reachable.
+
+**Fix:** Changed `--c 1` to `-c 1`.
+
+### 10.4 Pre-Flight Check 1: DERP Relay Exit Code
+
+**Problem:** Even with the correct `-c 1` flag, `tailscale ping` exits with code 1 when the connection goes through a DERP relay (`direct connection not established`) — even though a pong was successfully received (28ms via DERP(tor)). The check treated relayed connections as failures.
+
+**Fix:** Changed the check from relying on exit code to piping stdout through `grep -q "pong"`. This accepts relayed connections as valid (they work fine for the exit node use case), while still failing on true timeouts or unreachable peers.
+
+### 10.5 Container Default Route Bypasses WARP
+
+**Problem:** Inside the WARP container's network namespace, the main routing table's default route was via `eth0` (Docker bridge), not `tun0` (WARP tunnel). While gluetun uses policy routing (rule 101 → table 51820 → `tun0`) for most traffic, traffic originating from the container's own IP (`172.18.0.2`) hits rule 100 (`from 172.18.0.2 lookup 200`), whose default was also via `eth0`. This caused the SOCKS5 proxy's outbound connections to bypass WARP.
+
+**Fix:** Updated the `routing-fix` container to:
+1. Change the main table's default route to `default dev tun0`
+2. Change table 200's default route to `default dev tun0`
+3. Add a specific route for the WARP WireGuard endpoint (`162.159.192.1`) through `eth0` via the Docker gateway in table 200, preventing a tunnel loop
+4. Re-assert all routes every 5 seconds (gluetun may reset them on health checks)
+5. Dynamically detect the Docker subnet from `ip route show dev eth0` instead of hardcoding `172.18.0.0/16`
+
+### 10.6 IPv6 Exit-Node Leak
+
+**Problem:** Tailscale supports IPv6, but WARP/gluetun is IPv4-only. IPv6 packets forwarded through the exit node would leak through the Docker bridge unencrypted.
+
+**Fix:** Added `ip6tables -A FORWARD -i tailscale0 -j DROP` to `post-rules.txt`, blocking all IPv6 forwarded traffic from the Tailscale interface.
+
+### 10.7 Hardcoded Docker Subnet in Routing Fix
+
+**Problem:** The `routing-fix` container hardcoded `172.18.0.0/16` and `172.18.0.1` for the Docker bridge subnet and gateway. If Docker's bridge network changed (after `docker network prune`, Colima restart, or on a different machine), these routes would be wrong.
+
+**Fix:** Detection is now dynamic using `ip route show`:
+- `DOCKER_NET=$(ip route show dev eth0 | grep -v default | head -1 | awk '{print $1}')`
+- `DOCKER_GW=$(ip route show default | awk '{print $3}')`
+
+This extracts the actual subnet and gateway directly from the routing table, working with any subnet size (`/16`, `/24`, `/20`, etc.).
+
+### 10.8 SOCKS5 Proxy Threading Race Condition
+
+**Problem:** The `forward` function in `socks5-proxy.py` called `select.select([src, dst], [], [])` which raised `ValueError: file descriptor cannot be a negative integer (-1)` when one thread closed a socket while the other thread was selecting on it.
+
+**Fix:** Added `ValueError` exception handling around `select.select()` and `recv()` calls. When a file descriptor becomes negative, the thread breaks out of the forwarding loop cleanly instead of crashing.
+
+### 10.9 Docker Healthcheck: Multi-line Python in CMD Array
+
+**Problem:** The socks-proxy healthcheck used a `CMD` array with a multi-line Python string. YAML collapsed the newlines, causing the `#` comment to comment out the rest of the code and the `assert` statement to be mangled into `as`.
+
+**Fix:** Changed from `["CMD", "python3", "-c", "..."]` to `["CMD-SHELL", "python3 -c '...'"]` with a single-line Python expression. Uses a real SOCKS5 handshake (sends `[5, 1, 0]`, expects `[5, 0]`) instead of a simple TCP port check.
+
+### 10.10 Sudo Credential Caching Removed
+
+**Problem:** The script used `sudo -v` at startup to cache sudo credentials, plus a background `SUDO_KEEPER_PID` loop refreshing them every 60 seconds. This required interactive password entry even with NOPASSWD sudoers configured, because `sudo -v` itself prompts.
+
+**Fix:** Removed the entire `sudo -v` + `SUDO_KEEPER_PID` section. All privileged commands now use `sudo -n` (non-interactive), which works silently because the user has NOPASSWD rules in `/etc/sudoers.d/nullexit` for the specific commands needed (`networksetup`, `python3`, `dscacheutil`, `killall`, `pkill`, `route`, `ifconfig`).
+
+---
+
+## 11. Deep Dive: Exit Node Return Path Analysis (June 26, 2026)
+
+This section preserves the detailed packet-level analysis that led to identifying and fixing the `rx 0` bug.
+
+### The exit node was probably never going to work in this container topology
+
+Here's the packet path traced by reading `ip rule show` and the routing tables live:
+
+**Outbound (S24 → internet):**
+1. S24 sends packet to gateway via Tailscale mesh
+2. Gateway's tailscale0 (kernel TUN, `TS_USERSPACE=false`) decrypts → packet enters FORWARD chain
+3. Packet has src=`100.87.42.87` (S24), dst=some internet IP
+4. FORWARD chain (nftables): Rule 1 matches (`-i tailscale0 -j ACCEPT`) ✅
+5. Routing decision for the forwarded packet. Which ip rule matches?
+   - Rule 98: `to 172.18.0.0/16` → no (dst is internet)
+   - Rule 99: `to 100.64.0.0/10` → no (dst is internet)
+   - Rule 100: `from 172.18.0.2` → **NO** (src is `100.87.42.87`, not the container IP!)
+   - Rule 101: `not fwmark 0xca6c lookup 51820` → **YES** (no fwmark on forwarded packets)
+6. Table 51820: `default dev tun0` → packet goes out through WARP ✅
+7. NAT POSTROUTING: `MASQUERADE on tun0` → src becomes WARP IP ✅
+8. Packet exits through WARP to internet ✅ (in theory)
+
+**Return (internet → S24):**
+1. Return packet arrives on tun0, conntrack de-MASQUERADEs dst back to `100.87.42.87`
+2. Routing decision for dst=`100.87.42.87`:
+   - Rule 99: `to 100.64.0.0/10 lookup 199` → **YES**
+3. Table 199: `100.64.0.0/10 via 172.18.0.1 dev eth0` → **sends it to the Docker gateway!**
+4. **This is wrong.** The packet should go to tailscale0 (to be re-encrypted and sent to S24), but table 199 sends it out eth0 to the Docker bridge host.
+
+**Table 199 is the smoking gun.** It has one route: `100.64.0.0/10 via 172.18.0.1 dev eth0`. This sends ALL Tailscale CGNAT return traffic out the Docker bridge to the host — not back through tailscale0. The return packet leaves the container's network namespace entirely, hits the host's routing stack, and gets dropped because the host has no idea what to do with a raw packet for `100.87.42.87`.
+
+### Why table 199 exists and why it's wrong for exit node traffic
+
+Table 199 + the CGNAT rule (pref 99) was designed so that the **container itself** can reach other Tailscale peers (e.g., for mesh management, DERP relay). For that use case, routing CGNAT traffic via the Docker bridge to the host (which has its own tailscaled) makes sense.
+
+But for **forwarded exit node traffic**, the return packet needs to go back through tailscale0 inside the container — not out to the host. The CGNAT rule intercepts the return packet before it can be routed back to tailscale0 through the main table or Tailscale's own routing (table 52, which is at pref 5270).
+
+### The SOCKS5 path works because it dodges all of this
+
+SOCKS5 proxy creates connections **from the container's own IP** (`172.18.0.2`). So:
+- ip rule 100 (`from 172.18.0.2 lookup 200`) matches ✅
+- Table 200 has `default dev tun0` ✅
+- Return traffic comes back to `172.18.0.2` on tun0, conntrack de-NATs, proxy sends response to client ✅
+
+No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
+
+### Summary of findings
+
+| Finding | Status | Evidence |
+|---------|--------|----------|
+| Table 199 CGNAT route hijacks exit node return traffic | **Fixed** | Changed `lookup 199` to `lookup 52` in `routing-fix.sh`. Return packets now route via tailscale0. |
+| FORWARD RELATED,ESTABLISHED missing | **Fixed** | Installed `iptables` via apk in `docker-compose.yml`. Rule now injects successfully. |
+| DOCKER_GW variable parsing error | **Fixed** | Added `head -1` in `routing-fix.sh`. |
+| `FIREWALL_OUTBOUND_SUBNETS` was the root cause | **Fixed** | Removed from `docker-compose.yml`. Gluetun no longer hijacks CGNAT routing. |
+| Host tailscaled error state from aggressive `tailscale down` | **Mitigated** | Toggle script now detects and auto-restarts. |
