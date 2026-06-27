@@ -33,10 +33,6 @@ services:
       - BLOCK_MALICIOUS=off
       - BLOCK_SURVEILLANCE=off
       - BLOCK_ADS=off
-      # CRITICAL: Whitelist Tailscale's CGNAT range so P2P connections work.
-      # Without this, Gluetun's strict firewall drops Tailscale peer traffic,
-      # forcing all connections through slow DERP relays.
-      # FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10
     dns:
       - 1.1.1.1
     sysctls:
