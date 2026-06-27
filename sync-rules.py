@@ -215,11 +215,23 @@ def main():
     # Initialize master blacklist with local entries
     black_list = set(local_black_list)
 
-    # Fetch and merge remote blacklists based on selected profile
+    # Fetch and merge remote blacklists concurrently
     urls_to_fetch = PROFILES[profile]
-    for url in urls_to_fetch:
-        remote_domains = fetch_remote_domains(url)
-        black_list.update(remote_domains)
+    
+    import concurrent.futures
+    # Use multithreading to fetch all lists at exactly the same time. 
+    # Python releases the GIL during network I/O, making threads perfect here.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(urls_to_fetch)) as executor:
+        # Submit all download tasks
+        future_to_url = {executor.submit(fetch_remote_domains, url): url for url in urls_to_fetch}
+        
+        # As each thread finishes downloading its list, merge it into the master set
+        for future in concurrent.futures.as_completed(future_to_url):
+            try:
+                remote_domains = future.result()
+                black_list.update(remote_domains)
+            except Exception as e:
+                print(f"Error fetching a remote list: {e}")
 
     # Detect contradictions and prioritize whitelist
     contradictions = black_list.intersection(white_list)
