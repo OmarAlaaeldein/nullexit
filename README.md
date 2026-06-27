@@ -106,38 +106,65 @@ For convenience (e.g., temporarily disabling the gateway for gaming), this repos
 - **Low-Latency Relay Path**: By default, forcing Tailscale traffic through WARP's strict NAT completely blackholes Tailscale's control and relay packets. **nullexit** mitigates this using a background policy routing script (`routing-fix.sh`) that identifies Tailscale's encrypted UDP packets (port `41641`) and forcibly ejects them out the raw `eth0` interface (bypassing WARP). This ensures Tailscale can reliably connect to the nearest local DERP relay (`relay "tor"` in Toronto) with very low latency (~27ms) instead of getting blocked.
 - **macOS Virtualization & DERP Fallback**: Because macOS runs Docker inside a Linux virtual machine (Colima), mapped UDP ports go through a user-space network proxy on the host. This proxy rewrites packet headers and masks source IPs/ports, which breaks Tailscale's STUN/WireGuard UDP hole-punching. Consequently, traffic to/from local peers on macOS will always fall back to a DERP relay rather than establishing a direct P2P connection. For latency-sensitive applications like competitive gaming, it is recommended to disable the exit node and connect directly.
 
-## 8. Architecture & Security Insights
+## 8. Privacy Architecture, Threat Model & Upgrades
 
-### Threat Model: Passive Dragnet vs. Targeted Surveillance
-Many privacy setups fail by attempting to defend against state-level targeted actors (e.g., using Tor), which destroys internet speeds, breaks apps, and introduces severe latency for a threat model that rarely applies to regular individuals. **nullexit** is calibrated for the real world. 
+### Layered Defense: What This Gateway Protects Against
+This gateway stacks three layers of defense targeting different attack surfaces:
+- **Layer 1 — ISP-Level Surveillance (Cloudflare WARP):** Your ISP is your most immediate privacy threat. In the US, ISPs can legally sell your browsing metadata to advertisers and are forced to comply with secret, gagged National Security Letters (NSLs). WARP routes all traffic through Cloudflare's network, so your ISP sees only an encrypted WireGuard tunnel to a Cloudflare IP.
+- **Layer 2 — DNS Tracking (AdGuard Home):** DNS is the phone book of the internet. By default, queries go to your ISP's resolver, giving them a complete log of your traffic. AdGuard Home intercepts all DNS queries from devices on your Tailscale network, blocks trackers/ads before connections are made, and resolves queries through the WARP tunnel.
+- **Layer 3 — Device Identity and IP Exposure (Tailscale):** On untrusted networks (coffee shops, public Wi-Fi), your device's IP is exposed. Tailscale creates an encrypted WireGuard mesh between your devices, routing all traffic safely to your home gateway exit node.
 
-As revealed by the Snowden disclosures, there are two distinct types of collection:
-1. **Bulk/Passive Surveillance**: Upstream taps at the ISP and backbone level that collect everything automatically and query it later. This scales infinitely with no marginal cost per person.
-2. **Targeted/Active Surveillance**: Subpoenas or physical access targeting a specific individual. This requires a paper trail, legal effort, and immense friction.
+### The Documented Threat: Why This Matters
+This architecture is calibrated against documented mass surveillance programs revealed in the Snowden disclosures:
+- **PRISM:** Direct bulk collection of communication content from major tech providers.
+- **UPSTREAM:** Tapping physical undersea/backbone fiber optic cables directly, collecting metadata and content in bulk.
+- **XKeyscore:** An indexing system allowing retroactive search of unencrypted traffic.
+- **MUSCULAR:** Infiltration of unencrypted internal datacenter interconnect links.
 
-**nullexit** is designed exclusively to defeat the first. By tunneling all DNS and HTTP traffic through WARP, you completely blind your ISP, cellular provider, and local Wi-Fi networks. Your ISP never sees the plaintext traffic to log in the first place, entirely removing you from the passive dragnet and opportunistic data harvesting. You move yourself into the "requires active effort" category. At the same time, because we accept that defending against physical device access is an exercise in diminishing returns, we don't cripple the network—allowing us to retain 7ms native latency and full bandwidth.
+Passive bulk collection of browsing metadata is not paranoia; it is a documented reality. By double-encrypting and routing traffic, **nullexit** prevents your ISP from harvesting your metadata.
 
-### Host-Level Firewall Protection (Inbound & Outbound)
-While the `nullexit` gateway encrypts your traffic over the network, your host machine remains vulnerable to rogue local applications. To achieve complete security, it is highly recommended to run a dual-firewall setup on your host machine:
-1. **Inbound Firewall (macOS Native)**: Enable the built-in macOS Application Firewall (`System Settings -> Network -> Firewall`). This drops unsolicited incoming connection attempts and random port scans from the local network.
-2. **Outbound Firewall (LuLu)**: The built-in macOS firewall does *not* block outbound traffic. If malware attempts to exfiltrate data or bypass your gateway's secure DNS by using a hardcoded DNS-over-HTTPS (DoH) resolver, the Apple firewall will silently allow it. To prevent this, install [LuLu](https://objective-see.org/products/lulu.html) (free & open-source). LuLu intercepts every outbound connection attempt at the kernel level, allowing you to explicitly block unauthorized applications from phoning home or bypassing the Tailscale mesh.
+### Trust Assumptions & Shifting
+Every component in this stack shifts trust rather than eliminating it:
+1. **Physical Device Integrity:** You trust that your physical devices (phone, host computer) are not compromised.
+2. **Cloudflare Integrity:** You trust Cloudflare not to correlate your WARP tunnel with decrypted exit traffic.
+3. **Tailscale Integrity:** You trust Tailscale's coordination server not to perform a man-in-the-middle attack on WireGuard public keys.
 
-### Implementation Details
-- **SOCKS5 vs. Default Gateways**: A standard container uses Docker's `172.18.0.1` bridge gateway, which translates directly to the host Mac's Wi-Fi interface (exposing traffic to the ISP). We bypass this by exclusively binding traffic to the SOCKS5 proxy running inside the Cloudflare WARP container.
+The goal is to ensure **no single provider has a complete picture**. Your ISP sees an encrypted tunnel, Mullvad/WARP sees traffic with no account identity, and Tailscale/Headscale sees node topology but not content.
 
-### Traffic Flow & Double Encryption
-1. **Device to Gateway (Tailscale):** Traffic leaving your client device (e.g., your phone) is encrypted using Tailscale's WireGuard implementation. It travels securely over the internet or cellular network to your **nullexit** gateway.
-2. **Gateway to Internet (Cloudflare WARP):** Inside the Docker network namespace, the Tailscale container passes the decrypted traffic to the Gluetun container. Gluetun immediately re-encrypts the traffic using standard WireGuard and forces it out through Cloudflare WARP's infrastructure.
+### Recommended Upgrades (Hardening the Stack)
+For users requiring higher security levels, the gateway is designed to be fully compatible with these four hardening upgrades:
 
-This creates a **Double Encryption** scenario. While this inherently introduces a slight latency penalty due to the encryption overhead and geographical routing (bouncing to your home gateway before routing to the broader internet), it ensures total privacy from local ISPs, public Wi-Fi administrators, and even the host network itself.
+#### 1. Mullvad VPN (Replacing Cloudflare WARP)
+Cloudflare is a US company subject to US jurisdiction. Swedish-based Mullvad is a privacy-first alternative:
+- **Proven No-Logs:** Swedish police raided Mullvad's offices in 2023 and left empty-handed. No logs are kept.
+- **No Identity Linkage:** Mullvad accounts are random numbers. You can pay using cash or Monero.
+- **Gluetun Setup:** Replace `VPN_SERVICE_PROVIDER=custom` with `VPN_SERVICE_PROVIDER=mullvad` and provide your Mullvad WireGuard configuration in `docker-compose.yml`.
 
-**Note on Threat Model:** The outer WARP tunnel terminates at Cloudflare. While your traffic is double-encrypted in transit to the gateway and then to the edge, you are ultimately trusting Cloudflare to route the decrypted (inner HTTPS) traffic. Cloudflare will see the destination IPs and SNIs of your requests, though the actual payload remains HTTPS encrypted.
+#### 2. Ephemeral Auth Keys (Reducing Tailscale Identity Linkage)
+Logging into Tailscale with Google cryptographically links your Tailscale network to your Google identity.
+- **How to harden:** Generate an **ephemeral auth key** in the Tailscale admin panel, and set it as `TS_AUTHKEY` in your `.env` file. These keys are used once to authenticate and cause the node to automatically disappear from your admin panel after it disconnects, breaking persistent identity linkage.
 
-### Threat Model & Trust Assumptions
-While this architecture effectively neutralizes local network threats (like man-in-the-middle attacks on cafe Wi-Fi) because traffic is heavily encrypted before touching a public network, it introduces a significant trust assumption:
-1. **Physical Mesh Integrity:** Your physical devices (phone, host computer) and their private keys are not compromised.
-2. **Cloudflare Integrity:** You are fully trusting Cloudflare not to maliciously log, intercept, or correlate your WARP connection with your decrypted exit traffic. This is a non-trivial assumption for a serious threat model.
-3. **Operational Risk (`TS_AUTHKEY`):** Although the container environment is configured with `TS_AUTH_ONCE=true` to prevent expiration crash loops (by ignoring the `TS_AUTHKEY` environment variable once the container is authenticated), the key will still remain permanently visible in the raw `docker inspect` output. Anyone with socket access to your local Docker daemon can view it. However, this risk is largely moot: gaining socket access requires host-level access, which violates the first assumption of our threat model (Physical Mesh Integrity). If an attacker can run `docker inspect`, the physical device is already compromised.
+#### 3. Pre-Shared Keys / PSKs (Content Encryption)
+Standard Tailscale relies on asymmetric keys distributed by their coordination server.
+- **How to harden:** Generate and add a WireGuard **Pre-Shared Key (PSK)** manually between your peer nodes. This adds a symmetric encryption layer that Tailscale's coordination server has no knowledge of, blinding Tailscale from reading your transit content.
+
+#### 4. Headscale (Self-Hosted Coordination Server)
+Headscale is an open-source, self-hosted implementation of the Tailscale coordination server.
+- **How to harden:** Point your Tailscale clients to a self-hosted Headscale instance on a VPS. This completely eliminates Tailscale the company, keeping all metadata and node topology entirely under your control.
+
+### The Complete Hardened Stack
+
+| Layer | Default Setup | Upgraded Setup |
+|---|---|---|
+| **VPN Exit** | Cloudflare WARP (US company) | Mullvad (Swedish, proven no-logs, anonymous payment) |
+| **DNS Resolver** | AdGuard via WARP | AdGuard via Mullvad |
+| **Coordination** | Tailscale (US company, OAuth) | Headscale (Self-hosted, no third-party) |
+| **Authentication** | OAuth login / persistent keys | Ephemeral keys (no identity persistence) |
+| **Content Security** | WireGuard asymmetric only | WireGuard + PSKs (coordination server blind) |
+
+### Honest Remaining Limitations
+- **Traffic Analysis / Metadata Surveillance:** Passive fiber tapping (UPSTREAM) can observe connection timestamps, data volumes, and IP ranges without reading content. Defeating traffic analysis requires mixing networks (like Tor) or continuous dummy packet padding, which heavily degrades performance.
+- **Targeted State-Level Adversaries:** If a nation-state decides to actively target you, consumer-grade VPNs/proxies are not a complete shield. This stack is designed to defeat bulk passive surveillance and corporate dragnet collection.
 
 ### Advanced Routing Hacks (Under the Hood)
 Building this required navigating intense firewall and routing conflicts between two VPN clients fighting for control over the same network stack:
