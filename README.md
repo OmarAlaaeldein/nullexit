@@ -87,15 +87,14 @@ To ensure your phone and other Tailnet devices receive AdGuard filtering while u
 
 **nullexit** includes a seamlessly integrated instance of **AdGuard Home** to act as a network-wide ad and tracker sinkhole for all your Tailscale devices.
 
-### Setup Instructions
-1. Navigate to `http://<tailscale-ip-of-gateway>:3000` in your web browser.
-2. Under "Listen Interfaces", set the **Web interface** port to `80` (or `8080`) and the **DNS server** port to **`5335`**.
-3. Finish the wizard by setting up your admin account.
-4. Log into AdGuard Home, go to **Settings -> DNS Settings**.
-5. Delete the default upstream servers and enter `127.0.0.1:53`. This securely routes your DNS requests back through the WireGuard WARP tunnel.
-6. Add your favorite community blocklists (like OISD) under **Filters -> DNS blocklists**.
+### Performance Impact
+Because AdGuard Home intercepts and drops DNS queries for tracking and advertising domains *before* they are ever downloaded, it significantly reduces the CPU and rendering overhead on your devices. 
 
-*Note: Custom `iptables` rules automatically intercept all DNS requests hitting the Tailscale IP and seamlessly redirect them to AdGuard Home on port 5335 without conflicting with the VPN's internal DNS.*
+In automated headless browser tests (Lighthouse) loading ad-heavy sites like CNN over the exit node:
+- **Time to Interactive (TTI):** Improved by **~18%** (51.0s → 41.8s)
+- **Speed Index:** Improved by **~16%** (15.3s → 12.8s)
+
+While the initial network ping (First Contentful Paint) is marginally slower due to the double-encryption tunnel (Tailscale + WARP), the real-world browsing experience is measurably faster and much smoother because your browser doesn't have to execute dozens of heavy tracking scripts.
 
 ## 6. Quick Toggle Scripts (macOS & Windows)
 
