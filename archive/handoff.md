@@ -175,10 +175,18 @@ This means if `tailscale set` fails, if `tailscale down` fails, if `brew service
 
 **Trade-off:** It's intentional, but it means running `toggle.sh` for any reason resets your network settings.
 
-### Issue #9: Wi-Fi Power Cycle in cleanup_network_state
-**Symptoms:** When the script fails or is interrupted, the cleanup handler power-cycles Wi-Fi. This causes a ~5-10 second internet outage.
+### Issue #10: Colima OOM and AdGuard Config Loss / setup.sh curl Failure
+**Symptoms:** Under heavy network activity (e.g. concurrent app updates on an iPhone), the gateway connection slows down and eventually stops working completely. AdGuard Home starts running the setup wizard on port 3000 instead of running the DNS server on port 5335, breaking DNS resolution across the entire tailnet.
 
-**Fix:** Could be made optional or removed if the other cleanup steps (DNS restore, proxy disable) are sufficient.
+**Root Cause:**
+1. The Colima VM was limited to `0.6GB` of RAM. Heavy traffic through the double-encrypted tunnels caused a CPU/RAM spike, triggering the Linux kernel OOM (Out of Memory) killer to terminate `AdGuardHome`.
+2. The abrupt `SIGKILL` terminated AdGuard Home while it was active, resulting in an empty or missing `AdGuardHome.yaml` file on the host. When the container restarted, it treated it as a fresh launch.
+3. Furthermore, `setup.sh` was executing curl configuration calls inside the `warp` container, which lacks `curl`, causing setup/re-setup to fail.
+
+**Fix Applied:**
+1. Increased Colima VM RAM limit in `toggle.sh` to `1.2GB` (and then tuned to `0.65GB` per user request) to prevent OOM kills while keeping it lightweight.
+2. Added `curl` to the `routing-fix` container's commands in `docker-compose.yml`, and updated `setup.sh` to run the curl configuration commands inside `routing-fix`.
+3. Re-generated a valid `AdGuardHome.yaml` configuration and restarted the service.
 
 ---
 

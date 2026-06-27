@@ -523,8 +523,8 @@ else
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
-    echo "Colima is not running. Starting Colima (0.6GB RAM allocation)..."
-    run_with_timeout 120 colima start --memory 0.6
+    echo "Colima is not running. Starting Colima (0.65GB RAM allocation, vz VM, network address)..."
+    run_with_timeout 120 colima start --memory 0.65 --vm-type vz --network-address
   else
     echo "Colima is already running."
   fi
