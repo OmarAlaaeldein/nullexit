@@ -132,7 +132,7 @@ Every component in this stack shifts trust rather than eliminating it:
 The goal is to ensure **no single provider has a complete picture**. Your ISP sees an encrypted tunnel, Mullvad/WARP sees traffic with no account identity, and Tailscale/Headscale sees node topology but not content.
 
 ### Recommended Upgrades (Hardening the Stack)
-For users requiring higher security levels, the gateway is designed to be fully compatible with these four hardening upgrades:
+For users requiring higher security levels, the gateway is designed to be fully compatible with these five hardening upgrades:
 
 #### 1. Mullvad VPN (Replacing Cloudflare WARP)
 Cloudflare is a US company subject to US jurisdiction. Swedish-based Mullvad is a privacy-first alternative:
@@ -152,12 +152,20 @@ Standard Tailscale relies on asymmetric keys distributed by their coordination s
 Headscale is an open-source, self-hosted implementation of the Tailscale coordination server.
 - **How to harden:** Point your Tailscale clients to a self-hosted Headscale instance on a VPS. This completely eliminates Tailscale the company, keeping all metadata and node topology entirely under your control.
 
+#### 5. Hardening AdGuard Upstreams (Blinding Cloudflare via Mullvad DoH)
+By default, AdGuard Home queries Gluetun's internal Unbound resolver (`127.0.0.1:53`), which forwards queries to Cloudflare (`1.1.1.1`) or Google (`8.8.8.8`) over plaintext. Although this traffic is encrypted inside the WARP tunnel, Cloudflare still acts as your ultimate DNS resolver.
+- **How to harden:** You can completely blind Cloudflare from your DNS query content by pointing AdGuard Home's upstream resolvers directly to Mullvad's encrypted DNS-over-HTTPS (DoH) endpoints:
+  - `https://dns.mullvad.net/dns-query` (Plain DNS resolution)
+  - `https://adblock.dns.mullvad.net/dns-query` (Mullvad DNS-level ad blocking)
+  - `https://extended.dns.mullvad.net/dns-query` (Mullvad ads + trackers + malware blocking)
+- **Why this works:** When configured, AdGuard Home wraps queries in HTTPS before sending them. Cloudflare WARP only sees encrypted HTTPS packets going to Mullvad's IPs. Cloudflare is completely blind to your DNS queries, and Mullvad (a proven no-logs provider) resolves them.
+
 ### The Complete Hardened Stack
 
 | Layer | Default Setup | Upgraded Setup |
 |---|---|---|
 | **VPN Exit** | Cloudflare WARP (US company) | Mullvad (Swedish, proven no-logs, anonymous payment) |
-| **DNS Resolver** | AdGuard via WARP | AdGuard via Mullvad |
+| **DNS Resolver** | AdGuard via WARP (plaintext upstreams) | AdGuard via Mullvad DoH (Cloudflare-blind queries) |
 | **Coordination** | Tailscale (US company, OAuth) | Headscale (Self-hosted, no third-party) |
 | **Authentication** | OAuth login / persistent keys | Ephemeral keys (no identity persistence) |
 | **Content Security** | WireGuard asymmetric only | WireGuard + PSKs (coordination server blind) |
