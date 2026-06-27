@@ -76,7 +76,7 @@ def main() -> None:
 
     while True:
         try:
-            data, client_addr = sock.recvfrom(512)  # max DNS UDP size
+            data, client_addr = sock.recvfrom(4096)  # Support EDNS0 (up to 4096 bytes) to prevent truncation
             executor.submit(handle_query, data, client_addr, sock)
         except KeyboardInterrupt:
             break
