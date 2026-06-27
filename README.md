@@ -77,6 +77,9 @@ To ensure your phone and other Tailnet devices receive AdGuard filtering while u
 
 1. Go to the **Tailscale Admin Console → DNS**.
 2. Ensure **MagicDNS** is enabled. (This sets `100.100.100.100` as the local DNS server for your devices).
+3. **CRITICAL: Disable "Private DNS" on your mobile device.** Modern smartphones have built-in "Private DNS" or "Secure DNS" features that force DNS queries over TLS (port 853) or HTTPS (port 443). This bypasses the gateway's port 53 interception entirely, breaking ad-blocking and sometimes breaking the internet connection entirely.
+   - **Android:** Go to `Settings -> Connections -> More connection settings -> Private DNS`, and change it to **Off**.
+   - **iOS:** Ensure you don't have any custom DNS profiles installed in `Settings -> General -> VPN & Device Management`.
 
 **How this works:** When a device (like your phone) routes its traffic through the **nullexit** exit node, all traffic — including DNS queries to `100.100.100.100` — passes through the gateway container. Our container automatically intercepts *any* traffic destined for port 53 using `PREROUTING` iptables rules. It seamlessly redirects those queries into the AdGuard container (port `5335`), stripping out ads before forwarding the query securely through Cloudflare WARP. You don't need to manually configure the container's Tailscale IP as a DNS server.
 
@@ -125,9 +128,7 @@ When the gateway is toggled ON, the script automatically launches `caffeinate -i
 - **No Exposed Host Ports**: Because all communication relies purely on outbound tunnels, **nullexit** does not map or expose any ports to your local host machine.
 - **Low-Latency Relay Path**: By default, forcing Tailscale traffic through WARP's strict NAT completely blackholes Tailscale's control and relay packets. **nullexit** mitigates this using a background policy routing script (`routing-fix.sh`) that identifies Tailscale's encrypted UDP packets (port `41641`) and forcibly ejects them out the raw `eth0` interface (bypassing WARP). This ensures Tailscale can reliably connect to the nearest local DERP relay (`relay "tor"` in Toronto) with very low latency (~27ms) instead of getting blocked.
 - **macOS Virtualization & DERP Fallback**: Because macOS runs Docker inside a Linux virtual machine (Colima), mapped UDP ports go through a user-space network proxy on the host. This proxy rewrites packet headers and masks source IPs/ports, which breaks Tailscale's STUN/WireGuard UDP hole-punching. Consequently, traffic to/from local peers on macOS will always fall back to a DERP relay rather than establishing a direct P2P connection. For latency-sensitive applications like competitive gaming, it is recommended to disable the exit node and connect directly.
-- **Encrypted DNS Stalls (Android & iOS)**: Modern mobile operating systems have built-in "Private DNS" or encrypted DNS profile mechanisms (DNS-over-TLS/DoT) that can conflict with the exit node's AdGuard Home resolver. If a mobile device's internet fails completely when connected to the gateway:
-  - **Android (Samsung/Google):** Go to `Settings -> Connections -> More connection settings -> Private DNS`, and change it from *Automatic* (which attempts to query DNS-over-TLS on port `853` and triggers a security lockout when rejected by Tailscale) to **Off**.
-  - **iOS (iPhone/iPad):** If you have active DNS profiles (like NextDNS or AdGuard iOS profiles), go to `Settings -> General -> VPN, DNS, & Device Management -> DNS`, and change it from your custom profile back to **Automatic**.
+
 
 ## 8. Privacy Architecture, Threat Model & Upgrades
 
