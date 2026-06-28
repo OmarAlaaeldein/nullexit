@@ -287,6 +287,11 @@ This section documents issues encountered during development, their status, and 
 - The underlying Tailscale `100.x.x.x` IPv4 address will remain exactly the same.
 - The **MagicDNS name** will change to match the new hostname. Users must remember to update their SFTP/SSH clients to use the new MagicDNS address.
 
+### 9.11 Logging Architecture
+For debugging, logs are strictly segmented based on the component's lifecycle:
+- **`output.log` (Host-side):** Contains all standard error (`stderr`) and verbose output from the host scripts (`toggle.sh`, `recover.sh`, `setup.sh`). Since the `rule-compiler` container is ephemeral and deleted after running, its logs (and any Python errors from `sync-rules.py`) are extracted and appended to this file before deletion.
+- **`docker logs <container>` (Guest-side):** The persistent containers (`warp`, `tailscale`, `routing-fix`, `adguardhome`, `socks-proxy`) use the Docker `json-file` logging driver with a strict `max-size` (1m-10m) to prevent VM disk exhaustion. Use standard `docker logs` to view them.
+
 ---
 
 ## 10. Resolved Issues (from README)

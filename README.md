@@ -294,7 +294,7 @@ When modifying DNS rules, two hard-to-debug issues can block legitimate traffic 
 2. *Modifier Ordering Syntax:* When attempting to override wildcard whitelist rules with modifiers (e.g. blocking `an.facebook.com` using `$important` while whitelisting the rest of Facebook), the AdGuard separator `^` must precede the modifier. Writing `||domain$important^` is invalid and ignored; it must be written as `||domain^$important`. The rules engine now automatically checks for custom modifiers and structures them correctly.
 
 ### Debugging & Development
-- **Logs:** If the `toggle.sh` script fails silently or behaves unexpectedly, all standard error output from its background processes and CLI calls is dumped into `output.log` in this directory. Always check `output.log` first.
+- **Logs:** If the `toggle.sh` script fails silently or behaves unexpectedly, all standard error output from its background processes, CLI calls, and the ephemeral `rule-compiler` container is dumped into `output.log` in this directory. Always check `output.log` first.
 - **Development Reference:** Before debugging, troubleshooting, or attempting to modify the routing architecture, **you MUST read** [`devref.md`](devref.md). This file contains the complete development history, a deep-dive analysis of the `rx 0` CGNAT bug, and an explanation of the conflicting macOS/Docker iptables stacks (`nftables` vs `legacy`). Do not attempt to fix network issues without reading it.
 
 
