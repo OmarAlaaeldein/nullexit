@@ -383,16 +383,16 @@ To prevent this, you can configure the TCP Maximum Segment Size (MSS) clamp in y
 
 > [!NOTE]
 > **Trivia: The "Boomerang" Topology (Nested Hotspots)**  
-> What happens to your mesh traffic if the Mac *hosting* the Nullexit Gateway loses internet and connects to a friend's Windows Mobile Hotspot (which is also on the Tailscale mesh)? 
+> What happens to your mesh traffic if PC-1 *hosting* the Nullexit Gateway loses internet and connects to PC-2's Mobile Hotspot (which is also on the Tailscale mesh)? 
 > 
-> If you are away from home using your phone on cellular, and your phone sends a web request to your Mac's exit node, you create a hilarious **Double-Airspace Boomerang**:
-> 1. Your phone sends a Tailscale packet over cellular to the internet.
-> 2. The packet arrives at the Windows hotspot.
-> 3. Windows transmits the packet **over Wi-Fi** to your Mac.
-> 4. The Mac routes it internally to the Docker Gateway container.
-> 5. The Gateway unwraps the Tailscale encryption, re-wraps it in WARP encryption, and hands it back to the Mac.
-> 6. The Mac transmits the new WARP packet **back over the exact same Wi-Fi connection** to the Windows hotspot.
-> 7. The Windows hotspot finally sends it out to Cloudflare.
+> If you are away from home using Phone-1 on cellular, and Phone-1 sends a web request to PC-1's exit node, you create a hilarious **Double-Airspace Boomerang**:
+> 1. Phone-1 sends a Tailscale packet over cellular to the internet.
+> 2. The packet arrives at the PC-2 hotspot.
+> 3. PC-2 transmits the packet **over Wi-Fi** to PC-1.
+> 4. PC-1 routes it internally to the Docker Gateway container.
+> 5. The Gateway unwraps the Tailscale encryption, re-wraps it in WARP encryption, and hands it back to PC-1.
+> 6. PC-1 transmits the new WARP packet **back over the exact same Wi-Fi connection** to the PC-2 hotspot.
+> 7. PC-2 finally sends it out to Cloudflare.
 > 
 > A single web request physically travels through the air across the room *twice* just to load a page! Because this architecture stacks multiple nested NATs and MTU bottlenecks, Tailscale might fail to P2P hole-punch and fall back to a high-latency DERP relay. But thanks to the centralized `1120` MSS clamp inside the gateway, even a packet making this chaotic journey will seamlessly shrink to fit without ever fragmenting or stalling!
 
