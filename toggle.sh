@@ -525,6 +525,9 @@ if is_gateway_active; then
 
   echo "Stopping Docker containers..."
   docker compose down -t 5
+  
+  echo -e "\nStopping Colima VM to free up host RAM and battery..."
+  run_with_timeout 30 colima stop >> output.log 2>&1 || echo "Warning: Failed to stop Colima gracefully."
 
   # The host's DNS was hijacked to the gateway IP during ENABLE; now that the
   # gateway is down, restore DNS to 1.1.1.1 immediately so subsequent lookups
