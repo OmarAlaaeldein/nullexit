@@ -80,9 +80,14 @@ start_sleep_prevention() {
   stop_sleep_prevention
 
   echo "  Enabling system sleep prevention (caffeinate)..."
-  # Run caffeinate to prevent idle system sleep, redirecting all output.
-  # This prevents the system from sleeping while leaving the screen free to turn off.
-  nohup caffeinate -i >> output.log 2>&1 &
+  # Run caffeinate wrapped in a bash trap to prevent idle system sleep.
+  # Critically, this traps macOS shutdown signals (SIGTERM) and automatically
+  # flushes hijacked DNS back to normal via recover.sh before the Mac powers off.
+  nohup bash -c "
+    trap '\"$PWD/recover.sh\" >> \"$PWD/output.log\" 2>&1; exit 0' SIGTERM SIGINT SIGHUP
+    caffeinate -i &
+    wait \$!
+  " >> output.log 2>&1 &
   local caffe_pid=$!
   echo "$caffe_pid" > "$PID_FILE"
   echo "  Sleep prevention active (PID $caffe_pid). Your Mac won't sleep while the gateway is running."
