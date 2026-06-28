@@ -45,7 +45,7 @@ ip route replace "${DOCKER_NET}" dev eth0 2>/dev/null || true
 # to both to ensure it survives regardless of which backend has policy DROP.
 #
 # Packet flow: S24 outgoing (tailscale0->eth0) ACCEPTed by first rule.
-# Return traffic (eth0->eth0 via table 199 to host) needs RELATED,ESTABLISHED
+# Return traffic (eth0->eth0 via table 52 to host) needs RELATED,ESTABLISHED
 # to match the conntrack entry created by the outgoing flow.
 add_fwd_related_established() {
   # nftables backend (used by gluetun's post-rules.txt)
