@@ -462,3 +462,15 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 **Problem:** If a remote blocklist URL went permanently offline (404 Not Found), the Python `urllib` request would return the 404 HTML string. The script would aggressively regex-parse this HTML, find no domains, and overwrite the healthy local cache with a 0-domain file. This effectively disabled ad-blocking until the URL was fixed.
 
 **Fix:** Implemented a defensive programming sanity check in `sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 1,000. If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, logs a `WARNING: Domain count suspiciously low`, and keeps the previous day's healthy cache intact.
+
+### 10.20 Cellular Networks & PMTUD Blackholes (The 1280 Byte Limit)
+
+**Experiment:** Conducted a live packet sweep from the Mac host to an Android client connected via a cellular network + Tailscale DERP relay using `ping -D -s <size>`.
+
+**Result:**
+- Packets with a payload of `1252` bytes (+ 28 bytes IP/ICMP headers = **1280 bytes total**) succeeded perfectly with ~60ms latency.
+- Packets with a payload of `1253` bytes (**1281 bytes total**) and above resulted in a silent timeout.
+
+**Analysis:** The cellular network (or the Tailscale DERP relay) enforces a strict MTU of 1280 bytes. Critically, it acts as a "PMTUD Blackhole" — it silently drops packets larger than 1280 bytes instead of returning an ICMP "Fragmentation Needed" warning. If the exit node tries to send a standard 1500-byte internet packet to the phone over this link, it vanishes, causing web pages to stall permanently.
+
+**Conclusion:** This empirically validates the absolute necessity of the TCP MSS clamping rule in `post-rules.txt`. By artificially clamping the MSS to `1120` (or `1180`), we ensure the TCP payload + headers + double-WireGuard overhead never exceeds the strict 1280-byte ceiling of the cellular mesh link.
