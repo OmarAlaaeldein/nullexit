@@ -501,9 +501,24 @@ route add -host 162.159.193.1 -interface en0
 
 This forces the upstream router's kernel to bypass Tailscale entirely for Cloudflare WARP packets, allowing them to escape to the internet while keeping all other traffic securely inside the Exit Node.
 
-## 15. Acknowledgements
+## 15. Tailscale P2P vs. DERP Relays (The Double NAT Dilemma)
+
+Because this gateway encapsulates Tailscale inside Cloudflare WARP (which enforces a strict symmetric NAT firewall), your devices will experience different Tailscale routing behaviors depending on their network:
+
+### Scenario A: Same Local Wi-Fi (Fast P2P)
+By default, the WARP container swallows Tailscale's local network discovery broadcasts, forcing a painfully slow DERP relay bounce even for devices sitting three feet apart. 
+**The Fix:** We inject `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0.0.0/8` into the `warp` container. This forces Tailscale's local UDP packets to bypass WARP entirely, allowing it to hole-punch instantly to any device on the same router. The exit node traffic stays fully encrypted inside WARP, but the Tailscale connection itself runs at pure local Wi-Fi speeds (~5ms - 50ms latency).
+
+### Scenario B: Different Wi-Fi Networks (Probable P2P)
+If your phone is on a coffee shop Wi-Fi and the gateway is on your home Wi-Fi, Tailscale can still usually establish a direct P2P connection over the internet. As long as at least one of the two Wi-Fi routers supports UPnP, NAT-PMP, or is a standard "Cone NAT", Tailscale's STUN servers will successfully negotiate a direct UDP tunnel through the public internet.
+
+### Scenario C: Cellular Networks (P2P Mathematically Impossible)
+If your phone is on a 5G/LTE cellular network (like Fizz, Rogers, or AT&T), **it will always fall back to a slower Tailscale DERP Relay (~80ms - 200ms latency).**
+This happens because almost all mobile carriers use Carrier-Grade NAT (CGNAT), which is a strict symmetric NAT. Since the gateway is also hidden behind Cloudflare WARP (another symmetric NAT), both sides of the connection randomize their source ports identically. UDP hole-punching through double-symmetric NATs is mathematically impossible. Tailscale detects this instantly and routes your connection through the nearest regional DERP server to keep you online.
+
+## 16. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 
-## 16. License
+## 17. License
 
 This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](file:///Users/omar/Developer/nullexit/LICENSE) file for details.
