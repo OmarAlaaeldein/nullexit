@@ -24,6 +24,8 @@ echo "routing-fix: Setting up routing for SOCKS5 proxy through WARP (tun0)..."
 DOCKER_NET=$(ip route show dev eth0 | grep -v default | head -1 | awk '{print $1}')
 DOCKER_GW=$(ip route show default | head -1 | awk '{print $3}')
 WARP_ENDPOINT=${WARP_ENDPOINT:-162.159.192.1}
+IP_BLOCKLIST_FILE="/userfilters/ip_blocklist.ipset"
+LAST_IP_MTIME=""
 echo "routing-fix: Docker network: ${DOCKER_NET}, gateway: ${DOCKER_GW}"
 
 # Table 200: Used by ip rule 100 (from 172.18.0.2) for SOCKS5 proxy traffic
@@ -98,7 +100,48 @@ add_country_block() {
   fi
 }
 
+add_ip_blocklist() {
+  # Only reload when the compiled file has actually changed (mtime check).
+  # This prevents a pointless ipset restore on every 5-second loop tick.
+  if [ ! -f "$IP_BLOCKLIST_FILE" ]; then
+    return 0
+  fi
+
+  CURRENT_MTIME=$(stat -c %Y "$IP_BLOCKLIST_FILE" 2>/dev/null || echo "0")
+  if [ "$CURRENT_MTIME" = "$LAST_IP_MTIME" ]; then
+    return 0
+  fi
+
+  echo "routing-fix: IP blocklist changed, reloading..."
+
+  # ipset restore handles the atomic swap internally:
+  # create_new → populate → swap with live → destroy_new
+  if ipset restore < "$IP_BLOCKLIST_FILE" 2>/dev/null; then
+    LAST_IP_MTIME="$CURRENT_MTIME"
+    echo "routing-fix: IP blocklist loaded ($(ipset list block_malicious | grep -c '^[0-9]') entries)."
+  else
+    echo "routing-fix: Warning: ipset restore failed. Retrying next cycle."
+    return 1
+  fi
+
+  # Apply FORWARD DROP rules in BOTH iptables backends.
+  # dst: blocks outbound connections to C2/malicious infrastructure (malware phoning home)
+  # src: blocks inbound attack traffic from known malicious sources
+  for ipt in iptables iptables-legacy; do
+    command -v "$ipt" >/dev/null 2>&1 || continue
+
+    if ! $ipt -C FORWARD -m set --match-set block_malicious dst -j DROP 2>/dev/null; then
+      $ipt -I FORWARD -m set --match-set block_malicious dst -j DROP 2>/dev/null || true
+    fi
+
+    if ! $ipt -C FORWARD -m set --match-set block_malicious src -j DROP 2>/dev/null; then
+      $ipt -I FORWARD -m set --match-set block_malicious src -j DROP 2>/dev/null || true
+    fi
+  done
+}
+
 add_country_block
+add_ip_blocklist
 
 echo 'routing-fix: Routes applied.'
 
@@ -127,6 +170,9 @@ while true; do
 
   # Enforce country blocklist
   add_country_block
+
+  # Enforce IP blocklist (reloads automatically when file changes)
+  add_ip_blocklist
 
   sleep 5
 done
