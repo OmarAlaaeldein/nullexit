@@ -138,7 +138,16 @@ ip6tables: DROP FORWARD on tailscale0
 
 ---
 
-### 5.5 Firewalling & Per-Device Access Control
+### 5.5 Tailscale Local Network Discovery (DERP Bypass)
+By default, Gluetun's strict NAT swallows all of Tailscale's UDP hole-punching packets, forcing Tailscale to fall back to incredibly slow DERP relay servers (often adding 500ms+ latency). 
+
+To fix this, we use `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0.0.0/8` in `docker-compose.yml` (on the `warp` container). This creates `ip rule` bypasses (Priority 99, Table 199) that route all packets destined for private IP ranges *outside* the WARP tunnel directly to the host's `eth0`. 
+- **172.16.0.0/12** is especially critical because many modern Wi-Fi routers (and Docker itself) assign IPs in this block (e.g., `172.17.x.x`). 
+- This bypass allows Tailscale's UDP packets to reach devices on the same Wi-Fi directly, establishing a fast peer-to-peer connection while the actual web traffic inside the tunnel remains fully routed through WARP.
+
+---
+
+### 5.6 Firewalling & Per-Device Access Control
 Because every mesh device's traffic passes through the `warp` container's network namespace, this namespace serves as the ultimate choke point for network-wide firewall rules.
 
 **Where to Put Rules**
