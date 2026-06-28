@@ -603,6 +603,17 @@ else
     run_with_timeout 120 colima restart >> output.log 2>&1
   fi
 
+  # 4c. Inject TCP MSS clamp from .env into post-rules.txt before starting
+  if [ -f .env ] && grep -q "^GATEWAY_MSS=" .env; then
+    GATEWAY_MSS=$(grep -E "^GATEWAY_MSS=" .env | cut -d'=' -f2- | tr -d '"'\' | tr -d ' ')
+    if [[ "$GATEWAY_MSS" =~ ^[0-9]+$ ]]; then
+      # macOS sed syntax
+      sed -i '' "s/--set-mss [0-9]*/--set-mss ${GATEWAY_MSS}/g" post-rules.txt 2>/dev/null || \
+      # Linux sed fallback
+      sed -i "s/--set-mss [0-9]*/--set-mss ${GATEWAY_MSS}/g" post-rules.txt 2>/dev/null
+    fi
+  fi
+
   # 5. Start compose services
   echo -e "\nStarting Docker containers..."
   docker compose up -d
