@@ -226,6 +226,8 @@ WIREGUARD_PUBLIC_KEY=${PUBLIC_KEY}
 WIREGUARD_ADDRESSES=${ADDRESSES}
 TS_AUTHKEY=${TS_AUTHKEY}
 GATEWAY_RULE_PROFILE=medium
+# Safe MSS for double-tunneled traffic (Tailscale + WARP). Change to 1180 if you experience slow speeds and have a healthy path.
+GATEWAY_MSS=1120
 EOF
     ok ".env written."
 fi

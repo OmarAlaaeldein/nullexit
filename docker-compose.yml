@@ -36,6 +36,7 @@ services:
       - BLOCK_MALICIOUS=off
       - BLOCK_SURVEILLANCE=off
       - BLOCK_ADS=off
+      - GATEWAY_MSS=${GATEWAY_MSS:-1120}
     dns:
       - 1.1.1.1
     sysctls:
@@ -80,6 +81,8 @@ services:
       # Intentional for stability: prevents the container from re-authenticating 
       # on every boot. Trade-off: if the auth key expires and the container is 
       # recreated, it may silently fail to authenticate without a new key.
+      # (Note: For headless/cloud deployments, you can bypass this footgun by
+      # using Tailscale Ephemeral Keys which auto-clean themselves).
       - TS_AUTH_ONCE=true
     devices:
       - /dev/net/tun:/dev/net/tun
@@ -141,6 +144,9 @@ services:
         max-file: "1"
 
   adguardhome:
+    # WARNING: AdGuard is pre-configured with hardcoded credentials (admin/nullexit).
+    # This is fine for a local Mac running behind a NAT, but if you are deploying
+    # this on a public cloud VPS with port 80/3000 exposed, change this immediately!
     image: adguard/adguardhome:v0.107.77
     container_name: adguardhome
     network_mode: service:warp

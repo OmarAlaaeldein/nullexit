@@ -159,24 +159,24 @@ fi
 
 # ─── 7. Power-cycle Wi-Fi ────────────────────────────────────────────────────
 step "Power-cycling Wi-Fi"
-WIFI_PORT=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
-if [ -n "$WIFI_PORT" ]; then
-  sudo networksetup -setairportpower "$WIFI_PORT" off 2>> output.log
+if command -v nmcli &>/dev/null; then
+  sudo nmcli radio wifi off 2>> output.log || true
   sleep 2
-  sudo networksetup -setairportpower "$WIFI_PORT" on 2>> output.log
-  ok "Wi-Fi bounced (interface $WIFI_PORT)"
+  sudo nmcli radio wifi on 2>> output.log || true
+  ok "Wi-Fi bounced via nmcli"
   sleep 3
 else
-  warn "Could not detect Wi-Fi interface. Bouncing fallback interfaces..."
-  set +e
-  for iface in en0 en1 en2 en3 en4 en5; do
-    if ifconfig "$iface" >> output.log 2>&1; then
-      sudo ifconfig "$iface" down 2>> output.log
-      sudo ifconfig "$iface" up 2>> output.log
-    fi
-  done
-  set -e
-  ok "Fallback interfaces bounced"
+  warn "nmcli not found. Falling back to ip link..."
+  WIFI_IFACE=$(ip link | grep -E '^[0-9]+: (wl[a-zA-Z0-9]+|wlan[0-9]+):' | awk -F': ' '{print $2}')
+  if [ -n "$WIFI_IFACE" ]; then
+    sudo ip link set "$WIFI_IFACE" down 2>> output.log || true
+    sleep 2
+    sudo ip link set "$WIFI_IFACE" up 2>> output.log || true
+    ok "Wi-Fi bounced via ip link (interface $WIFI_IFACE)"
+    sleep 3
+  else
+    warn "No Wi-Fi interface detected."
+  fi
 fi
 
 # ─── 8. Verify internet connectivity ──────────────────────────────────────────

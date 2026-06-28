@@ -431,3 +431,34 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 | DOCKER_GW variable parsing error | **Fixed** | Added `head -1` in `routing-fix.sh`. |
 | `FIREWALL_OUTBOUND_SUBNETS` was the root cause | **Fixed** | Removed from `docker-compose.yml`. Gluetun no longer hijacks CGNAT routing. |
 | Host tailscaled error state from aggressive `tailscale down` | **Mitigated** | Toggle script now detects and auto-restarts. |
+
+### 10.14 Double-Tunneling MSS Clamping (Stalling Bug)
+
+**Problem:** Traffic double-wrapped through Tailscale (WireGuard) and WARP (WireGuard) suffered 120 bytes of MTU overhead (60 + 60). The default MSS clamp of 1180 was still slightly too large, causing large packets to fragment or drop, which resulted in mysterious web page stalls on strict-MSS endpoints.
+
+**Fix:** Lowered the TCP MSS clamp in `post-rules.txt` to `1120` to guarantee double-tunneled payloads fit safely within standard internet MTUs.
+
+### 10.15 Linux Native Wi-Fi Bouncing
+
+**Problem:** The generated `recover-linux.sh` incorrectly retained the macOS `networksetup` commands, which would crash and fail to bounce Wi-Fi on Linux hosts.
+
+**Fix:** Swapped the macOS logic for native Linux commands. The script now attempts `nmcli radio wifi off/on` first, and gracefully falls back to `ip link set wl... down/up` if NetworkManager is unavailable.
+
+### 10.16 TS_AUTH_ONCE Cloud Footgun & Ephemeral Keys
+
+**Decision:** The compose file uses `TS_AUTH_ONCE=true` to prevent authentication loops. However, on headless cloud VPS deployments, if a standard auth key expires (usually 90 days), the container will silently drop off the mesh. We documented this trade-off explicitly in `docker-compose.yml` and recommended the use of **Tailscale Ephemeral Keys** for cloud deployments, which automatically clean themselves up and bypass this issue.
+
+### 10.17 Hardcoded AdGuard Credentials
+
+**Decision:** AdGuard is deployed with the hardcoded credentials `admin / nullexit`. This is perfectly safe behind a NAT on a local macOS laptop. However, if deployed on a cloud host with exposed ports, this becomes a severe security risk. We added a stark warning comment in `docker-compose.yml` to ensure cloud users change this before deployment.
+
+### 10.18 Routing Fix: 5-Second Polling vs Netlink Socket
+
+**Decision:** Instead of building a complex Netlink socket listener (`ip monitor`) to react instantly to iptables and routing flushes from Gluetun, we retained the 5-second `sleep` loop in `routing-fix.sh`. 
+- **Reasoning:** Building a netlink listener in pure bash on Alpine is incredibly brittle and complex (especially for iptables events). The 5-second polling loop is bulletproof. The only trade-off is a potential 1-4 second stutter if Gluetun reconnects, which was deemed an acceptable edge case for absolute reliability.
+
+### 10.19 Cache Poisoning and URL Rot in sync-rules.py
+
+**Problem:** If a remote blocklist URL went permanently offline (404 Not Found), the Python `urllib` request would return the 404 HTML string. The script would aggressively regex-parse this HTML, find no domains, and overwrite the healthy local cache with a 0-domain file. This effectively disabled ad-blocking until the URL was fixed.
+
+**Fix:** Implemented a defensive programming sanity check in `sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 1,000. If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, logs a `WARNING: Domain count suspiciously low`, and keeps the previous day's healthy cache intact.
