@@ -575,6 +575,9 @@ else
   # 5. Start compose services
   echo -e "\nStarting Docker containers..."
   docker compose up -d
+  
+  # Clean up the one-off rule compiler container so it doesn't clutter the Docker UI
+  docker compose rm -s -f rule-compiler >> output.log 2>&1
 
   # 6. Wait for the gateway container's Tailscale connection to be ready
   BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
