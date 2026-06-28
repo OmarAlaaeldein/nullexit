@@ -382,12 +382,19 @@ To prevent this, you can configure the TCP Maximum Segment Size (MSS) clamp in y
 * **`GATEWAY_MSS=1180` (Recommended for Speed):** If you only use this gateway on standard, healthy Wi-Fi networks (MTU 1500), clamping to 1180 reduces packet header overhead, resulting in slightly faster download speeds.
 
 > [!NOTE]
-> **Trivia: The "Russian Doll" Topology**  
-> What happens if you daisy-chain devices together on the mesh? For example: A Mac (running Tailscale) connects to a Windows Mobile Hotspot (which is also running Tailscale), which then connects to the Nullexit Gateway. 
+> **Trivia: The "Boomerang" Topology (Nested Hotspots)**  
+> What happens to your mesh traffic if the Mac *hosting* the Nullexit Gateway loses internet and connects to a friend's Windows Mobile Hotspot (which is also on the Tailscale mesh)? 
 > 
-> You have essentially created a network Russian Doll via **Triple Encapsulation**: Your data is wrapped in WireGuard by the Mac, wrapped *again* in WireGuard by the Windows hotspot, and then wrapped a *third* time in WARP by the Gateway!
+> If you are away from home using your phone on cellular, and your phone sends a web request to your Mac's exit node, you create a hilarious **Double-Airspace Boomerang**:
+> 1. Your phone sends a Tailscale packet over cellular to the internet.
+> 2. The packet arrives at the Windows hotspot.
+> 3. Windows transmits the packet **over Wi-Fi** to your Mac.
+> 4. The Mac routes it internally to the Docker Gateway container.
+> 5. The Gateway unwraps the Tailscale encryption, re-wraps it in WARP encryption, and hands it back to the Mac.
+> 6. The Mac transmits the new WARP packet **back over the exact same Wi-Fi connection** to the Windows hotspot.
+> 7. The Windows hotspot finally sends it out to Cloudflare.
 > 
-> Because WireGuard is incredibly mathematically efficient, encrypting the data three times barely touches your CPU and only adds **~2-4ms** of cryptographic latency. The real latency danger in this scenario is "DERP routing." Because you are stacked behind multiple nested NATs, Tailscale's UDP hole-punching might fail to establish a direct P2P link. If Tailscale falls back to routing your triple-encrypted traffic through a public DERP proxy relay (like NYC or Toronto), your ping will instantly spike by **+40 to +80ms**. But thanks to the centralized `1120` MSS clamp on the gateway, the packets will always cleanly fit through without fragmenting or stalling!
+> A single web request physically travels through the air across the room *twice* just to load a page! Because this architecture stacks multiple nested NATs and MTU bottlenecks, Tailscale might fail to P2P hole-punch and fall back to a high-latency DERP relay. But thanks to the centralized `1120` MSS clamp inside the gateway, even a packet making this chaotic journey will seamlessly shrink to fit without ever fragmenting or stalling!
 
 ## 14. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
