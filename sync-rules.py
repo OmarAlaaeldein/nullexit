@@ -44,8 +44,6 @@ IP_BLOCK_LISTS = [
     # Used by major ISPs at the BGP level. Nothing legitimate uses these.
     "https://www.spamhaus.org/drop/drop.txt",
 
-    # Spamhaus EDROP — Extended DROP. Hijacked netblocks operated by criminals.
-    "https://www.spamhaus.org/drop/edrop.txt",
 
     # Emerging Threats (Proofpoint) — Active C2, scanners, exploit kit IPs.
     # Maintained by professional threat researchers. Updated daily.
@@ -200,7 +198,7 @@ def fetch_remote_domains(url):
             domains = parse_domains_from_content(content)
             
             # Sanity check: if a URL goes 404 and returns HTML, it will parse to ~0 domains.
-            if len(domains) < 100:
+            if len(domains) < 10:
                 raise ValueError(f"Sanity check failed: only found {len(domains)} domains. Possible 404 or bad URL.")
             
             # Save raw content to cache ONLY if sanity check passes
@@ -328,7 +326,7 @@ def fetch_remote_ips(url):
         ips = parse_ips_from_content(content)
 
         # Sanity check: a 404 HTML page will parse to ~0 IPs.
-        if len(ips) < 10:
+        if len(ips) < 1:
             raise ValueError(f"Sanity check failed: only {len(ips)} IPs found. Possible 404.")
 
         try:

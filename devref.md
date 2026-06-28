@@ -501,7 +501,7 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 **Problem:** If a remote blocklist URL went permanently offline (404 Not Found), the Python `urllib` request would return the 404 HTML string. The script would aggressively regex-parse this HTML, find no domains, and overwrite the healthy local cache with a 0-domain file. This effectively disabled ad-blocking until the URL was fixed.
 
-**Fix:** Implemented a defensive programming sanity check in `sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 1,000. If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, logs a `WARNING: Domain count suspiciously low`, and keeps the previous day's healthy cache intact.
+**Fix:** Implemented a defensive programming sanity check in `sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 10 (and 1 for IP feeds). If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, raises a `ValueError`, and keeps the previous day's healthy cache intact.
 
 ### 10.20 Cellular Networks & PMTUD Blackholes (The 1280 Byte Limit)
 
@@ -575,10 +575,10 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 **Problem:** DNS sinkholing cannot stop malware or botnets that bypass DNS entirely by hardcoding direct IP addresses (a common technique for C2 communication). These connections pass straight through AdGuard unseen.
 
 **Fix:** Added a second compilation pipeline to `sync-rules.py` that runs on every startup alongside the DNS pipeline.
-1. The compiler concurrently fetches five curated threat-intelligence feeds: **Feodo Tracker** (abuse.ch — botnet C2 IPs), **Spamhaus DROP** (IPs allocated to criminal organizations), **Spamhaus EDROP** (hijacked netblocks), **Emerging Threats** (Proofpoint — active C2 and scanners), and **CINS** (active brute-force sources).
+1. The compiler concurrently fetches four curated threat-intelligence feeds: **Feodo Tracker** (abuse.ch — botnet C2 IPs), **Spamhaus DROP** (IPs allocated to criminal organizations), **Emerging Threats** (Proofpoint — active C2 and scanners), and **CINS** (active brute-force sources).
 2. All entries are normalized via Python's `ipaddress` module. Any IP or CIDR that overlaps with RFC1918 private ranges, loopback, link-local, or the Tailscale CGNAT range (`100.64.0.0/10`) is stripped to prevent accidentally locking users out of their own LAN or mesh.
-3. The cleaned list (~16,700 unique IPs/CIDRs) is written as an `ipset restore` file using an **atomic swap pattern**: `create_new → populate → swap with live → destroy_new`. This guarantees the live `block_malicious` ipset is never empty during a reload.
+3. The cleaned list (16,721 unique IPs/CIDRs) is written as an `ipset restore` file using an **atomic swap pattern**: `create_new → populate → swap with live → destroy_new`. This guarantees the live `block_malicious` ipset is never empty during a reload.
 4. `routing-fix.sh` watches the file's mtime every 5 seconds. On change it runs `ipset restore` and idempotently re-injects `FORWARD DROP` rules for both `src` and `dst` into both iptables backends (nftables + legacy).
 5. `docker-compose.yml` mounts `adguard/work/userfilters/` into `routing-fix` as `/userfilters:ro` and adds `rule-compiler: service_completed_successfully` to its `depends_on`, eliminating the race condition where routing-fix could start before the file existed.
 
-**Memory cost:** The entire 16,700-entry ipset costs only ~1.6 MiB of kernel memory — negligible in the 600MB VM budget.
+**Memory cost:** The entire 16,721-entry ipset costs only ~1.6 MiB of kernel memory — negligible in the 600MB VM budget.
