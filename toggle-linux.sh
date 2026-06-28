@@ -492,6 +492,24 @@ is_gateway_active() {
   return 1
 }
 
+  # ── Local Network Surveillance Check ──────────────────────────────────────
+  echo -e "\n──────────────────────────────────────────────"
+  echo "Local Network Surveillance Check"
+  echo "──────────────────────────────────────────────"
+  # Count populated ARP cache entries to detect network scanning or high congestion
+  if command -v ip >/dev/null 2>&1; then
+    ARP_COUNT=$(ip neigh | grep -iv 'incomplete' | wc -l | tr -d ' ')
+  else
+    ARP_COUNT=$(arp -a 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
+  fi
+  if [ "$ARP_COUNT" -gt 15 ]; then
+    echo -e "  \033[1;33m[!] WARNING: High ARP activity detected ($ARP_COUNT devices in cache).\033[0m"
+    echo -e "  \033[1;33m[!] This Wi-Fi network may be heavily congested or actively scanned (e.g., arp-scan).\033[0m"
+    echo -e "  [✓] Your traffic remains fully encrypted and invisible.\n"
+  else
+    echo -e "  [✓] Local network looks quiet ($ARP_COUNT devices). No aggressive scanning detected.\n"
+  fi
+
 echo "Checking Gateway Status..."
 if is_gateway_active; then
   echo -e "\n=============================================="
