@@ -733,7 +733,7 @@ else
 
       # ── Phase A: Join mesh without exit node ───────────────────────────
       echo "Connecting host to Tailscale mesh (no exit node yet)..."
-      if $TS_BIN up --reset --accept-dns=false --exit-node=; then
+      if $TS_BIN up --reset --ssh=true --accept-dns=false --exit-node=; then
         HOST_ON_MESH=true
         echo "Host is on Tailscale mesh."
       else
@@ -809,7 +809,7 @@ else
     # Act based on check results
     if [ "$SKIP_EXIT_NODE" != "true" ]; then
       echo -e "\nAll checks passed. Enabling exit node $TS_IP..."
-      if $TS_BIN up --reset --accept-dns=false --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
+      if $TS_BIN up --reset --ssh=true --accept-dns=false --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
         echo "Exit node enabled."
       else
         echo "[Warning] Failed to set exit node."

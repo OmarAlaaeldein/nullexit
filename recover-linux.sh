@@ -81,7 +81,7 @@ if command -v tailscale >> output.log 2>&1; then
   # Check if actually connected first (with timeout — tailscaled could be wedged)
   if run_with_timeout 5 tailscale status >> output.log 2>&1; then
     # Also explicitly reset any exit-node so it doesn't linger.
-    if run_with_timeout 10 tailscale up --reset --accept-dns=false --exit-node= >> output.log 2>&1; then
+    if run_with_timeout 10 tailscale up --reset --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
       ok "Exit-node preference cleared"
     else
       warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
