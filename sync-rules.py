@@ -219,9 +219,16 @@ def main():
     urls_to_fetch = PROFILES[profile]
     
     import concurrent.futures
-    # Use multithreading to fetch all lists at exactly the same time. 
+    import time
+    
+    print(f"\nStarting concurrent downloads for {len(urls_to_fetch)} lists...")
+    start_time = time.time()
+    
+    # Use multithreading to fetch all lists concurrently. 
     # Python releases the GIL during network I/O, making threads perfect here.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(urls_to_fetch)) as executor:
+    # We cap max_workers at 16 to prevent container OOM/socket exhaustion.
+    max_threads = min(16, len(urls_to_fetch))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
         # Submit all download tasks
         future_to_url = {executor.submit(fetch_remote_domains, url): url for url in urls_to_fetch}
         
@@ -232,6 +239,9 @@ def main():
                 black_list.update(remote_domains)
             except Exception as e:
                 print(f"Error fetching a remote list: {e}")
+                
+    end_time = time.time()
+    print(f"Finished concurrent downloads in {end_time - start_time:.2f} seconds using {max_threads} threads.")
 
     # Detect contradictions and prioritize whitelist
     contradictions = black_list.intersection(white_list)

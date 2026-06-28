@@ -49,7 +49,8 @@ def measure_url(target_url):
     # Concurrently fetch subresources
     success_count = 0
     fail_count = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+    max_threads = min(64, max(1, len(urls)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
         results = list(executor.map(fetch_url, urls))
         
     success_count = sum(1 for r in results if r)
