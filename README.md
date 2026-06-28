@@ -39,6 +39,7 @@ Use [`wgcf`](https://github.com/ViRb3/wgcf) to generate a Cloudflare WARP WireGu
    GATEWAY_RULE_PROFILE=medium        # light | medium | heavy (ad-blocking rule tier)
    GATEWAY_BYPASS_PING=false          # Skip exit-node ping verification on startup
    GATEWAY_USE_EXIT_NODE=true         # Set to false for DNS-only mode (no exit node)
+   GATEWAY_MSS=1120                   # TCP MSS Clamp (1120 for stability, 1180 for speed)
    ```
 
 ## 3. Deploy the Gateway
@@ -370,9 +371,19 @@ If you are deploying this to a fleet of supported M3/M4 Macs or bare-metal machi
 4. **Package into a DMG:** Run `hdiutil create -volname "Nullexit Installer" -srcfolder "./Nullexit.app" -ov -format UDZO Nullexit.dmg`.
 5. **The Gatekeeper Warning:** Unless you cryptographically sign the `.app` using a paid $99/year Apple Developer certificate, users who download the DMG will receive an "App is damaged" warning from macOS Gatekeeper. They will need to run `xattr -cr /Applications/Nullexit.app` to bypass it.
 
-## 13. Acknowledgements
+## 13. TCP MSS Clamping & Cellular MTU
+
+Traffic routed through this gateway undergoes **double-encryption** (Tailscale WireGuard + Cloudflare WARP WireGuard). Each layer adds ~60-80 bytes of packet overhead.
+
+If you are on a standard home Wi-Fi network (MTU 1500), your network has plenty of room to absorb this overhead. However, **cellular networks and hotspot connections often enforce a strict MTU of 1280 bytes.** Worse, cellular networks often act as "PMTUD Blackholes" — they silently drop oversized packets without returning a warning, causing web pages to stall indefinitely.
+
+To prevent this, you can configure the TCP Maximum Segment Size (MSS) clamp in your `.env` file:
+* **`GATEWAY_MSS=1120` (Recommended for Stability):** Artificially shrinks your data payloads so much that even when double-encrypted, they will easily slide under a cellular network's strict 1280-byte limit without stalling. Use this if you connect from airplanes, mobile hotspots, or corporate VPNs.
+* **`GATEWAY_MSS=1180` (Recommended for Speed):** If you only use this gateway on standard, healthy Wi-Fi networks (MTU 1500), clamping to 1180 reduces packet header overhead, resulting in slightly faster download speeds.
+
+## 14. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 
-## 14. License
+## 15. License
 
 This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](file:///Users/omar/Developer/nullexit/LICENSE) file for details.
