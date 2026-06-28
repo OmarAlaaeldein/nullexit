@@ -465,7 +465,7 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 ### 10.20 Cellular Networks & PMTUD Blackholes (The 1280 Byte Limit)
 
-**Experiment:** Conducted a live packet sweep from the Mac host to an Android client connected via a cellular network + Tailscale DERP relay using `ping -D -s <size>`.
+**Experiment:** Conducted a live packet sweep from the PC-1 host to Phone-1 connected via a cellular network + Tailscale DERP relay using `ping -D -s <size>`.
 
 **Result:**
 - Packets with a payload of `1252` bytes (+ 28 bytes IP/ICMP headers = **1280 bytes total**) succeeded perfectly with ~60ms latency.
