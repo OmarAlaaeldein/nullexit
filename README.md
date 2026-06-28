@@ -409,6 +409,16 @@ If you enable "Use Exit Node" on the physical upstream router (PC-2), you create
 
 The packet gets trapped in an infinite ping-pong match, wrapping itself in endless layers of encryption until the Wi-Fi bandwidth saturates and the network collapses instantly. PC-2 *must* be allowed to route its traffic directly to the physical cellular internet to allow PC-1's packets to escape the local network.
 
+**Advanced Workaround (The Dynamic Static Route):**
+If you *must* keep "Use Exit Node" enabled on PC-2 (e.g. you want the Windows machine to also be ad-blocked and encrypted), you can forcefully punch a hole through the paradox by injecting a permanent static route on PC-2 for the Cloudflare WARP endpoints. By binding the route to the physical Wi-Fi adapter's Interface Index (IF), it becomes a permanent, roaming-aware bypass.
+
+On Windows (Admin Command Prompt):
+1. Run `route print` and find the "Interface List" at the top. Note the Interface number (e.g., `15`) for your upstream internet adapter.
+2. Run `route -p add 162.159.192.1 mask 255.255.255.255 0.0.0.0 IF 15`
+3. Run `route -p add 162.159.193.1 mask 255.255.255.255 0.0.0.0 IF 15`
+
+This forces PC-2's routing kernel to bypass Tailscale entirely for Cloudflare WARP packets, allowing them to escape to the internet while keeping all other traffic securely inside the Exit Node.
+
 ## 15. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 

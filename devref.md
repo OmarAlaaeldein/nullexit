@@ -492,3 +492,13 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 **Problem:** A critical network topology crash occurs if the host Mac connects to a Mobile Hotspot (e.g., a Windows PC or Phone) that is *also* connected to the Tailscale mesh and has "Use Exit Node" enabled. Because the Mac is hosting the Exit Node, it routes its internet traffic to the Hotspot. The Hotspot intercepts the Mac's traffic on its way to the cellular tower and routes it *back* to the Exit Node (the Mac) via Tailscale. The Mac receives it, tries to send it out again, and the Hotspot intercepts it again. This creates an infinite, recursive encryption loop that instantly destroys network bandwidth and drops all connections.
 
 **Fix:** This is a physical routing paradox that cannot be resolved in software. The upstream physical router providing internet to the Mac **must** be allowed to route its traffic directly to the physical WAN interface. The user must manually disable "Use Exit Node" on the upstream device providing the hotspot.
+
+**Advanced Workaround:** If the upstream hotspot is a Windows machine and the user explicitly wants it to remain connected to the Exit Node, a permanent static route can be injected into the Windows routing kernel to forcefully bypass the Tailscale WFP interception for WARP packets. By binding the route to the physical adapter's Interface Index (IF), it becomes a permanent, roaming-aware bypass. 
+
+On Windows (Admin Command Prompt):
+```cmd
+route print  (find Interface List, note the IF number for the active Wi-Fi adapter, e.g. 15)
+route -p add 162.159.192.1 mask 255.255.255.255 0.0.0.0 IF 15
+route -p add 162.159.193.1 mask 255.255.255.255 0.0.0.0 IF 15
+```
+This punches a tiny hole straight through the paradox, letting the Mac's WARP packets escape to the physical internet while keeping the rest of the Windows machine's traffic securely trapped in the Tailscale Exit Node.
