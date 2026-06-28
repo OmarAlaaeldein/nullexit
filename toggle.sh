@@ -4,6 +4,9 @@
 
 set -e
 
+# Start execution timer
+TOGGLE_START_TIME=$SECONDS
+
 # Global flag to track if the script completed successfully
 SUCCESS_RUN=false
 
@@ -550,7 +553,8 @@ if is_gateway_active; then
   # 4. Nuke leftover network state so internet actually works after teardown
   cleanup_network_state
 
-  echo -e "\nGateway has been successfully STOPPED."
+  ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
+  echo -e "\nGateway has been successfully STOPPED in ${ELAPSED} seconds."
 else
   echo -e "\n=============================================="
   echo "Gateway is STOPPED. Starting it now..."
@@ -885,7 +889,8 @@ else
     fi
   fi
 
-  echo -e "\nGateway has been successfully STARTED."
+  ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
+  echo -e "\nGateway has been successfully STARTED in ${ELAPSED} seconds."
 
   # Prevent system from going to sleep while gateway is running
   start_sleep_prevention
