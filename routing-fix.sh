@@ -76,6 +76,30 @@ add_tailscale_p2p_bypass() {
 
 add_tailscale_p2p_bypass
 
+add_country_block() {
+  # Create the ipset if it doesn't exist
+  if ! ipset list block_kp >/dev/null 2>&1; then
+    ipset create block_kp hash:net 2>/dev/null || true
+    echo "routing-fix: Downloading North Korea IPs for blocklist..."
+    curl -sS "http://www.ipdeny.com/ipblocks/data/countries/kp.zone" | grep -v '^#' | while read -r subnet; do
+      [ -n "$subnet" ] && ipset add block_kp "$subnet" 2>/dev/null || true
+    done
+  fi
+
+  # Apply DROP rule to nftables backend
+  if ! iptables -C FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null; then
+    iptables -I FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null || true
+  fi
+  # Apply DROP rule to legacy backend
+  if command -v iptables-legacy >/dev/null 2>&1; then
+    if ! iptables-legacy -C FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null; then
+      iptables-legacy -I FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null || true
+    fi
+  fi
+}
+
+add_country_block
+
 echo 'routing-fix: Routes applied.'
 
 # Re-assert loop (every 5 seconds)
@@ -100,6 +124,9 @@ while true; do
   
   # Ensure P2P packets bypass WARP to maintain low latency
   add_tailscale_p2p_bypass
+
+  # Enforce country blocklist
+  add_country_block
 
   sleep 5
 done

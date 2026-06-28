@@ -1,6 +1,6 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
-**nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel.
+**nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel. It acts as a "Personal Great Firewall" for your entire mesh network, featuring built-in, kernel-level IP/country blocking (`ipset`/`iptables`) and network-wide DNS ad-blocking (AdGuard Home).
 
 ## 1. Prerequisites
 - Docker and Docker Compose installed.
@@ -165,6 +165,21 @@ To fix this, simply add `STOP_COLIMA_ON_EXIT=true` to your `.env` file. When thi
 
 
 ## 8. Privacy Architecture, Threat Model & Upgrades
+
+### Your Personal Great Firewall (Country & Per-Device Access Control)
+By routing all your mesh devices through the `warp` container's network namespace, **nullexit** establishes a centralized, impenetrable choke point for your entire Tailnet. This effectively gives you the power to build a "Personal Great Firewall" that operates identically in concept—but completely inverted in purpose—to China's Great Firewall. 
+
+**How this differs from Endpoint Firewalls (LuLu, Little Snitch):**
+Software like LuLu or Little Snitch are *endpoint* firewalls. They run locally on your host OS and protect only the single machine they are installed on, usually relying on user prompts per-application. **nullexit** is an *infrastructure-level* gateway firewall. Because it intercepts traffic at the network routing layer, it automatically protects **every device on your mesh** (iPhones, Androids, Windows PCs, IoT devices) simultaneously. You get mass infrastructure-level blocking without needing to install or manage any firewall software on the client devices.
+
+Instead of a state using deep packet inspection to restrict its citizens' access to the outside world, you are using the exact same choke-point architecture to restrict the outside world's access to your devices, and your devices' access to malicious infrastructure.
+
+Because the system leverages a dual `iptables` stack alongside `ipset` within the core routing container (`routing-fix.sh`), you can effortlessly enforce mass country-level IP blocking. For example, the repository includes built-in logic that dynamically pulls the CIDR ranges for **North Korea (KP)** directly from `ipdeny.com` and injects them into the firewall hash sets. Any traffic originating from or destined to those IPs across your entire mesh network is instantly dropped at the kernel level.
+
+Beyond entire countries, this choke point provides granular per-device control:
+* **Identification:** Every device on your mesh has a stable `100.x.x.x` IP visible in the firewall's `FORWARD` chain. 
+* **IP/Country Blocking:** Enforced at the kernel layer using `iptables` and `ipset`.
+* **Domain Blocking:** Enforced at the DNS layer using AdGuard Home's REST API, allowing you to map specific domain blocklists to specific Tailscale client IPs.
 
 ### Layered Defense: What This Gateway Protects Against
 This gateway stacks three layers of defense targeting different attack surfaces:

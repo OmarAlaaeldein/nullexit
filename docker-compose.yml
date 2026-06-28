@@ -134,7 +134,7 @@ services:
       - WARP_ENDPOINT=162.159.192.1
     volumes:
       - ./routing-fix.sh:/routing-fix.sh:ro
-    command: sh -c "apk add --no-cache iptables iproute2 curl && sh /routing-fix.sh"
+    command: sh -c "apk add --no-cache iptables iproute2 curl ipset && sh /routing-fix.sh"
     restart: unless-stopped
     logging:
       driver: "json-file"

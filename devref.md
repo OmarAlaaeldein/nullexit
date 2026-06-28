@@ -138,6 +138,24 @@ ip6tables: DROP FORWARD on tailscale0
 
 ---
 
+### 5.5 Firewalling & Per-Device Access Control
+Because every mesh device's traffic passes through the `warp` container's network namespace, this namespace serves as the ultimate choke point for network-wide firewall rules.
+
+**Where to Put Rules**
+The right place to add firewall rules is `routing-fix.sh`. It runs a 5-second loop inside the namespace and already handles re-injecting rules that Gluetun resets on reconnect. **Do not use `post-rules.txt` for dynamic rules**, as Gluetun flushes and resets it upon VPN reconnects.
+
+**The Dual iptables Backend Constraint (CRITICAL)**
+The container runs two simultaneous iptables backends: `iptables` (for the nftables backend used by Gluetun) and `iptables-legacy` (for Tailscale). Every rule **must** be added to both stacks, or it will silently fail for certain traffic. 
+
+**Avoiding Duplication**
+Because `routing-fix.sh` runs in a loop, you must always check for a rule's existence with `-C` before appending with `-A`. Otherwise, your rules will duplicate every 5 seconds.
+
+**Per-Device Identification & Filtering**
+Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the `src` IP in the `FORWARD` chain. This is how you identify devices for filtering.
+* **Domain-level:** AdGuard Home (port 3000, credentials `admin/nullexit`) provides a REST API that supports per-client blocking rules based on their Tailscale IP.
+* **IP-level:** Use `iptables` in `routing-fix.sh` (e.g., `iptables -I FORWARD -s 100.x.x.x -d <blocked_ip> -j DROP`).
+* **Country-level:** Add `ipset` to the `routing-fix` apk install step in `docker-compose.yml`, and load CIDR ranges from `ipdeny.com` into an ipset, then block that set in the `FORWARD` chain.
+
 ## 6. macOS Quirks to Remember
 
 1. **Colima SSH tunnel is TCP-only** — UDP ports (like 5354/udp) are NOT accessible from host. Use `dig +tcp` or the Python DNS proxy (UDP→TCP converter).
