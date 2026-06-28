@@ -592,6 +592,12 @@ else
     echo "Removed corrupted empty AdGuardHome.yaml to prevent container crash loop."
   fi
 
+  # 4b. Auto-heal stale Docker socket from hard reboots
+  if ! run_with_timeout 15 docker ps >/dev/null 2>&1; then
+    echo "Docker daemon is unresponsive (likely a stale socket from a crash). Auto-healing Colima..."
+    run_with_timeout 120 colima restart >> output.log 2>&1
+  fi
+
   # 5. Start compose services
   echo -e "\nStarting Docker containers..."
   docker compose up -d
