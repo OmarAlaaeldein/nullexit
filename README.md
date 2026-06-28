@@ -396,9 +396,22 @@ To prevent this, you can configure the TCP Maximum Segment Size (MSS) clamp in y
 > 
 > A single web request physically travels through the air across the room *twice* just to load a page! Because this architecture stacks multiple nested NATs and MTU bottlenecks, Tailscale might fail to P2P hole-punch and fall back to a high-latency DERP relay. But thanks to the centralized `1120` MSS clamp inside the gateway, even a packet making this chaotic journey will seamlessly shrink to fit without ever fragmenting or stalling!
 
-## 14. Acknowledgements
+## 14. The Infinite Recursive Routing Loop (Hotspot Paradox)
+**DANGER: Never use the Gateway as an Exit Node for the router that provides the Gateway with internet.**
+
+If PC-1 is hosting the Exit Node and getting its Wi-Fi connection from a Mobile Hotspot running on PC-2, **you MUST disable "Use Exit Node" in PC-2's Tailscale client.**
+
+If you enable "Use Exit Node" on the physical upstream router (PC-2), you create an **Infinite Routing Loop**:
+1. PC-1 encrypts your web request into a WARP packet and sends it to PC-2 (the router) to reach the internet.
+2. PC-2 intercepts the WARP packet on its way out. Because PC-2 is forced to use the Exit Node, its Tailscale client wraps the WARP packet in Tailscale encryption and sends it *back* to the Exit Node (PC-1).
+3. PC-1 receives the packet, decapsulates it, and tries to route it out to the internet again (sending it back to PC-2).
+4. PC-2 intercepts it again and sends it back to PC-1.
+
+The packet gets trapped in an infinite ping-pong match, wrapping itself in endless layers of encryption until the Wi-Fi bandwidth saturates and the network collapses instantly. PC-2 *must* be allowed to route its traffic directly to the physical cellular internet to allow PC-1's packets to escape the local network.
+
+## 15. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 
-## 15. License
+## 16. License
 
 This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](file:///Users/omar/Developer/nullexit/LICENSE) file for details.
