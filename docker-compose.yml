@@ -26,6 +26,8 @@ services:
       # Use plaintext DNS resolvers instead of DNS-over-TLS (DoT) to prevent startup failures on networks where port 853 is blocked
       - DNS_UPSTREAM_RESOLVER_TYPE=plain
       - DNS_UPSTREAM_PLAIN_ADDRESSES=1.1.1.1:53,8.8.8.8:53
+      # Allow local network traffic to bypass WARP so Tailscale can establish fast, direct peer-to-peer connections (no DERP relays) on the LAN
+      - FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0.0.0/8
       # Built-in DNS blocking for ads, malicious domains, and tracking
       # NOTE: This is the massive "Hagezi-style" built-in blocklist. 
       # You can turn these to 'on' for maximum security if you have spare RAM 
