@@ -36,7 +36,7 @@ Use [`wgcf`](https://github.com/ViRb3/wgcf) to generate a Cloudflare WARP WireGu
    TS_AUTHKEY=tskey-auth-...
 
    # Optional: Toggle script settings (macOS)
-   GATEWAY_RULE_PROFILE=medium        # light | medium | heavy (ad-blocking rule tier)
+   GATEWAY_RULE_PROFILE=heavy         # light | medium | heavy (ad-blocking rule tier)
    GATEWAY_BYPASS_PING=false          # Skip exit-node ping verification on startup
    GATEWAY_USE_EXIT_NODE=true         # Set to false for DNS-only mode (no exit node)
    GATEWAY_MSS=1120                   # TCP MSS Clamp (1120 for stability, 1180 for speed)
@@ -299,12 +299,13 @@ To address this, two critical optimizations are built-in:
 
 3. **Local SSD Caching**: To prevent unnecessary network saturation and API rate limits, the script caches all downloaded remote blocklists to your local disk. If a gateway reboot occurs within 24 hours of the last compile, the script bypasses the internet entirely and loads all lists concurrently from the SSD (often taking under 0.5 seconds).
 4. **DNS RAM Caching**: While the massive blocklists are stored on disk, the AdGuard Home resolver actively caches the IP addresses of your most frequent, legitimate DNS queries directly in the container's RAM. This hybrid approach (SSD for bulk rule storage, RAM for frequent connection lookups) guarantees instantaneous (0ms) resolution for the websites you visit most, completely eliminating upstream WARP latency for cached domains.
+5. **Tamper-Proof File Locking**: As a strict security measure, the moment the compiler finishes generating the cache and the final `compiled_rules.txt` file, it instantly locks all of them as Read-Only (`chmod 444`) at the OS level. This guarantees that no other processes, rogue scripts, or accidental manual edits can corrupt or tamper with your active DNS filters while the gateway is running. On the next toggle, the compiler temporarily unlocks them to pull fresh updates, then immediately locks them again.
 
 ### How to use:
 1. Add domains you want to block to `black_list.txt` (e.g., `doubleclick.net`).
 2. Add domains you want to forcefully allow to `white_list.txt` (e.g., `weather-analytics-events.apple.com`). Whitelists *always* win — they override every block source.
-3. Configure `GATEWAY_RULE_PROFILE` in your `.env` file (defaults to `medium`).
-4. Just restart the gateway! The `rule-compiler` init service will seamlessly re-compile everything automatically before AdGuard boots.
+3. Configure `GATEWAY_RULE_PROFILE` in your `.env` file (defaults to `heavy`).
+4. Run `docker compose up -d` (or `./toggle.sh` on macOS) to trigger a recompile. The `rule-compiler` init service will seamlessly re-compile everything automatically before AdGuard boots.
 
 *Note: Because rule compilation is handled entirely by a Docker Compose init service, you never need to install Python on your host machine to run this gateway.*
 
