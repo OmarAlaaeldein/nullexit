@@ -56,7 +56,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `toggle.sh` | ~900 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
 | `setup.sh` | ~392 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
 | `docker-compose.yml` | ~160 | Service definitions for all 5 containers. |
-| `routing-fix.sh` | ~175 | Maintains routing tables (table 200 for SOCKS5, table 199 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
+| `routing-fix.sh` | ~175 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
 | `post-rules.txt` | ~16 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
 | `socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
 | `dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
@@ -113,7 +113,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 ### IP Rules (`ip rule show`)
 | Priority | Match | Table | Purpose |
 |----------|-------|-------|---------|
-| 99 | `to 100.64.0.0/10` | 199 | CGNAT range → Tailscale routes (injected by routing-fix) |
+| 99 | `to 100.64.0.0/10` | 52 | CGNAT range → Tailscale routes (injected by routing-fix) |
 | 100 | `from 172.18.0.2` | 200 | Container's own traffic (SOCKS5 proxy) → tun0 |
 | 101 | all | 51820 | Gluetun's WireGuard fwmark → tun0 |
 
