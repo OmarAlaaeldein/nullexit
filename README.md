@@ -148,6 +148,12 @@ When the gateway is toggled ON, the script automatically launches `caffeinate -i
 - **Automatic cleanup:** When toggling OFF, on script error, or during recovery (`recover.sh`), the caffeinate process is automatically killed and the PID file removed.
 - **Duplicate prevention:** If an old caffeinate process is still running from a previous session, the script kills it before starting a new one.
 
+### Colima VM Teardown (Battery Saver)
+
+By default, when you turn the gateway OFF, the `toggle.sh` script leaves the Colima Virtual Machine running in the background. This is the safest default, because forcibly killing Colima would instantly crash any other Docker containers you might be running for local web development.
+
+However, if you are running **nullexit** on a dedicated laptop and *only* use Docker for this gateway, leaving the Linux VM running in the background wastes your host's RAM and drains the MacBook battery. 
+To fix this, simply add `STOP_COLIMA_ON_EXIT=true` to your `.env` file. When this variable is detected, `toggle.sh` will completely shut down the Colima VM during its teardown sequence, ensuring zero background resource usage when the gateway is off.
 ## 7. Networking Notes
 
 - **Port Usage**: Tailscale and WARP use entirely different internal ports, preventing any conflicts. Tailscale operates on random/dynamic UDP ports for its peer-to-peer mesh connections. Meanwhile, WARP's outbound WireGuard connection is explicitly targeting port 2408, which is the standard Cloudflare WARP destination port.
@@ -259,7 +265,7 @@ When modifying DNS rules, two hard-to-debug issues can block legitimate traffic 
 
 
 ## 10. Custom Ad-Blocking Rules Engine
-**nullexit** includes a self-contained Python utility (`sync-rules.py`) to manage your own black/whitelist rules **and** subscribe to high-quality remote DNS blocklists — without needing to learn strict AdGuard syntax. It is zero-dependency (Python standard library only).
+**nullexit** includes a powerful Python utility (`sync-rules.py`) to manage your own black/whitelist rules **and** subscribe to high-quality remote DNS blocklists. To guarantee cross-platform compatibility and eliminate host dependencies, this script is executed completely natively inside an ephemeral Alpine Docker container (`rule-compiler`) exactly once during the `docker compose up` sequence.
 
 ### Memory Profiles & Optimizations
 Because macOS runs Docker containers inside a Colima VM (which we restrict to 512MB of RAM), loading huge blocklists (e.g. over 600,000 domains) would normally trigger out-of-memory (`OOMKilled`) crashes. 
@@ -271,13 +277,15 @@ To address this, two critical optimizations are built-in:
    - `medium` (Default / Recommended balance, runs stably on 512MB RAM + 512MB Swap VM): Generates **~167k** optimized rules.
    - `heavy` (Highest security, requires increasing Colima memory allocation): Generates **~253k** optimized rules.
 
+3. **Local SSD Caching**: To prevent unnecessary network saturation and API rate limits, the script caches all downloaded remote blocklists to your local disk. If a gateway reboot occurs within 24 hours of the last compile, the script bypasses the internet entirely and loads all lists concurrently from the SSD (often taking under 0.5 seconds).
+
 ### How to use:
 1. Add domains you want to block to `black_list.txt` (e.g., `doubleclick.net`).
 2. Add domains you want to forcefully allow to `white_list.txt` (e.g., `weather-analytics-events.apple.com`). Whitelists *always* win — they override every block source.
 3. Configure `GATEWAY_RULE_PROFILE` in your `.env` file (defaults to `medium`).
-4. Run `python3 sync-rules.py` to compile.
+4. Just restart the gateway! The `rule-compiler` init service will seamlessly re-compile everything automatically before AdGuard boots.
 
-*Note: The `toggle.sh` script automatically runs `sync-rules.py` on gateway startup (the START branch), so manual compilation is only needed if you want to preview rules without toggling the gateway. Remote blocklists are cached locally for 24 hours under `adguard/work/userfilters/cache` to make subsequent toggles instant.*
+*Note: Because rule compilation is handled entirely by a Docker Compose init service, you never need to install Python on your host machine to run this gateway.*
 
 ### Whitelist Pattern: Use the Base Domain, Not the Subdomains
 
