@@ -36,7 +36,6 @@ services:
       - BLOCK_MALICIOUS=off
       - BLOCK_SURVEILLANCE=off
       - BLOCK_ADS=off
-      - GATEWAY_MSS=${GATEWAY_MSS:-1120}
     dns:
       - 1.1.1.1
     sysctls:
