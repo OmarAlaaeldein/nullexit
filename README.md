@@ -88,12 +88,12 @@ To ensure your phone and other Tailnet devices receive AdGuard filtering while u
 > [!WARNING]
 > **Bandwidth Doubling on the Host Network:** When a remote device (like your phone on cellular or another Wi-Fi network) uses the exit node, the exit node machine must first download the traffic from the internet (via WARP), and then immediately upload it to your phone (via the Tailscale mesh). This means streaming a 1GB video on your phone will consume **1GB of download AND 1GB of upload (2GB total)** on the Wi-Fi or Ethernet network the exit node is connected to. Be mindful of this if your exit node machine is connected to a metered network or a cellular hotspot with strict data caps. *(Your phone's remote network will only consume the standard 1GB of download).*
 
-## 5. AdGuard Home DNS Filtering
+## 5. Dual-Layer Firewall (DNS & IP)
 
-**nullexit** includes a seamlessly integrated instance of **AdGuard Home** to act as a network-wide ad and tracker sinkhole for all your Tailscale devices.
+**nullexit** acts as a unified threat-intelligence engine, blocking malicious traffic across your entire mesh network at two distinct layers simultaneously.
 
-### Performance Impact
-Because AdGuard Home intercepts and drops DNS queries for tracking and advertising domains *before* they are ever downloaded, it significantly reduces the CPU and rendering overhead on your devices. 
+### Layer 1: DNS Sinkhole (AdGuard Home)
+The gateway includes a seamlessly integrated instance of **AdGuard Home** to act as a network-wide sinkhole for domains. By dropping DNS queries for tracking and advertising domains *before* they are ever downloaded, it significantly reduces the CPU and rendering overhead on your devices. 
 
 In automated headless browser tests (Lighthouse) loading ad-heavy sites like CNN over the exit node:
 - **Time to Interactive (TTI):** Improved by **~22%** (51.0s → 41.8s)
@@ -124,6 +124,17 @@ To manage your rules, access the AdGuard Dashboard:
 2. Log in with Username: **`admin`** | Password: **`nullexit`**
 
 **Family & Parental Protection:** Because this exit node operates at the DNS level, it is incredibly powerful for family mesh networks. Inside the AdGuard dashboard, you can enable **Safe Search** (which intercepts and forces Google, Bing, and YouTube into family-safe modes at the network level, preventing users from bypassing it in their browser settings). You can also block specific apps (like TikTok) or subscribe to custom NSFW blocklists to instantly protect all devices connected to the exit node.
+
+### Layer 2: Network-Level IP Blocking (Kernel Firewall)
+While DNS sinkholing blocks most ads, sophisticated malware and botnets often bypass DNS entirely by hardcoding direct IP addresses. 
+
+To defeat this, **nullexit** includes a real-time kernel-level firewall. On every startup, the internal `rule-compiler` fetches curated threat-intelligence feeds (including Spamhaus DROP/EDROP, Feodo Tracker, Emerging Threats, and CINS). Combined, these feeds compile into **~16,700+ unique IPs and CIDRs** covering active Command & Control (C2) servers, botnet infrastructures, and criminal netblocks. 
+
+The compiler safely strips out any private/LAN/Tailscale ranges and compiles them into a highly efficient `ipset` configuration. The `routing-fix` service then continuously enforces these as `DROP` rules in the raw `iptables` FORWARD chain. 
+- **Outbound Protection (`dst`):** Blocks infected devices on your network from communicating with malicious C2 servers.
+- **Inbound Protection (`src`):** Drops traffic originating from known malicious scanners or brute-force sources.
+
+This operates atomically at the kernel level and requires absolutely zero configuration on your part.
 
 ## 6. Quick Toggle Scripts (macOS & Windows)
 

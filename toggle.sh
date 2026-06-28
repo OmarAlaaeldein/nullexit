@@ -691,12 +691,23 @@ else
       if command -v printf &> /dev/null; then
         FORMATTED_RULE=$(printf "%'d" "$RULE_COUNT")
         FORMATTED_TOTAL=$(printf "%'d" "$TOTAL_COUNT")
-        echo "  Compiled $FORMATTED_RULE unique custom DNS rules (Total active protection in AdGuard: ~$FORMATTED_TOTAL rules)."
+        echo "  DNS: Compiled $FORMATTED_RULE unique custom rules (Total active in AdGuard: ~$FORMATTED_TOTAL rules)."
       else
-        echo "  Compiled $RULE_COUNT unique custom DNS rules (Total active protection in AdGuard: ~$TOTAL_COUNT rules)."
+        echo "  DNS: Compiled $RULE_COUNT unique custom rules (Total active in AdGuard: ~$TOTAL_COUNT rules)."
       fi
     else
-      echo "  Compiled and loaded $RULE_COUNT optimized DNS rules."
+      echo "  DNS: Compiled and loaded $RULE_COUNT optimized rules."
+    fi
+  fi
+
+  # Report IP blocklist compilation results
+  IP_COUNT=$(grep "^# Entries:" adguard/work/userfilters/ip_blocklist.ipset 2>/dev/null | awk -F': ' '{print $2}' || echo "0")
+  if [ "$IP_COUNT" != "0" ] && [ "$IP_COUNT" != "" ]; then
+    if command -v printf &> /dev/null; then
+      FORMATTED_IP=$(printf "%'d" "$IP_COUNT")
+      echo "  IP:  Loaded $FORMATTED_IP threat intelligence IPs/CIDRs into kernel firewall."
+    else
+      echo "  IP:  Loaded $IP_COUNT threat intelligence IPs/CIDRs into kernel firewall."
     fi
   fi
 
