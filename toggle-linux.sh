@@ -863,4 +863,12 @@ if [ -n "$ACTIVE_SERVICE" ]; then
   echo -e "──────────────────────────────────────────────"
 fi
 
+if [ "$START_GATEWAY" = "true" ] && command -v docker >/dev/null 2>&1; then
+  if docker compose logs rule-compiler 2>/dev/null | grep -q "Warning: Failed to fetch"; then
+    echo -e "\n[Warning] One or more blocklist URLs failed to download (404/Offline)."
+    echo "  The gateway gracefully fell back to yesterday's cached blocklist."
+    echo "  (Run 'docker logs rule-compiler' later to investigate which link died.)"
+  fi
+fi
+
 echo -e "\nYou can close this terminal window now."
