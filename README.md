@@ -336,9 +336,31 @@ For a detailed write-up of the DNS deadlock, CLI hang, and Tailscale GUI launch 
 
   The underlying principle is absolute: any network behavior that is conditional on a message existing is a protocol-level side channel. This approach ensures that the only remaining vulnerabilities are targeted physical or endpoint compromises, creating an incredibly robust, zero-trust communication channel.
 
-## 12. Acknowledgements
+## 12. Packaging Nullexit as a macOS Application (.dmg)
+While `nullexit` is designed to be run from the terminal (via `setup.sh` and `toggle.sh`), it is entirely possible to package the entire gateway into a native, drag-and-drop macOS Application (`Nullexit.app`) inside a `.dmg` file. 
+
+However, doing so introduces strict hardware requirements regarding **Nested Virtualization**.
+
+`nullexit` relies on **Colima**, which uses Apple's Virtualization Framework (`vz`) to spin up a Linux VM that hosts the Docker daemon. If a user installs your `Nullexit.app` inside a virtualized macOS environment (such as a macOS Docker container, Parallels VM, or a cloud Mac instance), they are attempting to run a Linux VM *inside* a macOS VM. This requires hardware-level **Nested Virtualization**.
+
+### Hardware Limitations:
+* **Supported:** Apple Silicon **M3 and M4 series** chips (running macOS Sequoia 15+) officially support nested virtualization. Intel Macs with VMX flags passed through also support it.
+* **Unsupported:** Older Apple Silicon (M1, M2) and iPhone-class Mac chips (like the **A18 Pro** in the MacBook Neo) do **not** support nested virtualization.
+
+If you package `nullexit` as a `.app` and a user runs it on unsupported hardware inside a VM, Colima will silently crash in the background, and the app will appear broken. Using the terminal (`setup.sh`) is recommended for maximum compatibility because it explicitly surfaces the hypervisor crash logs to the user.
+
+### How to Build the Nullexit App
+If you are deploying this to a fleet of supported M3/M4 Macs or bare-metal machines, you can convert the project into a native `.app` bundle:
+
+1. **Verify Host Compatibility:** Run `sysctl -a | grep hv_nested_virt_supported`. If this returns `1`, your host supports nested virtualization.
+2. **Compile the AppleScript:** Use macOS's built-in tool to compile the AppleScript into an app bundle: `osacompile -o "Nullexit.app" "Toggle Gateway.applescript"`
+3. **Embed the Bash Scripts:** Copy `toggle.sh`, `setup.sh`, `recover.sh`, `docker-compose.yml`, and `sync-rules.py` into the app's hidden resources folder: `mkdir -p "Nullexit.app/Contents/Resources/scripts"` and copy them in. *(You will need to modify the AppleScript to point to this new internal path).*
+4. **Package into a DMG:** Run `hdiutil create -volname "Nullexit Installer" -srcfolder "./Nullexit.app" -ov -format UDZO Nullexit.dmg`.
+5. **The Gatekeeper Warning:** Unless you cryptographically sign the `.app` using a paid $99/year Apple Developer certificate, users who download the DMG will receive an "App is damaged" warning from macOS Gatekeeper. They will need to run `xattr -cr /Applications/Nullexit.app` to bypass it.
+
+## 13. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 
-## 13. License
+## 14. License
 
 This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](file:///Users/omar/Developer/nullexit/LICENSE) file for details.
