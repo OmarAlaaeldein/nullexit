@@ -302,17 +302,13 @@ For debugging, logs are strictly segmented based on the component's lifecycle:
 - **`docker logs <container>` (Guest-side):** The persistent containers (`warp`, `tailscale`, `routing-fix`, `adguardhome`, `socks-proxy`) use the Docker `json-file` logging driver with a strict `max-size` (1m-10m) to prevent VM disk exhaustion. Use standard `docker logs` to view them.
 
 ### 9.12 Chrome Remote Desktop Connection Failures
-**Context:** When attempting to access an edge device via Chrome Remote Desktop (CRD) while Tailscale is active (especially when routing through the nullexit exit node), the connection fails completely or hangs indefinitely, requiring the user to disable Tailscale/exit-node to connect.
+**Context:** When attempting to access a remote machine via Chrome Remote Desktop (CRD), the connection fails or hangs if Tailscale is active **on the remote device**. The connection works fine even if Tailscale (and the exit node) is active **on the local client/viewer device**, but only if Tailscale is disabled on the remote machine.
 
-**Technical Causes:**
-1. **Asymmetric Routing:** When an exit node is enabled, the default route (`0.0.0.0/0`) is overridden to direct all outbound traffic through the Tailscale virtual interface. If a connection request comes in via the local physical adapter (Ethernet/Wi-Fi), the edge device tries to reply through the Tailscale exit node adapter. The mismatched return path causes stateful firewalls/routers to drop the packets, breaking the connection.
-2. **Google Sign-in/Signaling Blocks:** Chrome Remote Desktop relies on a continuous background connection to Google's signaling servers (e.g., `remotedesktop-pa.googleapis.com`) to authenticate and register its online status. Google's firewalls frequently block or rate-limit these signaling requests when they originate from commercial VPN IP ranges (such as Cloudflare WARP or Mullvad).
-3. **WebRTC NAT Traversal Blockage:** CRD relies on WebRTC to perform UDP hole-punching. The strict CGNAT and firewalls on Mullvad/WARP endpoints block incoming UDP hole-punching attempts, causing P2P WebRTC negotiation to fail.
+**Why:** Having Tailscale active on the remote machine creates virtual network interfaces and DNS/routing modifications that conflict with Chrome Remote Desktop's WebRTC bindings and signaling traffic.
 
-**Workaround / Solution:** 
-Since Tailscale already secures the edge device, bypass Chrome Remote Desktop entirely. Instead:
-- Use **Windows Remote Desktop (RDP)** or **RustDesk** to connect directly to the target device's secure Tailscale IP (`100.X.Y.Z`). This creates a direct, peer-to-peer, encrypted connection with sub-millisecond local network latency.
-- If Chrome Remote Desktop is absolutely required, the Tailscale exit node routing must be disabled via `toggle.sh` (or paused) on the host machine.
+**Workaround:**
+- **Use Tailscale Native RDP/RustDesk (Recommended):** Connect directly to the remote device's Tailscale IP (`100.X.Y.Z`) via an RDP or RustDesk client. This is faster and avoids third-party relay conflicts.
+- **Disable Tailscale on the Remote Device:** If you must use CRD, disable Tailscale on the remote machine before connecting.
 
 ---
 
