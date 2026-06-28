@@ -296,7 +296,7 @@ To address this, two critical optimizations are built-in:
 2. **Memory Profiles**: You can select a rule compilation tier in your `.env` file via `GATEWAY_RULE_PROFILE`:
    - `light` (Recommended for extremely low-memory hosts under 512MB RAM without swap): Generates **~52k** optimized rules.
    - `medium` (Default / Recommended balance, runs stably on 512MB RAM + 512MB Swap VM): Generates **~167k** optimized rules.
-   - `heavy` (Highest security, requires increasing Colima memory allocation): Generates **~253k** optimized rules.
+   - `heavy` (Highest security, requires increasing Colima memory allocation): Generates **~325k** optimized rules.
 
 3. **Local SSD Caching**: To prevent unnecessary network saturation and API rate limits, the script caches all downloaded remote blocklists to your local disk. If a gateway reboot occurs within 24 hours of the last compile, the script bypasses the internet entirely and loads all lists concurrently from the SSD (often taking under 0.5 seconds).
 4. **DNS RAM Caching**: While the massive blocklists are stored on disk, the AdGuard Home resolver actively caches the IP addresses of your most frequent, legitimate DNS queries directly in the container's RAM. This hybrid approach (SSD for bulk rule storage, RAM for frequent connection lookups) guarantees instantaneous (0ms) resolution for the websites you visit most, completely eliminating upstream WARP latency for cached domains.
