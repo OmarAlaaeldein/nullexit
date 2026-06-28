@@ -30,6 +30,9 @@ services:
       # NOTE: This is the massive "Hagezi-style" built-in blocklist. 
       # You can turn these to 'on' for maximum security if you have spare RAM 
       # or are running this on a cloud exit node with adequate autonomous resources (requires approx 1-2GB of RAM).
+      # Disabled intentionally: AdGuard Home provides the DNS filtering layer instead.
+      # If AdGuard fails, there is no fallback filtering, but the healthcheck 
+      # dependency chain ensures Tailscale won't come up if AdGuard is down.
       - BLOCK_MALICIOUS=off
       - BLOCK_SURVEILLANCE=off
       - BLOCK_ADS=off
@@ -74,6 +77,9 @@ services:
       - TS_USERSPACE=false
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
+      # Intentional for stability: prevents the container from re-authenticating 
+      # on every boot. Trade-off: if the auth key expires and the container is 
+      # recreated, it may silently fail to authenticate without a new key.
       - TS_AUTH_ONCE=true
     devices:
       - /dev/net/tun:/dev/net/tun

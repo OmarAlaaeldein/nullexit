@@ -144,14 +144,19 @@ def fetch_remote_domains(url):
         with urllib.request.urlopen(req, timeout=15) as response:
             content = response.read().decode('utf-8')
             
-            # Save raw content to cache
+            domains = parse_domains_from_content(content)
+            
+            # Sanity check: if a URL goes 404 and returns HTML, it will parse to ~0 domains.
+            if len(domains) < 100:
+                raise ValueError(f"Sanity check failed: only found {len(domains)} domains. Possible 404 or bad URL.")
+            
+            # Save raw content to cache ONLY if sanity check passes
             try:
                 with open(cache_file, 'w', encoding='utf-8') as f:
                     f.write(content)
             except Exception as e:
                 print(f" -> Warning: Failed to save cache file ({e})")
                 
-            domains = parse_domains_from_content(content)
             print(f" -> Successfully fetched and cached {len(domains)} domains.")
             return domains
     except Exception as e:
