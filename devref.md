@@ -281,6 +281,12 @@ This section documents issues encountered during development, their status, and 
 
 **Cross-Platform File Exchange:** To easily browse and exchange files securely, simply use an SFTP client and connect to your Mac's MagicDNS name on port 22. Recommended clients: **WinSCP** or **FileZilla** (Windows), **Cyberduck** (macOS), and **FE File Explorer** or **Solid Explorer** (iOS/Android).
 
+### 9.10 Changing macOS Local Hostname
+**Context:** Users may wish to change their Mac's computer name/hostname in macOS System Settings.
+**Effect:** Changing the Mac's hostname will **not** break Nullexit (which relies on internal routing/localhost). However, Tailscale will automatically detect this change and update the machine name on the Tailnet. 
+- The underlying Tailscale `100.x.x.x` IPv4 address will remain exactly the same.
+- The **MagicDNS name** will change to match the new hostname. Users must remember to update their SFTP/SSH clients to use the new MagicDNS address.
+
 ---
 
 ## 10. Resolved Issues (from README)
