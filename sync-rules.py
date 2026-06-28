@@ -7,57 +7,45 @@ WHITE_LIST_PATH = "white_list.txt"
 OUTPUT_PATH = "adguard/work/userfilters/compiled_rules.txt"
 
 # Remote lists profiles to balance memory usage vs blocking power
+CORE_LISTS = [
+    "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
+    "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
+    "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.samsung.txt",
+    "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/native.apple.txt",
+    "https://abp.oisd.nl/basic/",
+    "https://adaway.org/hosts.txt",
+    "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
+    "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains"
+]
+
+MEDIUM_ADDITIONS = [
+    "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
+    "https://someonewhocares.org/hosts/zero/hosts",
+    "https://urlhaus.abuse.ch/downloads/hostfile/"
+]
+
+HEAVY_ADDITIONS = [
+    "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+    "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV-AGH.txt",
+    "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/GameConsoleAdblockList.txt"
+]
+
 PROFILES = {
-    "light": [
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
-        "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
-        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt",
-        # Cascaded light list additions
-        "https://abp.oisd.nl/basic/",
-        "https://adaway.org/hosts.txt",
-        "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
-        "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains"
+    "light": CORE_LISTS + [
+        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/light.txt"
     ],
-    "medium": [
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
-        "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
-        "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
-        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt",
-        # Cascaded from light
-        "https://abp.oisd.nl/basic/",
-        "https://adaway.org/hosts.txt",
-        "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
-        "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains",
-        # Medium list additions
-        "https://someonewhocares.org/hosts/zero/hosts",
-        "https://urlhaus.abuse.ch/downloads/hostfile/"
+    "medium": CORE_LISTS + MEDIUM_ADDITIONS + [
+        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/multi.txt"
     ],
-    "heavy": [
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/adservers.txt",
-        "https://raw.githubusercontent.com/anudeepND/blacklist/master/facebook.txt",
-        "https://raw.githubusercontent.com/lightswitch05/hosts/master/docs/lists/facebook-extended.txt",
-        "https://raw.githubusercontent.com/crazy-max/WindowsSpyBlocker/master/data/hosts/spy.txt",
-        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt",
-        "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
-        # Cascaded from light
-        "https://abp.oisd.nl/basic/",
-        "https://adaway.org/hosts.txt",
-        "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=1&mimetype=plaintext",
-        "https://raw.githubusercontent.com/nextdns/cname-cloaking-blocklist/master/domains",
-        # Cascaded from medium
-        "https://someonewhocares.org/hosts/zero/hosts",
-        "https://urlhaus.abuse.ch/downloads/hostfile/",
-        # Heavy list additions
-        "https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV-AGH.txt",
-        "https://raw.githubusercontent.com/DandelionSprout/adfilt/master/GameConsoleAdblockList.txt"
+    "heavy": CORE_LISTS + MEDIUM_ADDITIONS + HEAVY_ADDITIONS + [
+        "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/domains/pro.txt"
     ]
 }
 
 def load_env_profile():
     """Load the GATEWAY_RULE_PROFILE variable from .env or system environment."""
-    profile = "medium"  # Default profile
+    profile = "heavy"  # Default profile
     if os.path.exists(".env"):
         try:
             with open(".env", "r") as f:
@@ -76,8 +64,8 @@ def load_env_profile():
     # Allow environment variable override
     profile = os.environ.get("GATEWAY_RULE_PROFILE", profile).lower()
     if profile not in PROFILES:
-        print(f"Warning: Profile '{profile}' is invalid. Falling back to 'medium'.")
-        profile = "medium"
+        print(f"Warning: Profile '{profile}' is invalid. Falling back to 'heavy'.")
+        profile = "heavy"
     return profile
 
 def load_domains(filepath):
@@ -152,8 +140,11 @@ def fetch_remote_domains(url):
             
             # Save raw content to cache ONLY if sanity check passes
             try:
+                if os.path.exists(cache_file):
+                    os.chmod(cache_file, 0o644)
                 with open(cache_file, 'w', encoding='utf-8') as f:
                     f.write(content)
+                os.chmod(cache_file, 0o444)
             except Exception as e:
                 print(f" -> Warning: Failed to save cache file ({e})")
                 
@@ -264,6 +255,12 @@ def main():
 
     # Generate AdGuard Syntax
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    if os.path.exists(OUTPUT_PATH):
+        try:
+            os.chmod(OUTPUT_PATH, 0o644)
+        except Exception:
+            pass
+            
     with open(OUTPUT_PATH, 'w') as f:
         f.write("! Custom Compiled Rules (Auto-Generated)\n")
         f.write(f"! Memory Profile: {profile.upper()}\n")
@@ -294,6 +291,11 @@ def main():
                 f.write(f"{rule}\n")
             else:
                 f.write(f"@@||{domain}^\n")
+
+    try:
+        os.chmod(OUTPUT_PATH, 0o444)
+    except Exception:
+        pass
 
     print(f"\nSuccessfully compiled {len(black_list)} block rules and {len(white_list)} allow rules to {OUTPUT_PATH}")
 
