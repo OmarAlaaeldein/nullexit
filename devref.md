@@ -310,6 +310,28 @@ For debugging, logs are strictly segmented based on the component's lifecycle:
 - **Use Tailscale Native RDP/RustDesk (Recommended):** Connect directly to the remote device's Tailscale IP (`100.X.Y.Z`) via an RDP or RustDesk client. This is faster and avoids third-party relay conflicts.
 - **Disable Tailscale on the Remote Device:** If you must use CRD, disable Tailscale on the remote machine before connecting.
 
+### 9.13 Docker Default Bridge vs Host Wi-Fi Subnet Collision (The 172.17.0.0/16 Subnet Overlap)
+**Context:** When attempting to ping a local Windows client (`172.17.22.187`) or the default gateway (`172.17.0.1`) directly over Wi-Fi, the Mac host returns `No route to host` (displaying a `REJECT` / `!` flag in the routing table). Tailscale on the client also drops offline shortly after starting when using the exit node, failing to establish direct P2P connections and falling back to slow DERP relays.
+
+**Root Cause & Subnet Overlap Mechanism:** 
+1. **Docker Default Subnet:** By default, the Docker daemon initializes its default bridge network (`docker0`) on the **`172.17.0.0/16`** IP range.
+2. **Subnet Conflict:** The host's physical Wi-Fi network happens to be assigned the exact same **`172.17.0.0/16`** range by the local network router.
+3. **Routing Clash:** Colima launches a Linux VM on the Mac host to run the Docker engine. Because Docker inside that VM creates `docker0` and claims the `172.17.0.0/16` subnet, any packet sent to `172.17.x.x` from within the containers (such as Tailscale local discovery) is captured by the VM's internal virtual bridge interface (which is down/empty) and is blackholed. On the Mac host, macOS dynamically marks routes as `REJECT` (`!`) when local ARP resolution fails, causing local pings to immediately abort with `No route to host`.
+4. **Tailscale Relay Saturation**: Because local peer-to-peer discovery is blackholed, Tailscale falls back to public DERP relay servers (e.g. `relay "tor"` in Toronto). When exit-node routing is enabled, all client web traffic is routed through the relay. Public relays impose strict rate limits and throttle high-volume traffic, resulting in packet drops. This saturation drops Tailscale's control packets, causing the connection to time out and showing the client as offline.
+
+**Fix:**
+Configure a custom, non-conflicting default bridge IP (`bip`) for the Docker daemon. 
+Edit the Colima configuration file (`/Users/omar/.colima/default/colima.yaml`) on your Mac to define:
+```yaml
+docker:
+  bip: 172.26.0.1/24
+```
+Then, restart Colima to apply the new subnet inside the VM:
+```bash
+colima restart
+```
+This forces Docker to use `172.26.x.x` for its default bridge, freeing the physical `172.17.x.x` range and letting pings and direct Tailscale peer-to-peer connections flow normally.
+
 ---
 
 ## 10. Resolved Issues (from README)
