@@ -678,6 +678,8 @@ else
   echo -e "\nStarting Docker containers..."
   docker compose up -d
   
+  # Log the output of the rule compiler for debugging before removing it
+  docker compose logs rule-compiler >> output.log 2>&1
   # Clean up the one-off rule compiler container so it doesn't clutter the Docker UI
   docker compose rm -s -f rule-compiler >> output.log 2>&1
   
