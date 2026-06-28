@@ -45,7 +45,7 @@ run_with_timeout() {
   set -e
   
   # Kill the watcher since the command finished
-  kill "$watcher_pid" 2>> output.log && wait "$watcher_pid" 2>> output.log
+  kill "$watcher_pid" 2>> output.log && wait "$watcher_pid" 2>> output.log || true
   
   CURRENT_BG_PID=""
   return "$exit_status"
@@ -498,19 +498,26 @@ force_dns_to_gateway() {
 # during status checks, container startup, VM boot, or teardown. We *also* clear any leftover
 # `ts.net` search domain from a previous `tailscale up --accept-dns=true` run, otherwise macOS
 # would prepend it to every lookup and most public DNS queries would resolve to NXDOMAIN.
+# Capture current DNS before resetting so we can check if it was hijacked
+INITIAL_DNS=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log || true)
+
 echo "Initializing DNS to 1.1.1.1 to ensure reliable internet access..."
 reset_dns
 
 # Check if the gateway is active (either containers are running, or host DNS is hijacked)
 is_gateway_active() {
-  # 1. Check if containers are running
-  if run_with_timeout 15 docker compose ps --status running | grep -q 'warp'; then
+  # 1. Check if containers are running (suppress stderr to avoid errors if docker is down)
+  if run_with_timeout 15 docker compose ps --status running 2>/dev/null | grep -q 'warp'; then
     return 0
   fi
-  # 2. Check if host DNS is hijacked (not 1.1.1.1 and not default/empty)
-  local current_dns
-  current_dns=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log || true)
-  if [[ -n "$current_dns" && "$current_dns" != "1.1.1.1" && ! "$current_dns" =~ "There aren't any DNS Servers" ]]; then
+  # 2. Check if host DNS was hijacked (not 1.1.1.1 and not default/empty)
+  if [[ -n "$INITIAL_DNS" && "$INITIAL_DNS" != "1.1.1.1" && ! "$INITIAL_DNS" =~ "There aren't any DNS Servers" ]]; then
+    return 0
+  fi
+  # 3. Check if SOCKS proxy is enabled
+  local socks_proxy
+  socks_proxy=$(networksetup -getsocksfirewallproxy "$ACTIVE_SERVICE" 2>> output.log || true)
+  if echo "$socks_proxy" | grep -q "Enabled: Yes"; then
     return 0
   fi
   return 1
