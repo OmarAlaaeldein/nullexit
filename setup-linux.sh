@@ -22,7 +22,7 @@ if ! command -v docker >> output.log 2>&1; then
         echo ""
         echo "  A) Colima — lighter, recommended for this project (low memory):"
         echo "       brew install colima docker docker-compose"
-        echo "       colima start --memory 0.8"
+        echo "       colima start --memory 0.6"
         echo ""
         echo "  B) Docker Desktop — easier GUI, higher memory overhead:"
         echo "       https://www.docker.com/products/docker-desktop/"
@@ -38,7 +38,7 @@ if ! docker info >> output.log 2>&1; then
     echo ""
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "  Docker is installed but not running."
-        echo "  If using Colima:        colima start --memory 0.8"
+        echo "  If using Colima:        colima start --memory 0.6"
         echo "  If using Docker Desktop: open the app."
     else
         echo "  Docker is installed but not running."
