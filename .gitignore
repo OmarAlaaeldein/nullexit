@@ -24,3 +24,4 @@ logs.txt
 stability_incident_report.md
 output.log
 .DS_Store
+*.desktop

@@ -348,6 +348,36 @@ if [[ -n "$TS_IP" ]]; then
     ok "Tailscale IP: ${TS_IP} (resolved dynamically by toggle.sh on each startup)"
 fi
 
+# ─── Compile Linux Desktop Shortcuts ──────────────────────────────────────────
+echo -e "\n${BOLD}Creating Linux Desktop Shortcuts...${NC}"
+DIR="$(pwd)"
+cat <<EOF > "Toggle Gateway.desktop"
+[Desktop Entry]
+Version=1.0
+Name=Toggle Gateway
+Comment=Start or Stop Nullexit Gateway
+Exec=bash -c "cd '$DIR' && ./toggle-linux.sh; read -p 'Press Enter to close...' dummy"
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Network;Security;
+EOF
+chmod +x "Toggle Gateway.desktop"
+
+cat <<EOF > "Recover Gateway.desktop"
+[Desktop Entry]
+Version=1.0
+Name=Recover Gateway
+Comment=Emergency DNS and Network Recovery
+Exec=bash -c "cd '$DIR' && ./recover-linux.sh; read -p 'Press Enter to close...' dummy"
+Icon=utilities-terminal
+Terminal=true
+Type=Application
+Categories=Network;Security;
+EOF
+chmod +x "Recover Gateway.desktop"
+echo "  → Created 'Toggle Gateway.desktop' and 'Recover Gateway.desktop'"
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════╗${NC}"
@@ -368,15 +398,6 @@ echo -e "${BOLD}To update your block/allow rules:${NC}"
 echo "  python3 sync-rules.py"
 echo ""
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
-echo "  macOS:   double-click Toggle-Gateway.applescript"
-echo "  Windows: double-click Toggle-Gateway.bat"
+echo "  Linux: double-click the 'Toggle Gateway' desktop icon!"
+echo "  (or run ./toggle-linux.sh in terminal)"
 echo ""
-
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo -e "${YELLOW}${BOLD}Note on macOS Tailscale Sandboxing:${NC}"
-    echo "  The Tailscale GUI app (tailscale-app) installed on macOS is sandboxed."
-    echo "  While you cannot run a Tailscale SSH server on this Mac host, you can"
-    echo "  still SSH outbound to other devices on the mesh using their MagicDNS"
-    echo "  addresses directly (e.g. ssh user@device.tailnet-name.ts.net)."
-    echo ""
-fi
