@@ -573,7 +573,11 @@ def main():
             print(f"Warning: Could not remove stale cache {cache_path} ({e})")
 
     # Restart AdGuard Home container if docker is running to apply changes immediately
-    if os.path.exists("docker-compose.yml"):
+    # (This only applies if sync-rules.py is run manually on the host. When running
+    # inside the rule-compiler container on startup, docker is not installed, which
+    # is fine because AdGuard Home will boot immediately after the container finishes).
+    import shutil
+    if os.path.exists("docker-compose.yml") and shutil.which("docker"):
         try:
             import subprocess
             res = subprocess.run(["docker", "compose", "ps", "--status", "running", "-q", "adguardhome"], capture_output=True, text=True)
