@@ -188,10 +188,45 @@ Instead of a state using deep packet inspection to restrict its citizens' access
 
 Because the system leverages a dual `iptables` stack alongside `ipset` within the core routing container (`routing-fix.sh`), you can effortlessly enforce mass country-level IP blocking. For example, the repository includes built-in logic that dynamically pulls the CIDR ranges for **North Korea (KP)** directly from `ipdeny.com` and injects them into the firewall hash sets. Any traffic originating from or destined to those IPs across your entire mesh network is instantly dropped at the kernel level.
 
-Beyond entire countries, this choke point provides granular per-device control:
-* **Identification:** Every device on your mesh has a stable `100.x.x.x` IP visible in the firewall's `FORWARD` chain. 
-* **IP/Country Blocking:** Enforced at the kernel layer using `iptables` and `ipset`.
-* **Domain Blocking:** Enforced at the DNS layer using AdGuard Home's REST API, allowing you to map specific domain blocklists to specific Tailscale client IPs.
+Beyond entire countries, this choke point provides an incredibly granular **per-device ACL framework**. 
+
+Because every device on the mesh routes its internet-bound traffic through the `warp` container's `FORWARD` chain, they all use their stable `100.x.x.x` Tailscale IP as their source address. This gives you two powerful enforcement surfaces:
+
+#### 1. IP & Port Level (via `routing-fix.sh`)
+You can write raw `iptables` rules in `routing-fix.sh` targeting specific devices. Because `routing-fix.sh` runs a 5-second idempotent loop with `-C` existence checks, these rules automatically survive Gluetun reconnects and Tailscale backend resets:
+
+```bash
+# Block a specific device from reaching a target subnet
+iptables -I FORWARD -s 100.x.x.x -d 203.0.113.0/24 -j DROP
+
+# Restrict a device to only HTTP/HTTPS
+iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 80 -j DROP
+iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 443 -j DROP
+
+# Block a device entirely from internet egress (mesh only)
+iptables -I FORWARD -s 100.x.x.x -j DROP
+
+# Time-based access (e.g., cut off internet from 10 PM to 7 AM)
+iptables -I FORWARD -s 100.x.x.x -m time --timestart 22:00 --timestop 07:00 -j DROP
+```
+
+#### 2. DNS Level (via AdGuard's REST API)
+AdGuard Home supports per-client rules keyed by the client's IP. You can programmatically push custom blocklists, safe search policies, and category blocking to specific devices:
+
+```bash
+curl -X POST http://localhost:80/control/clients/add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "kids-ipad",
+    "ids": ["100.x.x.x"],
+    "use_global_blocked_services": false,
+    "blocked_services": ["youtube", "tiktok", "instagram"],
+    "filtering_enabled": true,
+    "safesearch_enabled": true
+  }'
+```
+
+For a family network or a small team, this provides a complete policy domain. You can simultaneously block by destination CIDR, by port, by protocol, by time-of-day, and by DNS category, creating an incredibly flexible and robust access control system.
 
 ### Layered Defense: What This Gateway Protects Against
 This gateway stacks four layers of defense targeting different attack surfaces:
