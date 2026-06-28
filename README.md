@@ -349,6 +349,18 @@ However, doing so introduces strict hardware requirements regarding **Nested Vir
 
 If you package `nullexit` as a `.app` and a user runs it on unsupported hardware inside a VM, Colima will silently crash in the background, and the app will appear broken. Using the terminal (`setup.sh`) is recommended for maximum compatibility because it explicitly surfaces the hypervisor crash logs to the user.
 
+> [!NOTE]
+> **Trivia: How deep does "VM Inception" go?**  
+> In the enterprise world, most virtualization is strictly capped at Level 2 (a VM inside a VM). However, security researchers have pushed the theoretical limits of nested virtualization to **Level 5** before hardware failure occurs:  
+> * **L0:** Bare Metal Server (AMD EPYC)  
+> * **L1:** VMware ESXi Host  
+> * **L2:** Windows Hyper-V VM  
+> * **L3:** Proxmox VM  
+> * **L4:** Ubuntu KVM VM  
+> * **L5:** Docker / Alpine Linux  
+>  
+> There is no hard-coded software limit that stops you at Level 5. Instead, the CPU's hardware Translation Lookaside Buffer (TLB) simply overflows. Translating memory addresses through five hypervisor abstraction layers creates so much Memory Management Unit (MMU) overhead that a single mouse click can take 30 seconds to register before the CPU inevitably suffers a catastrophic kernel panic!
+
 ### How to Build the Nullexit App
 If you are deploying this to a fleet of supported M3/M4 Macs or bare-metal machines, you can convert the project into a native `.app` bundle:
 
