@@ -381,6 +381,14 @@ To prevent this, you can configure the TCP Maximum Segment Size (MSS) clamp in y
 * **`GATEWAY_MSS=1120` (Recommended for Stability):** Artificially shrinks your data payloads so much that even when double-encrypted, they will easily slide under a cellular network's strict 1280-byte limit without stalling. Use this if you connect from airplanes, mobile hotspots, or corporate VPNs.
 * **`GATEWAY_MSS=1180` (Recommended for Speed):** If you only use this gateway on standard, healthy Wi-Fi networks (MTU 1500), clamping to 1180 reduces packet header overhead, resulting in slightly faster download speeds.
 
+> [!NOTE]
+> **Trivia: The "Russian Doll" Topology**  
+> What happens if you daisy-chain devices together on the mesh? For example: A Mac (running Tailscale) connects to a Windows Mobile Hotspot (which is also running Tailscale), which then connects to the Nullexit Gateway. 
+> 
+> You have essentially created a network Russian Doll via **Triple Encapsulation**: Your data is wrapped in WireGuard by the Mac, wrapped *again* in WireGuard by the Windows hotspot, and then wrapped a *third* time in WARP by the Gateway!
+> 
+> Because WireGuard is incredibly mathematically efficient, encrypting the data three times barely touches your CPU and only adds **~2-4ms** of cryptographic latency. The real latency danger in this scenario is "DERP routing." Because you are stacked behind multiple nested NATs, Tailscale's UDP hole-punching might fail to establish a direct P2P link. If Tailscale falls back to routing your triple-encrypted traffic through a public DERP proxy relay (like NYC or Toronto), your ping will instantly spike by **+40 to +80ms**. But thanks to the centralized `1120` MSS clamp on the gateway, the packets will always cleanly fit through without fragmenting or stalling!
+
 ## 14. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
 
