@@ -106,6 +106,40 @@ stop_sleep_prevention() {
   fi
 }
 
+DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
+
+start_dns_watcher() {
+  local target_ip=$1
+  stop_dns_watcher
+  echo "  Starting background DNS Watcher for seamless Wi-Fi roaming..."
+  nohup bash -c "
+    trap 'exit 0' SIGTERM SIGINT SIGHUP
+    while true; do
+      ACTIVE_IF=\$(networksetup -listallnetworkservices | awk 'NR>1' | grep -v '*' | grep -i 'Wi-Fi' | head -1)
+      if [ -n \"\$ACTIVE_IF\" ]; then
+        CURRENT_DNS=\$(networksetup -getdnsservers \"\$ACTIVE_IF\" 2>/dev/null)
+        if [ \"\$CURRENT_DNS\" != \"$target_ip\" ]; then
+          networksetup -setdnsservers \"\$ACTIVE_IF\" \"$target_ip\" >/dev/null 2>&1
+        fi
+      fi
+      sleep 5
+    done
+  " >> output.log 2>&1 &
+  echo $! > "$DNS_WATCHER_PID_FILE"
+}
+
+stop_dns_watcher() {
+  if [ -f "$DNS_WATCHER_PID_FILE" ]; then
+    local watcher_pid
+    watcher_pid=$(cat "$DNS_WATCHER_PID_FILE")
+    if [ -n "$watcher_pid" ] && kill -0 "$watcher_pid" 2>/dev/null; then
+      echo "  Stopping background DNS Watcher (PID $watcher_pid)..."
+      kill -9 "$watcher_pid" 2>/dev/null || true
+    fi
+    rm -f "$DNS_WATCHER_PID_FILE"
+  fi
+}
+
 # Cleanup handler to restore DNS to 1.1.1.1 on error or user interrupt (Ctrl+C / SIGTERM / SIGHUP)
 cleanup_handler() {
   local exit_code=$?
@@ -131,6 +165,7 @@ cleanup_handler() {
 
     # Stop sleep prevention
     stop_sleep_prevention
+    stop_dns_watcher
 
     # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
     if [ -n "$ACTIVE_SERVICE" ]; then
@@ -559,8 +594,9 @@ if is_gateway_active; then
   # 3. Stop local DNS proxy if running
   stop_local_dns_proxy
 
-  # Stop sleep prevention
+  # Stop background daemons
   stop_sleep_prevention
+  stop_dns_watcher
 
   # 4. Nuke leftover network state so internet actually works after teardown
   cleanup_network_state
@@ -923,6 +959,10 @@ else
 
   # Prevent system from going to sleep while gateway is running
   start_sleep_prevention
+  
+  if [ -n "$TS_IP" ] && [ "$TS_IP" != "1.1.1.1" ]; then
+    start_dns_watcher "$TS_IP"
+  fi
 fi
 
 SUCCESS_RUN=true
