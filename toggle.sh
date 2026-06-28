@@ -638,8 +638,8 @@ else
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
-    echo "Colima is not running. Starting Colima (512MB RAM allocation, vz VM, network address)..."
-    run_with_timeout 120 colima start --memory 0.5 --vm-type vz --network-address
+    echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address)..."
+    run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address
   else
     echo "Colima is already running."
   fi
@@ -647,8 +647,8 @@ else
   # We also set vm.swappiness=10 so the Linux kernel strictly prefers physical RAM
   # and avoids unnecessarily wearing out the SSD with proactive background swapping.
   if ! run_with_timeout 15 colima ssh -- grep -q 'swapfile' /proc/swaps >> output.log 2>&1; then
-    echo "Configuring 512MB swap file inside the VM to prevent OOM..."
-    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=512 status=none && chmod 600 /swapfile && mkswap /swapfile; fi && swapon /swapfile && sysctl vm.swappiness=10" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
+    echo "Configuring 400MB swap file inside the VM to prevent OOM..."
+    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=400 status=none && chmod 600 /swapfile && mkswap /swapfile; fi && swapon /swapfile && sysctl vm.swappiness=10" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
   fi
 
   # 4. Clean up corrupted AdGuardHome configurations

@@ -43,7 +43,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | 1080 | 1080 | TCP | SOCKS5 proxy |
 
 ### Host Components
-- **Colima VM** — Linux VM running Docker (512MB RAM + 512MB swap)
+- **Colima VM** — Linux VM running Docker (600MB RAM + 400MB swap)
 - **tailscaled** — Standalone Tailscale daemon via `brew install tailscale` + `brew services start tailscale` (NOT the GUI `.app`)
 - **macOS network settings** — DNS, SOCKS proxy, routing all manipulated by `toggle.sh`
 
@@ -78,8 +78,8 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 1. **Reset DNS to 1.1.1.1** — Prevents deadlocks during startup
 2. **Disconnect host Tailscale** — `tailscale down` (prevents exit-node routing during container boot)
 3. **Compile DNS rules** — `python3 sync-rules.py`
-4. **Boot Colima VM** — `colima start --memory 0.5` if not running
-5. **Configure VM swap** — 512MB swap file inside the VM to prevent OOM
+4. **Boot Colima VM** — `colima start --memory 0.6` if not running
+5. **Configure VM swap** — 400MB swap file inside the VM to prevent OOM
 6. **Clean corrupted AdGuard config** — Remove empty `AdGuardHome.yaml`
 7. **Start containers** — `docker compose up -d`
 8. **Wait for gateway Tailscale** — Poll `tailscale status` for "offers exit node" (up to 60s, abort at 40 consecutive NoState)
@@ -245,10 +245,14 @@ This section documents issues encountered during development, their status, and 
 ### 9.3 docker compose exec `\r` Injection
 **Fix:** All `docker compose exec` output piped through `tr -d '\r'`.
 
-### 9.4 Colima VM Memory / OOM
-**Symptom:** AdGuard gets OOMKilled loading large blocklists at 0.6GB VM RAM.
+### 9.4 Colima VM Memory / Swap Thrashing Latency
+**Symptom:** After running nullexit flawlessly for over 24 hours straight to test stability, the 0.5GB VM RAM configuration began experiencing severe network latency on the Tailscale mesh later in the day.
 
-**Fix:** VM set to 512MB RAM + 512MB swap file inside VM. Subdomain deduplication reduces rules by ~60%. Memory profiles (`light`/`medium`/`heavy`) let users trade off coverage for memory.
+**Root Cause:** Services (like AdGuard, Tailscale, Docker logs) slowly accumulate cache and state over extended periods. Under the tight 512MB physical RAM limit, this slow creep forced the Linux kernel to aggressively swap memory to the 512MB SSD swap file. The constant disk I/O thrashing blocked process execution, causing DNS resolutions and packet forwarding to delay significantly (making the internet feel "very slow").
+
+**Proof (Empirical Observation):** While in this OOM-thrashing state, direct DNS queries through the Tailscale mesh (`dig @100.100.21.8 google.com`) would intermittently hang or take several seconds to resolve. After restarting with the 600MB configuration, the exact same query immediately dropped to a lightning-fast **41ms** response time. (Note: Querying the mapped host port via `127.0.0.1:5354` will always time out due to Gluetun's strict leak-prevention firewall blocking non-VPN ingress traffic).
+
+**Fix:** Increased VM base physical RAM to 600MB (`--memory 0.6`) and reduced the swap file to 400MB. This provides enough native RAM headroom for long-running state caches without forcing heavy I/O swapping. Subdomain deduplication still reduces blocklists by ~60%. Memory profiles (`light`/`medium`/`heavy`) let users trade off coverage for memory.
 
 ### 9.5 tailscaled Daemon Broken State
 **Symptom:** `brew services list` shows `started` but `tailscale status` shows "stopped".
