@@ -84,7 +84,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 7. **Start containers** — `docker compose up -d`
 8. **Wait for gateway Tailscale** — Poll `tailscale status` for "offers exit node" (up to 60s, abort at 40 consecutive NoState)
 9. **Resolve gateway IP** — From `ADGUARD_IP.txt` or `docker compose exec tailscale tailscale ip -4`
-10. **Connect host to mesh** — Verify `tailscaled` is running (auto-start if needed), then `tailscale up --reset --accept-dns=false --exit-node=`
+10. **Connect host to mesh** — Verify `tailscaled` is running (auto-start if needed), then `tailscale up --reset --ssh=true --accept-dns=false --exit-node=`
 11. **Pre-flight checks** — [1/3] `tailscale ping` gateway, [2/3] `dig +tcp` AdGuard DNS, [3/3] WARP container internet
 12. **If all pass** → Set exit node + hijack DNS to gateway IP (single server, no fallback)
 13. **If any fail** → Enable SOCKS5 proxy + local DNS proxy as fallback
@@ -273,6 +273,13 @@ This section documents issues encountered during development, their status, and 
 **Root Cause:** `ip route show default` printed two lines; `awk '{print $3}'` picked up both, causing route commands to fail.
 
 **Fix:** Added `head -1` to the parsing chain.
+
+### 9.9 Native SSH & SFTP Security (Zero Local Attack Surface)
+**Context:** macOS "Remote Login" (`sshd`) and "File Sharing" (`smbd`) open ports on the local network (e.g. `172.x.x.x`), exposing the host to brute-force attacks on public Wi-Fi.
+
+**Implementation:** The script strictly enforces `tailscale up --ssh=true` whenever the mesh state is reset. This empowers the user to completely disable native macOS Remote Login and File Sharing. This provides an incredible zero-trust security advantage: even if an attacker steals your Mac username and password, they **cannot** access your files remotely. Disabling the native services completely closes the listening ports on the local Wi-Fi interface (`172.x.x.x`), rendering the Mac impenetrable to local network logins. Meanwhile, Tailscale intercepts port 22 traffic exclusively over the encrypted mesh and authenticates cryptographically based on your Tailscale SSO identity. Stolen Mac passwords are mathematically useless without first bypassing your Tailscale Two-Factor Authentication and registering a device onto the mesh.
+
+**Cross-Platform File Exchange:** To easily browse and exchange files securely, simply use an SFTP client and connect to your Mac's MagicDNS name on port 22. Recommended clients: **WinSCP** or **FileZilla** (Windows), **Cyberduck** (macOS), and **FE File Explorer** or **Solid Explorer** (iOS/Android).
 
 ---
 
