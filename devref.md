@@ -384,10 +384,10 @@ This section preserves the detailed packet-level analysis that led to identifyin
 
 Here's the packet path traced by reading `ip rule show` and the routing tables live:
 
-**Outbound (S24 → internet):**
-1. S24 sends packet to gateway via Tailscale mesh
+**Outbound (Phone-1 → internet):**
+1. Phone-1 sends packet to gateway via Tailscale mesh
 2. Gateway's tailscale0 (kernel TUN, `TS_USERSPACE=false`) decrypts → packet enters FORWARD chain
-3. Packet has src=`100.87.42.87` (S24), dst=some internet IP
+3. Packet has src=`100.87.42.87` (Phone-1), dst=some internet IP
 4. FORWARD chain (nftables): Rule 1 matches (`-i tailscale0 -j ACCEPT`) ✅
 5. Routing decision for the forwarded packet. Which ip rule matches?
    - Rule 98: `to 172.18.0.0/16` → no (dst is internet)
@@ -398,12 +398,12 @@ Here's the packet path traced by reading `ip rule show` and the routing tables l
 7. NAT POSTROUTING: `MASQUERADE on tun0` → src becomes WARP IP ✅
 8. Packet exits through WARP to internet ✅ (in theory)
 
-**Return (internet → S24):**
+**Return (internet → Phone-1):**
 1. Return packet arrives on tun0, conntrack de-MASQUERADEs dst back to `100.87.42.87`
 2. Routing decision for dst=`100.87.42.87`:
    - Rule 99: `to 100.64.0.0/10 lookup 199` → **YES**
 3. Table 199: `100.64.0.0/10 via 172.18.0.1 dev eth0` → **sends it to the Docker gateway!**
-4. **This is wrong.** The packet should go to tailscale0 (to be re-encrypted and sent to S24), but table 199 sends it out eth0 to the Docker bridge host.
+4. **This is wrong.** The packet should go to tailscale0 (to be re-encrypted and sent to Phone-1), but table 199 sends it out eth0 to the Docker bridge host.
 
 **Table 199 is the smoking gun.** It has one route: `100.64.0.0/10 via 172.18.0.1 dev eth0`. This sends ALL Tailscale CGNAT return traffic out the Docker bridge to the host — not back through tailscale0. The return packet leaves the container's network namespace entirely, hits the host's routing stack, and gets dropped because the host has no idea what to do with a raw packet for `100.87.42.87`.
 
