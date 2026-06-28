@@ -348,6 +348,14 @@ if [[ -n "$TS_IP" ]]; then
     ok "Tailscale IP: ${TS_IP} (resolved dynamically by toggle.sh on each startup)"
 fi
 
+# ─── Compile macOS Shortcuts ──────────────────────────────────────────────────
+echo -e "\n${BOLD}Compiling macOS Desktop Shortcuts...${NC}"
+if command -v osacompile &> /dev/null; then
+    osacompile -o "Toggle Gateway.app" "Toggle-Gateway.applescript" >/dev/null 2>&1
+    osacompile -o "Recover Gateway.app" "Recover-Gateway.applescript" >/dev/null 2>&1
+    echo "  → Created 'Toggle Gateway.app' and 'Recover Gateway.app'"
+fi
+
 # ─── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════╗${NC}"
@@ -368,7 +376,7 @@ echo -e "${BOLD}To update your block/allow rules:${NC}"
 echo "  python3 sync-rules.py"
 echo ""
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
-echo "  macOS:   double-click Toggle-Gateway.applescript"
+echo "  macOS:   double-click the 'Toggle Gateway' app icon!"
 echo "  Windows: double-click Toggle-Gateway.bat"
 echo ""
 
