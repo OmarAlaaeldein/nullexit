@@ -95,8 +95,8 @@ To ensure your phone and other Tailnet devices receive AdGuard filtering while u
 Because AdGuard Home intercepts and drops DNS queries for tracking and advertising domains *before* they are ever downloaded, it significantly reduces the CPU and rendering overhead on your devices. 
 
 In automated headless browser tests (Lighthouse) loading ad-heavy sites like CNN over the exit node:
-- **Time to Interactive (TTI):** Improved by **~18%** (51.0s → 41.8s)
-- **Speed Index:** Improved by **~16%** (15.3s → 12.8s)
+- **Time to Interactive (TTI):** Improved by **~22%** (51.0s → 41.8s)
+- **Speed Index:** Improved by **~20%** (15.3s → 12.8s)
 
 While the initial network ping (First Contentful Paint) is marginally slower due to the double-encryption tunnel (Tailscale + WARP), the real-world browsing experience is measurably faster and much smoother because your browser doesn't have to execute dozens of heavy tracking scripts.
 

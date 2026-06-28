@@ -106,6 +106,39 @@ stop_sleep_prevention() {
   fi
 }
 
+DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
+
+start_dns_watcher() {
+  local target_ip=$1
+  stop_dns_watcher
+  echo "  Starting background DNS Watcher for seamless Wi-Fi roaming..."
+  nohup bash -c "
+    trap 'exit 0' SIGTERM SIGINT SIGHUP
+    while true; do
+      if [ -n \"\$ACTIVE_SERVICE\" ]; then
+        CURRENT_DNS=\$(resolvectl dns \"\$ACTIVE_SERVICE\" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+        if [ \"\$CURRENT_DNS\" != \"$target_ip\" ]; then
+          resolvectl dns \"\$ACTIVE_SERVICE\" \"$target_ip\" >/dev/null 2>&1 || true
+        fi
+      fi
+      sleep 5
+    done
+  " >> output.log 2>&1 &
+  echo $! > "$DNS_WATCHER_PID_FILE"
+}
+
+stop_dns_watcher() {
+  if [ -f "$DNS_WATCHER_PID_FILE" ]; then
+    local watcher_pid
+    watcher_pid=$(cat "$DNS_WATCHER_PID_FILE")
+    if [ -n "$watcher_pid" ] && kill -0 "$watcher_pid" 2>/dev/null; then
+      echo "  Stopping background DNS Watcher (PID $watcher_pid)..."
+      kill -9 "$watcher_pid" 2>/dev/null || true
+    fi
+    rm -f "$DNS_WATCHER_PID_FILE"
+  fi
+}
+
 # Cleanup handler to restore DNS to 1.1.1.1 on error or user interrupt (Ctrl+C / SIGTERM / SIGHUP)
 cleanup_handler() {
   local exit_code=$?
@@ -131,6 +164,7 @@ cleanup_handler() {
 
     # Stop sleep prevention
     stop_sleep_prevention
+    stop_dns_watcher
 
     # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
     if [ -n "$ACTIVE_SERVICE" ]; then
@@ -240,24 +274,17 @@ ACTIVE_SERVICE=$(get_active_service)
 # Resolve the service name for en0 (usually "Wi-Fi") — macOS scutil DNS resolver
 # is commonly scoped to en0, so per-service DNS changes on other interfaces are
 # ignored unless en0's service is also updated.
-[ -z "$EN0_SERVICE" ] && 
-  # Helper to restore host DNS to a clean state (used on script start, on failure,
-  # and after a successful STOP). Without this, a successful toggle-off leaves the
-  # host's resolver pinned to a now-dead gateway IP — every lookup stalls for macOS's
-  # DNS timeout (~5s) before falling through to whatever next server is configured.
-  # With it, we always leave the host in `1.1.1.1 / no search domain`.
-  #
-  # We set DNS on BOTH the active service AND the en0 service because macOS's scutil DNS
-  # resolver is commonly scoped to en0 (Wi-Fi). A per-service change on e.g.
-  # "USB 10/100 LAN" is ignored by the system resolver unless the en0 service is also updated.
-  reset_dns() {
-    if [ -n "$ACTIVE_SERVICE" ]; then
-      for dns_svc in "$ACTIVE_SERVICE" "$EN0_SERVICE"; do
-        resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
-        resolvectl revert "$ACTIVE_SERVICE" 2>/dev/null || true
-      done
-    fi
-  }
+# Helper to restore host DNS to a clean state (used on script start, on failure,
+# and after a successful STOP). Without this, a successful toggle-off leaves the
+# host's resolver pinned to a now-dead gateway IP — every lookup stalls for macOS's
+# DNS timeout (~5s) before falling through to whatever next server is configured.
+# With it, we always leave the host in `1.1.1.1 / no search domain`.
+reset_dns() {
+  if [ -n "$ACTIVE_SERVICE" ]; then
+    resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
+    resolvectl revert "$ACTIVE_SERVICE" 2>/dev/null || true
+  fi
+}
 
 # Helper to nuke leftover network state after teardown (proxy settings, routing
 # table, DNS cache, Wi-Fi). Prevents the "had to write a whole recovery script"
@@ -266,11 +293,7 @@ cleanup_network_state() {
   echo -e "\nCleaning up network state (proxies, routes, DNS cache, Wi-Fi)..."
 
   # 1. Disable any leftover proxy settings (needs root on many macOS versions)
-  for svc in "$ACTIVE_SERVICE" "$EN0_SERVICE"; do
-    sudo -n networksetup -setsocksfirewallproxystate "$svc" off 2>> output.log || true
-    sudo -n networksetup -setwebproxystate "$svc" off 2>> output.log || true
-    sudo -n networksetup -setsecurewebproxystate "$svc" off 2>> output.log || true
-  done
+  # (Skipped for Linux since we don't set global SOCKS proxy)
   echo "  Proxies disabled."
 
   # 2. Flush DNS cache
@@ -291,13 +314,8 @@ cleanup_network_state() {
   sudo -n ip link set dev "$ACTIVE_SERVICE" down 2>> output.log || true
   sleep 1
   sudo -n ip link set dev "$ACTIVE_SERVICE" up 2>> output.log || true
-    echo "  Wi-Fi power-cycled (interface $WIFI_PORT)."
-    sleep 3
-  else
-    echo "  Wi-Fi interface not detected; bouncing en0..."
-    sudo -n ifconfig en0 down 2>> output.log || true
-    sudo -n ifconfig en0 up 2>> output.log || true
-  fi
+  echo "  Interface power-cycled ($ACTIVE_SERVICE)."
+  sleep 3
 
   echo "Network state cleanup complete."
 }
@@ -461,12 +479,6 @@ is_gateway_active() {
   if [[ -n "$INITIAL_DNS" && "$INITIAL_DNS" != "1.1.1.1" && ! "$INITIAL_DNS" =~ "There aren't any DNS Servers" ]]; then
     return 0
   fi
-  # 3. Check if SOCKS proxy is enabled
-  local socks_proxy
-  socks_proxy=$(networksetup -getsocksfirewallproxy "$ACTIVE_SERVICE" 2>> output.log || true)
-  if echo "$socks_proxy" | grep -q "Enabled: Yes"; then
-    return 0
-  fi
   return 1
 }
 
@@ -503,6 +515,7 @@ if is_gateway_active; then
 
   # Stop sleep prevention
   stop_sleep_prevention
+  stop_dns_watcher
 
   # 4. Nuke leftover network state so internet actually works after teardown
   cleanup_network_state
@@ -799,6 +812,7 @@ else
     echo "Setting MagicDNS search domain 'ts.net' so tailnet hostnames resolve..."
     if force_dns_to_gateway "$TS_IP"; then
       echo "DNS hijack verified: single server = $TS_IP."
+      start_dns_watcher "$TS_IP"
     else
       echo "[Warning] DNS hijack could not be verified."
       echo "  If DNS is broken, run manually:"

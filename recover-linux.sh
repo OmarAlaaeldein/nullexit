@@ -126,7 +126,7 @@ fi
 
 # ─── 5. Clear stale routing table ────────────────────────────────────────────
 step "Flushing stale routing table entries"
-sudo route -n flush >> output.log 2>&1 || true
+sudo ip route flush cache >> output.log 2>&1 || true
 ok "Routing table flushed"
 
 # ─── 6. Stop gateway Docker containers ────────────────────────────────────────
