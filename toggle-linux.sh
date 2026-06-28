@@ -4,6 +4,11 @@
 
 set -e
 
+# Unlock .env if it exists so Docker can parse it
+if [ -f ".env" ]; then
+  chmod 600 .env 2>/dev/null || true
+fi
+
 # Start execution timer
 TOGGLE_START_TIME=$SECONDS
 
@@ -169,6 +174,11 @@ cleanup_handler() {
     # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
     if [ -n "$ACTIVE_SERVICE" ]; then
       cleanup_network_state
+    fi
+    
+    # Secure .env file again on exit
+    if [ -f ".env" ]; then
+      chmod 000 .env 2>/dev/null || true
     fi
     
     if [ "$trigger_type" = "ERR" ]; then
@@ -883,6 +893,11 @@ if [ "$START_GATEWAY" = "true" ] && command -v docker >/dev/null 2>&1; then
     echo "  The gateway gracefully fell back to yesterday's cached blocklist."
     echo "  (Run 'docker logs rule-compiler' later to investigate which link died.)"
   fi
+fi
+
+# Secure .env file again on successful exit
+if [ -f ".env" ]; then
+  chmod 000 .env 2>/dev/null || true
 fi
 
 echo -e "\nYou can close this terminal window now."
