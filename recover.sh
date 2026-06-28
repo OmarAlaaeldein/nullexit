@@ -181,6 +181,22 @@ else
   ok "Sleep prevention was not active"
 fi
 
+# ─── 6c. Stopping DNS Watcher ────────────────────────────────────────────────
+step "Stopping DNS Watcher"
+DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
+if [ -f "$DNS_WATCHER_PID_FILE" ]; then
+  WATCHER_PID=$(cat "$DNS_WATCHER_PID_FILE")
+  if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
+    kill -9 "$WATCHER_PID" 2>/dev/null || true
+    ok "DNS Watcher stopped (PID $WATCHER_PID)"
+  else
+    warn "DNS Watcher process not running, cleaning up stale PID file"
+  fi
+  rm -f "$DNS_WATCHER_PID_FILE"
+else
+  ok "DNS Watcher was not active"
+fi
+
 # ─── 7. Power-cycle Wi-Fi ────────────────────────────────────────────────────
 step "Power-cycling Wi-Fi"
 WIFI_PORT=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
