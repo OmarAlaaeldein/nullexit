@@ -1,6 +1,6 @@
 # nullexit — Development Reference & Resolved Issues
 
-> **Last updated:** June 27, 2026
+> **Last updated:** June 28, 2026
 > **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
 
 ---
@@ -56,11 +56,11 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `toggle.sh` | ~900 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
 | `setup.sh` | ~392 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
 | `docker-compose.yml` | ~160 | Service definitions for all 5 containers. |
-| `routing-fix.sh` | ~90 | Maintains routing tables (table 200 for SOCKS5, table 199 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Runs in a 5-second loop. |
+| `routing-fix.sh` | ~175 | Maintains routing tables (table 200 for SOCKS5, table 199 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
 | `post-rules.txt` | ~16 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
 | `socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
 | `dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
-| `sync-rules.py` | ~300 | Ad-blocking rule compiler. Fetches remote blocklists, deduplicates subdomains (~60% reduction), compiles to AdGuard syntax. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache. |
+| `sync-rules.py` | ~560 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
 | `recover.sh` | ~280 | Nuclear recovery script. Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
 | `black_list.txt` | ~70 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
 | `white_list.txt` | ~120 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
@@ -564,3 +564,16 @@ This punches a tiny hole straight through the paradox, letting the Mac's WARP pa
 4. The normalized base domains then pass through our subdomain optimizer, which squashes an additional ~50% of the remaining rules.
 
 This reduces the final compiled output from ~325k to ~281k rules on the `heavy` profile, saving ~45k rules from being loaded into memory twice and reducing the overall RAM footprint of the `adguardhome` container.
+
+### 10.25 Kernel-Level IP Blocklist (Threat Intelligence Firewall)
+
+**Problem:** DNS sinkholing cannot stop malware or botnets that bypass DNS entirely by hardcoding direct IP addresses (a common technique for C2 communication). These connections pass straight through AdGuard unseen.
+
+**Fix:** Added a second compilation pipeline to `sync-rules.py` that runs on every startup alongside the DNS pipeline.
+1. The compiler concurrently fetches five curated threat-intelligence feeds: **Feodo Tracker** (abuse.ch — botnet C2 IPs), **Spamhaus DROP** (IPs allocated to criminal organizations), **Spamhaus EDROP** (hijacked netblocks), **Emerging Threats** (Proofpoint — active C2 and scanners), and **CINS** (active brute-force sources).
+2. All entries are normalized via Python's `ipaddress` module. Any IP or CIDR that overlaps with RFC1918 private ranges, loopback, link-local, or the Tailscale CGNAT range (`100.64.0.0/10`) is stripped to prevent accidentally locking users out of their own LAN or mesh.
+3. The cleaned list (~16,700 unique IPs/CIDRs) is written as an `ipset restore` file using an **atomic swap pattern**: `create_new → populate → swap with live → destroy_new`. This guarantees the live `block_malicious` ipset is never empty during a reload.
+4. `routing-fix.sh` watches the file's mtime every 5 seconds. On change it runs `ipset restore` and idempotently re-injects `FORWARD DROP` rules for both `src` and `dst` into both iptables backends (nftables + legacy).
+5. `docker-compose.yml` mounts `adguard/work/userfilters/` into `routing-fix` as `/userfilters:ro` and adds `rule-compiler: service_completed_successfully` to its `depends_on`, eliminating the race condition where routing-fix could start before the file existed.
+
+**Memory cost:** The entire 16,700-entry ipset costs only ~1.6 MiB of kernel memory — negligible in the 600MB VM budget.
