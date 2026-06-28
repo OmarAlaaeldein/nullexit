@@ -292,12 +292,13 @@ When modifying DNS rules, two hard-to-debug issues can block legitimate traffic 
 ### Memory Profiles & Optimizations
 Because macOS runs Docker containers inside a Colima VM (which we restrict to 512MB of RAM), loading huge blocklists (e.g. over 600,000 domains) would normally trigger out-of-memory (`OOMKilled`) crashes. 
 
-To address this, two critical optimizations are built-in:
-1. **Subdomain Deduplication**: In AdGuard Home syntax, `||domain.com^` automatically blocks all subdomains. The compiler automatically removes redundant subdomain rules (e.g., if `domain.com` is blocked, rules for `sub.domain.com` are skipped). This reduces the active rule count by **~60%** with **zero loss in blocking effectiveness**.
-2. **Memory Profiles**: You can select a rule compilation tier in your `.env` file via `GATEWAY_RULE_PROFILE`:
-   - `light` (Recommended for extremely low-memory hosts under 512MB RAM without swap): Generates **~52k** optimized rules.
-   - `medium` (Default / Recommended balance, runs stably on 600MB RAM + 400MB Swap VM): Generates **~167k** optimized rules.
-   - `heavy` (Highest security, requires increasing Colima memory allocation): Generates **~325k** optimized rules.
+To address this, three critical optimizations are built-in:
+1. **Native Filter Deduplication**: AdGuard Home natively subscribes to its own lists (e.g. `AdGuard DNS filter` which contains ~160k rules). To prevent wasting RAM by loading overlapping rules twice, the compiler dynamically reads your `AdGuardHome.yaml` config, fetches those native lists, and completely purges any duplicates from your custom lists *before* compiling.
+2. **Subdomain Deduplication**: In AdGuard Home syntax, `||domain.com^` automatically blocks all subdomains. The compiler automatically removes redundant subdomain rules (e.g., if `domain.com` is blocked, rules for `sub.domain.com` are skipped). This reduces the active rule count by **~50%** with **zero loss in blocking effectiveness**.
+3. **Memory Profiles**: You can select a rule compilation tier in your `.env` file via `GATEWAY_RULE_PROFILE`. Note that the numbers below represent the *unique custom rules* added on top of AdGuard's native filters (giving you a total effective protection of **~441,000+ rules** on heavy):
+   - `light` (Recommended for extremely low-memory hosts under 512MB RAM without swap): Generates **~52k** custom optimized rules.
+   - `medium` (Default / Recommended balance, runs stably on 600MB RAM + 400MB Swap VM): Generates **~167k** custom optimized rules.
+   - `heavy` (Highest security, requires increasing Colima memory allocation): Generates **~281k** custom optimized rules (down from ~325k thanks to native deduplication).
 
 3. **Local SSD Caching**: To prevent unnecessary network saturation and API rate limits, the script caches all downloaded remote blocklists to your local disk. If a gateway reboot occurs within 24 hours of the last compile, the script bypasses the internet entirely and loads all lists concurrently from the SSD (often taking under 0.5 seconds).
 4. **DNS RAM Caching**: While the massive blocklists are stored on disk, the AdGuard Home resolver actively caches the IP addresses of your most frequent, legitimate DNS queries directly in the container's RAM. This hybrid approach (SSD for bulk rule storage, RAM for frequent connection lookups) guarantees instantaneous (0ms) resolution for the websites you visit most, completely eliminating upstream WARP latency for cached domains.

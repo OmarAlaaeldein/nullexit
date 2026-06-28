@@ -85,21 +85,59 @@ def parse_domains_from_content(content):
         line = line.split('#')[0].strip()
         if not line:
             continue
+        
         parts = line.split()
         if len(parts) >= 2:
             if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', parts[0]):
-                domain = parts[1]
+                rule = parts[1]
             else:
-                domain = parts[0]
-        elif len(parts) == 1:
-            domain = parts[0]
+                rule = parts[0]
         else:
-            continue
+            rule = parts[0]
+            
+        rule = rule.lower().strip()
         
-        domain = domain.lower().strip()
+        # Normalize simple AdGuard rules to base domains to maximize deduplication
+        m = re.match(r'^\|\|([a-z0-9.-]+)\^$', rule)
+        if m:
+            domain = m.group(1)
+        elif re.match(r'^[a-z0-9.-]+$', rule):
+            domain = rule
+        else:
+            domain = rule
+        
         if domain and domain not in ("localhost", "0.0.0.0", "127.0.0.1", "broadcasthost"):
             domains.add(domain)
     return domains
+
+def get_adguard_native_lists():
+    yaml_path = "adguard/conf/AdGuardHome.yaml"
+    enabled_urls = []
+    if not os.path.exists(yaml_path):
+        return enabled_urls
+        
+    try:
+        with open(yaml_path, 'r') as f:
+            content = f.read()
+            
+        # Extract filters: section
+        filters_match = re.search(r'^filters:(.*?)(?:^[a-zA-Z_]+:|\Z)', content, re.MULTILINE | re.DOTALL)
+        if filters_match:
+            filters_text = filters_match.group(1)
+            blocks = filters_text.split('\n  - ')
+            for block in blocks:
+                if not block.strip():
+                    continue
+                if 'enabled: true' in block:
+                    url_match = re.search(r'url:\s*(\S+)', block)
+                    if url_match:
+                        url = url_match.group(1)
+                        if 'compiled_rules.txt' not in url:
+                            enabled_urls.append(url)
+    except Exception as e:
+        print(f"Warning: Failed to parse AdGuardHome.yaml for native lists ({e})")
+        
+    return enabled_urls
 
 def fetch_remote_domains(url):
     import hashlib
@@ -239,6 +277,26 @@ def main():
     end_time = time.time()
     print(f"Finished concurrent downloads in {end_time - start_time:.2f} seconds using {max_threads} threads.")
 
+    # Fetch AdGuard native lists for deduplication
+    adguard_native_urls = get_adguard_native_lists()
+    adguard_native_domains = set()
+    if adguard_native_urls:
+        print(f"\nFetching {len(adguard_native_urls)} AdGuard native list(s) for deduplication...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(adguard_native_urls))) as executor:
+            future_to_url = {executor.submit(fetch_remote_domains, url): url for url in adguard_native_urls}
+            for future in concurrent.futures.as_completed(future_to_url):
+                try:
+                    domains = future.result()
+                    adguard_native_domains.update(domains)
+                except Exception as e:
+                    print(f"Error fetching native list: {e}")
+        
+        if adguard_native_domains:
+            print(f"Deduplicating compiled rules against AdGuard native lists...")
+            original_size = len(black_list)
+            black_list = black_list - adguard_native_domains
+            print(f" -> Removed {original_size - len(black_list)} redundant rules already covered by AdGuard.")
+
     # Detect contradictions and prioritize whitelist
     contradictions = black_list.intersection(white_list)
     if contradictions:
@@ -265,6 +323,7 @@ def main():
         f.write("! Custom Compiled Rules (Auto-Generated)\n")
         f.write(f"! Memory Profile: {profile.upper()}\n")
         f.write(f"! Total Block Rules: {len(black_list)}\n")
+        f.write(f"! Native AdGuard Rules: {len(adguard_native_domains) if 'adguard_native_domains' in locals() else 0}\n")
         f.write(f"! Total Whitelist Rules: {len(white_list)}\n\n")
         
         f.write("! --- Blacklist Rules ---\n")

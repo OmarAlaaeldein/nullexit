@@ -680,6 +680,25 @@ else
   
   # Clean up the one-off rule compiler container so it doesn't clutter the Docker UI
   docker compose rm -s -f rule-compiler >> output.log 2>&1
+  
+  RULE_COUNT=$(grep "! Total Block Rules:" adguard/work/userfilters/compiled_rules.txt 2>/dev/null | awk -F': ' '{print $2}' || echo "0")
+  NATIVE_COUNT=$(grep "! Native AdGuard Rules:" adguard/work/userfilters/compiled_rules.txt 2>/dev/null | awk -F': ' '{print $2}' || echo "0")
+  
+  if [ "$RULE_COUNT" != "0" ] && [ "$RULE_COUNT" != "" ]; then
+    if [ "$NATIVE_COUNT" != "0" ] && [ "$NATIVE_COUNT" != "" ]; then
+      TOTAL_COUNT=$((RULE_COUNT + NATIVE_COUNT))
+      # Format with commas for readability (e.g. 441,578)
+      if command -v printf &> /dev/null; then
+        FORMATTED_RULE=$(printf "%'d" "$RULE_COUNT")
+        FORMATTED_TOTAL=$(printf "%'d" "$TOTAL_COUNT")
+        echo "  Compiled $FORMATTED_RULE unique custom DNS rules (Total active protection in AdGuard: ~$FORMATTED_TOTAL rules)."
+      else
+        echo "  Compiled $RULE_COUNT unique custom DNS rules (Total active protection in AdGuard: ~$TOTAL_COUNT rules)."
+      fi
+    else
+      echo "  Compiled and loaded $RULE_COUNT optimized DNS rules."
+    fi
+  fi
 
   # 6. Wait for the gateway container's Tailscale connection to be ready
   BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
