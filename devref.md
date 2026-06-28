@@ -501,4 +501,19 @@ route print  (find Interface List, note the IF number for the active Wi-Fi adapt
 route -p add 162.159.192.1 mask 255.255.255.255 0.0.0.0 IF 15
 route -p add 162.159.193.1 mask 255.255.255.255 0.0.0.0 IF 15
 ```
-This punches a tiny hole straight through the paradox, letting the Mac's WARP packets escape to the physical internet while keeping the rest of the Windows machine's traffic securely trapped in the Tailscale Exit Node.
+
+On Linux (Root Terminal):
+```bash
+ip route add 162.159.192.1 dev wlan0
+ip route add 162.159.193.1 dev wlan0
+```
+
+On macOS (Root Terminal):
+```bash
+route add -host 162.159.192.1 -interface en0
+route add -host 162.159.193.1 -interface en0
+```
+
+*(Note: If the upstream router is an iPhone or Android device, you cannot inject static routes without jailbreak/root. You must simply disable "Use Exit Node" in the mobile Tailscale app).*
+
+This punches a tiny hole straight through the paradox, letting the Mac's WARP packets escape to the physical internet while keeping the rest of the upstream router's traffic securely trapped in the Tailscale Exit Node.
