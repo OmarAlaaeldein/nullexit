@@ -87,7 +87,7 @@ services:
         max-file: "3"
 
   socks-proxy:
-    image: python:3.13-alpine
+    image: python:3.13-alpine3.20
     container_name: socks-proxy
     network_mode: service:warp
     depends_on:
@@ -110,7 +110,7 @@ services:
         max-file: "1"
 
   routing-fix:
-    image: alpine:3.24
+    image: alpine:3.20
     container_name: routing-fix
     network_mode: service:warp
     # NOTE: Deliberately NOT sharing tailscale's PID namespace — the shared
@@ -141,6 +141,8 @@ services:
     depends_on:
       warp:
         condition: service_healthy
+      rule-compiler:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 5335 || exit 1"]
       interval: 10s
@@ -150,6 +152,14 @@ services:
       - ./adguard/work:/opt/adguardhome/work
       - ./adguard/conf:/opt/adguardhome/conf
     restart: unless-stopped
+
+  rule-compiler:
+    image: python:3.13-alpine3.20
+    container_name: rule-compiler
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: python sync-rules.py
 
 volumes:
   tailscale_state:

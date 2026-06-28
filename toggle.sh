@@ -550,16 +550,6 @@ else
   # 1. Prevent host exit-node deadlock during VM / Container startup
   disconnect_tailscale_host
 
-  # 2. Compile DNS filter rules
-  echo -e "\nCompiling DNS filter rules..."
-  if command -v python3 >> output.log 2>&1; then
-    python3 sync-rules.py || echo "Warning: Failed to compile DNS filter rules, proceeding with existing compilation..."
-  elif command -v python >> output.log 2>&1; then
-    python sync-rules.py || echo "Warning: Failed to compile DNS filter rules, proceeding with existing compilation..."
-  else
-    echo "Warning: Python not found. Skipping DNS rule compilation."
-  fi
-
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
@@ -568,7 +558,6 @@ else
   else
     echo "Colima is already running."
   fi
-
   # 3b. Configure swap file inside the VM to prevent OOM on low-memory limits
   # We also set vm.swappiness=10 so the Linux kernel strictly prefers physical RAM
   # and avoids unnecessarily wearing out the SSD with proactive background swapping.
