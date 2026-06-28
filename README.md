@@ -417,7 +417,21 @@ On Windows (Admin Command Prompt):
 2. Run `route -p add 162.159.192.1 mask 255.255.255.255 0.0.0.0 IF 15`
 3. Run `route -p add 162.159.193.1 mask 255.255.255.255 0.0.0.0 IF 15`
 
-This forces PC-2's routing kernel to bypass Tailscale entirely for Cloudflare WARP packets, allowing them to escape to the internet while keeping all other traffic securely inside the Exit Node.
+On Linux (Root Terminal):
+```bash
+ip route add 162.159.192.1 dev wlan0
+ip route add 162.159.193.1 dev wlan0
+```
+
+On macOS (Root Terminal):
+```bash
+route add -host 162.159.192.1 -interface en0
+route add -host 162.159.193.1 -interface en0
+```
+
+*(Note: If the upstream router is an iPhone or Android device, you cannot inject static routes without jailbreak/root. You must simply disable "Use Exit Node" in the mobile Tailscale app).*
+
+This forces the upstream router's kernel to bypass Tailscale entirely for Cloudflare WARP packets, allowing them to escape to the internet while keeping all other traffic securely inside the Exit Node.
 
 ## 15. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** For providing advanced, production-grade architectural optimizations to this project, specifically the dual-stack TCP MSS clamping rules to prevent payload fragmentation stalls, the `SIGHUP` state-tracking logic in the routing sidecar to seamlessly survive Gluetun restarts, and the smart `TS_AUTH_ONCE` integration to prevent authentication crash loops.
