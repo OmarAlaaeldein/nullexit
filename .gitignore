@@ -25,3 +25,4 @@ stability_incident_report.md
 output.log
 .DS_Store
 *.desktop
+blocked.log
