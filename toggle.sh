@@ -387,6 +387,11 @@ cleanup_network_state() {
     sudo -n ifconfig en0 up 2>> output.log || true
   fi
 
+  # Force restart sharing services to prevent AirDrop / AirPlay discovery freezes
+  # after network interface/DNS changes.
+  echo "  Resetting macOS sharing services (AirDrop/AirPlay)..."
+  sudo -n killall sharingd rapportd 2>> output.log || true
+
   echo "Network state cleanup complete."
 }
 
@@ -1047,6 +1052,10 @@ else
   if [ -n "$TS_IP" ] && [ "$TS_IP" != "1.1.1.1" ]; then
     start_dns_watcher "$TS_IP"
   fi
+
+  # Reset sharing services after network configuration to prevent AirDrop freezes
+  echo "Resetting macOS sharing services (AirDrop/AirPlay)..."
+  sudo -n killall sharingd rapportd 2>> output.log || true
 fi
 
 SUCCESS_RUN=true

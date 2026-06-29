@@ -316,6 +316,10 @@ else
   echo "      brew services restart tailscale"
 fi
 
+# Reset sharing services to prevent AirDrop freezes after interface changes
+echo -e "  Resetting macOS sharing services (AirDrop/AirPlay)..."
+sudo -n killall sharingd rapportd 2>> output.log || true
+
 echo ""
 echo -e "${GREEN}${BOLD}Recovery complete.${NC}"
 echo ""
