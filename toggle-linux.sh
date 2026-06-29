@@ -85,26 +85,42 @@ start_sleep_prevention() {
   stop_sleep_prevention
 
   echo "  Enabling system sleep prevention (systemd-inhibit)..."
-  # Run caffeinate wrapped in a bash trap to prevent idle system sleep.
-  # Critically, this traps macOS shutdown signals (SIGTERM) and automatically
-  # flushes hijacked DNS back to normal via recover.sh before the Mac powers off.
+  # Run systemd-inhibit wrapped in a bash trap to prevent idle system sleep.
+  # Critically, this traps shutdown signals (SIGTERM) and automatically
+  # flushes hijacked DNS back to normal right before the PC powers off.
+  # We do not use recover-linux.sh here because it is a heavy recovery script
+  # which takes too long and gets terminated before it can reset the DNS. Instead,
+  # we surgically and instantly restore normal DNS settings here.
   nohup bash -c "
-    trap '\"$PWD/recover.sh\" >> \"$PWD/output.log\" 2>&1; exit 0' SIGTERM SIGINT SIGHUP
-    systemd-inhibit --what=sleep --who=nullexit --why="gateway running" --mode=block sleep infinity &
+    trap '
+      echo \"[Shutdown Trap] Reverting network settings...\" >> \"$PWD/output.log\" 2>&1
+      sudo -n resolvectl domain \"$ACTIVE_SERVICE\" \"\" >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n resolvectl revert \"$ACTIVE_SERVICE\" >> \"$PWD/output.log\" 2>&1 || true
+      resolvectl domain \"$ACTIVE_SERVICE\" \"\" >> \"$PWD/output.log\" 2>&1 || true
+      resolvectl revert \"$ACTIVE_SERVICE\" >> \"$PWD/output.log\" 2>&1 || true
+      if command -v tailscale >/dev/null 2>&1; then
+        tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
+        tailscale down >> \"$PWD/output.log\" 2>&1 &
+      fi
+      sleep 1
+      echo \"[Shutdown Trap] Cleanup complete.\" >> \"$PWD/output.log\" 2>&1
+      exit 0
+    ' SIGTERM SIGINT SIGHUP
+    systemd-inhibit --what=sleep --who=nullexit --why=\"gateway running\" --mode=block sleep infinity &
     wait \$!
   " >> output.log 2>&1 &
   local caffe_pid=$!
   echo "$caffe_pid" > "$PID_FILE"
-  echo "  Sleep prevention active (PID $caffe_pid). Your Mac won't sleep while the gateway is running."
+  echo "  Sleep prevention active (PID $caffe_pid). Your PC won't sleep while the gateway is running."
 }
 
-# Stop macOS caffeinate when gateway is stopped
+# Stop sleep prevention when gateway is stopped
 stop_sleep_prevention() {
   if [ -f "$PID_FILE" ]; then
     local caffe_pid
     caffe_pid=$(cat "$PID_FILE")
-    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o comm= 2>/dev/null | grep -q systemd-inhibit; then
-      echo "  Stopping system sleep prevention (systemd-inhibit PID $caffe_pid)..."
+    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o command= 2>/dev/null | grep -q -E "systemd-inhibit|recover-linux.sh"; then
+      echo "  Stopping system sleep prevention (systemd-inhibit wrapper PID $caffe_pid)..."
       kill "$caffe_pid" 2>/dev/null || true
     fi
     rm -f "$PID_FILE"

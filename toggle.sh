@@ -87,9 +87,32 @@ start_sleep_prevention() {
   echo "  Enabling system sleep prevention (caffeinate)..."
   # Run caffeinate wrapped in a bash trap to prevent idle system sleep.
   # Critically, this traps macOS shutdown signals (SIGTERM) and automatically
-  # flushes hijacked DNS back to normal via recover.sh before the Mac powers off.
+  # flushes hijacked DNS back to normal right before the Mac powers off.
+  # We do not use recover.sh here because it is a heavy recovery script (managing
+  # containers, restarting tailscaled, etc.) which takes too long and gets
+  # terminated by macOS before it can reset the DNS. Instead, we surgically and
+  # instantly restore normal DNS and proxy settings here.
   nohup bash -c "
-    trap '\"$PWD/recover.sh\" >> \"$PWD/output.log\" 2>&1; exit 0' SIGTERM SIGINT SIGHUP
+    trap '
+      echo \"[Shutdown Trap] Reverting network settings...\" >> \"$PWD/output.log\" 2>&1
+      sudo -n networksetup -setdnsservers \"$ACTIVE_SERVICE\" 1.1.1.1 >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setdnsservers \"$EN0_SERVICE\" 1.1.1.1 >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setsearchdomains \"$ACTIVE_SERVICE\" \"Empty\" >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setsearchdomains \"$EN0_SERVICE\" \"Empty\" >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setsocksfirewallproxystate \"$ACTIVE_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setsocksfirewallproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setwebproxystate \"$ACTIVE_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setwebproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setsecurewebproxystate \"$ACTIVE_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
+      sudo -n networksetup -setsecurewebproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
+      if command -v tailscale >/dev/null 2>&1; then
+        tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
+        tailscale down >> \"$PWD/output.log\" 2>&1 &
+      fi
+      sleep 1
+      echo \"[Shutdown Trap] Cleanup complete.\" >> \"$PWD/output.log\" 2>&1
+      exit 0
+    ' SIGTERM SIGINT SIGHUP
     caffeinate -i &
     wait \$!
   " >> output.log 2>&1 &
@@ -103,8 +126,8 @@ stop_sleep_prevention() {
   if [ -f "$PID_FILE" ]; then
     local caffe_pid
     caffe_pid=$(cat "$PID_FILE")
-    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o comm= 2>/dev/null | grep -q caffeinate; then
-      echo "  Stopping system sleep prevention (caffeinate PID $caffe_pid)..."
+    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o command= 2>/dev/null | grep -q -E "caffeinate|recover.sh"; then
+      echo "  Stopping system sleep prevention (caffeinate wrapper PID $caffe_pid)..."
       kill "$caffe_pid" 2>/dev/null || true
     fi
     rm -f "$PID_FILE"
