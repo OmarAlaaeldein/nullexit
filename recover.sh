@@ -76,23 +76,47 @@ SUDO_KEEPER_PID=$!
 trap 'kill $SUDO_KEEPER_PID 2>/dev/null' EXIT
 
 # ─── 1. Disconnect host Tailscale ───────────────────────────────────────────
+restart_tailscaled_daemon() {
+  warn "tailscaled daemon appears to be wedged/unresponsive. Attempting restart..."
+  
+  if run_with_timeout 15 brew services restart tailscale >> output.log 2>&1; then
+    ok "Successfully restarted tailscaled (user service)"
+  elif run_with_timeout 15 sudo -n brew services restart tailscale >> output.log 2>&1; then
+    ok "Successfully restarted tailscaled (system service)"
+  else
+    warn "Failed to restart tailscaled daemon"
+  fi
+  sleep 3
+}
+
 step "Disconnecting host Tailscale from mesh"
 if command -v tailscale >> output.log 2>&1; then
   # Check if actually connected first (with timeout — tailscaled could be wedged)
+  status_ok=false
   if run_with_timeout 5 tailscale status >> output.log 2>&1; then
-    # Also explicitly reset any exit-node so it doesn't linger.
-    if run_with_timeout 10 tailscale up --reset --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
-      ok "Exit-node preference cleared"
-    else
-      warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
-    fi
-    if run_with_timeout 10 tailscale down >> output.log 2>&1; then
-      ok "Tailscale disconnected"
-    else
-      warn "tailscale down didn't respond"
-    fi
+    status_ok=true
   else
-    warn "tailscaled not reachable — skipping (timeout after 5s)"
+    status_exit=$?
+    # If it was a quick exit code 1 (disconnected), it is still reachable
+    if [ "$status_exit" -ne 143 ] && [ -S /var/run/tailscaled.socket ]; then
+      status_ok=true
+    fi
+  fi
+
+  if [ "$status_ok" = "false" ]; then
+    restart_tailscaled_daemon
+  fi
+
+  # Also explicitly reset any exit-node so it doesn't linger.
+  if run_with_timeout 10 tailscale up --reset --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
+    ok "Exit-node preference cleared"
+  else
+    warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
+  fi
+  if run_with_timeout 10 tailscale down >> output.log 2>&1; then
+    ok "Tailscale disconnected"
+  else
+    warn "tailscale down didn't respond"
   fi
 else
   warn "tailscale CLI not found — skipping"
