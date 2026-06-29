@@ -58,7 +58,7 @@ services:
         max-file: "3"
 
   tailscale:
-    image: tailscale/tailscale:v1.98.5
+    image: tailscale/tailscale:v1.98.4
     container_name: tailscale
     network_mode: service:warp
     depends_on:
@@ -129,6 +129,7 @@ services:
     # table changes and left traffic leaking through eth0 instead of tun0.
     cap_add:
       - NET_ADMIN
+      - SYSLOG
     depends_on:
       warp:
         condition: service_healthy
@@ -139,7 +140,9 @@ services:
     volumes:
       - ./routing-fix.sh:/routing-fix.sh:ro
       - ./adguard/work/userfilters:/userfilters:ro
-    command: sh -c "apk add --no-cache iptables iproute2 curl ipset && sh /routing-fix.sh"
+      - ./adguard/work:/adguard_work:ro
+      - .:/app
+    command: sh -c "apk add --no-cache iptables iproute2 curl ipset python3 && sh /routing-fix.sh"
     restart: unless-stopped
     logging:
       driver: "json-file"

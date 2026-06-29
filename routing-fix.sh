@@ -78,6 +78,18 @@ add_tailscale_p2p_bypass() {
 
 add_tailscale_p2p_bypass
 
+create_log_drop_chain() {
+  local ipt="$1"
+  local chain="$2"
+  local prefix="$3"
+
+  if ! $ipt -N "$chain" 2>/dev/null; then
+    $ipt -F "$chain" 2>/dev/null || true
+  fi
+  $ipt -A "$chain" -j LOG --log-prefix "$prefix" 2>/dev/null || true
+  $ipt -A "$chain" -j DROP 2>/dev/null || true
+}
+
 add_country_block() {
   # Create the ipset if it doesn't exist
   if ! ipset list block_kp >/dev/null 2>&1; then
@@ -88,16 +100,19 @@ add_country_block() {
     done
   fi
 
-  # Apply DROP rule to nftables backend
-  if ! iptables -C FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null; then
-    iptables -I FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null || true
-  fi
-  # Apply DROP rule to legacy backend
-  if command -v iptables-legacy >/dev/null 2>&1; then
-    if ! iptables-legacy -C FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null; then
-      iptables-legacy -I FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null || true
+  # Apply LOG_DROP rule to both backends
+  for ipt in iptables iptables-legacy; do
+    command -v "$ipt" >/dev/null 2>&1 || continue
+    
+    create_log_drop_chain "$ipt" LOG_DROP_KP "IP_BLOCK_KP: "
+
+    # Clean up old plain DROP rules to ensure we hit the log-and-drop chains
+    while $ipt -D FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null; do :; done
+
+    if ! $ipt -C FORWARD -m set --match-set block_kp dst -j LOG_DROP_KP 2>/dev/null; then
+      $ipt -I FORWARD -m set --match-set block_kp dst -j LOG_DROP_KP 2>/dev/null || true
     fi
-  fi
+  done
 }
 
 add_ip_blocklist() {
@@ -108,37 +123,45 @@ add_ip_blocklist() {
   fi
 
   CURRENT_MTIME=$(stat -c %Y "$IP_BLOCKLIST_FILE" 2>/dev/null || echo "0")
-  if [ "$CURRENT_MTIME" = "$LAST_IP_MTIME" ]; then
-    return 0
+  if [ "$CURRENT_MTIME" != "$LAST_IP_MTIME" ]; then
+    echo "routing-fix: IP blocklist changed, reloading..."
+    # ipset restore handles the atomic swap internally:
+    # create_new → populate → swap with live → destroy_new
+    if ipset restore < "$IP_BLOCKLIST_FILE" 2>/dev/null; then
+      LAST_IP_MTIME="$CURRENT_MTIME"
+      echo "routing-fix: IP blocklist loaded ($(ipset list block_malicious | grep -c '^[0-9]') entries)."
+    else
+      echo "routing-fix: Warning: ipset restore failed. Retrying next cycle."
+      return 1
+    fi
   fi
 
-  echo "routing-fix: IP blocklist changed, reloading..."
-
-  # ipset restore handles the atomic swap internally:
-  # create_new → populate → swap with live → destroy_new
-  if ipset restore < "$IP_BLOCKLIST_FILE" 2>/dev/null; then
-    LAST_IP_MTIME="$CURRENT_MTIME"
-    echo "routing-fix: IP blocklist loaded ($(ipset list block_malicious | grep -c '^[0-9]') entries)."
-  else
-    echo "routing-fix: Warning: ipset restore failed. Retrying next cycle."
-    return 1
-  fi
-
-  # Apply FORWARD DROP rules in BOTH iptables backends.
-  # dst: blocks outbound connections to C2/malicious infrastructure (malware phoning home)
-  # src: blocks inbound attack traffic from known malicious sources
+  # Apply FORWARD rules in BOTH iptables backends.
   for ipt in iptables iptables-legacy; do
     command -v "$ipt" >/dev/null 2>&1 || continue
 
-    if ! $ipt -C FORWARD -m set --match-set block_malicious dst -j DROP 2>/dev/null; then
-      $ipt -I FORWARD -m set --match-set block_malicious dst -j DROP 2>/dev/null || true
+    create_log_drop_chain "$ipt" LOG_DROP_MALICIOUS_DST "IP_BLOCK_MALICIOUS_DST: "
+    create_log_drop_chain "$ipt" LOG_DROP_MALICIOUS_SRC "IP_BLOCK_MALICIOUS_SRC: "
+
+    # Clean up old plain DROP rules to ensure we hit the log-and-drop chains
+    while $ipt -D FORWARD -m set --match-set block_malicious dst -j DROP 2>/dev/null; do :; done
+    while $ipt -D FORWARD -m set --match-set block_malicious src -j DROP 2>/dev/null; do :; done
+
+    if ! $ipt -C FORWARD -m set --match-set block_malicious dst -j LOG_DROP_MALICIOUS_DST 2>/dev/null; then
+      $ipt -I FORWARD -m set --match-set block_malicious dst -j LOG_DROP_MALICIOUS_DST 2>/dev/null || true
     fi
 
-    if ! $ipt -C FORWARD -m set --match-set block_malicious src -j DROP 2>/dev/null; then
-      $ipt -I FORWARD -m set --match-set block_malicious src -j DROP 2>/dev/null || true
+    if ! $ipt -C FORWARD -m set --match-set block_malicious src -j LOG_DROP_MALICIOUS_SRC 2>/dev/null; then
+      $ipt -I FORWARD -m set --match-set block_malicious src -j LOG_DROP_MALICIOUS_SRC 2>/dev/null || true
     fi
   done
 }
+
+# Start background block logger (DNS + IP)
+if ! pgrep -f "logger.py" >/dev/null; then
+  echo "routing-fix: Starting background block logger..."
+  python3 /app/logger.py &
+fi
 
 add_country_block
 add_ip_blocklist
