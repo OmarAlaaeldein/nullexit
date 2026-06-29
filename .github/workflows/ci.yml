@@ -1,0 +1,46 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate:
+    name: Lint & Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Lint Python Scripts
+        run: |
+          # Check syntax correctness for all Python scripts in the repo
+          python3 -m py_compile *.py
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint Shell Scripts
+        run: |
+          # Lint shell scripts to catch logical errors and bugs
+          # Exclude SC2086 (double quotes around variables) and SC1091 (following sourced files) for compatibility
+          shellcheck -e SC2086,SC1091 *.sh
+
+      - name: Validate Docker Compose Configuration
+        run: |
+          # Create a dummy .env file to satisfy environment variable dependencies in docker-compose.yml
+          touch .env
+          echo "WIREGUARD_PRIVATE_KEY=dummy_key_private" >> .env
+          echo "WIREGUARD_PUBLIC_KEY=dummy_key_public" >> .env
+          echo "WIREGUARD_ADDRESSES=10.2.0.2/32" >> .env
+          echo "TS_AUTHKEY=tskey-auth-dummy" >> .env
+          
+          # Validate configuration syntax
+          docker compose config
