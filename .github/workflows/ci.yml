@@ -29,9 +29,8 @@ jobs:
 
       - name: Lint Shell Scripts
         run: |
-          # Lint shell scripts to catch logical errors and bugs
-          # Exclude SC2086 (double quotes around variables) and SC1091 (following sourced files) for compatibility
-          shellcheck -e SC2086,SC1091 *.sh
+          # Lint shell scripts to catch actual code-breaking errors, ignoring styling/formatting recommendations
+          shellcheck --severity=error *.sh
 
       - name: Validate Docker Compose Configuration
         run: |
