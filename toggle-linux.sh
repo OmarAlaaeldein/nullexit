@@ -500,7 +500,8 @@ is_gateway_active() {
   if command -v ip >/dev/null 2>&1; then
     ARP_COUNT=$(ip neigh | grep -iv 'incomplete' | wc -l | tr -d ' ')
   else
-    ARP_COUNT=$(arp -a 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
+    # Using '-an' avoids hanging on DNS reverse resolution when the network state is in transition.
+    ARP_COUNT=$(arp -an 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
   fi
   if [ "$ARP_COUNT" -gt 15 ]; then
     echo -e "  \033[1;33m[!] WARNING: High ARP activity detected ($ARP_COUNT devices in cache).\033[0m"

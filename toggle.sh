@@ -578,7 +578,8 @@ is_gateway_active() {
   echo "Local Network Surveillance Check"
   echo "──────────────────────────────────────────────"
   # Count populated ARP cache entries to detect network scanning or high congestion
-  ARP_COUNT=$(arp -a 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
+  # Using '-an' avoids hanging on DNS reverse resolution when the network state is in transition.
+  ARP_COUNT=$(arp -an 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
   if [ "$ARP_COUNT" -gt 15 ]; then
     echo -e "  \033[1;33m[!] WARNING: High ARP activity detected ($ARP_COUNT devices in cache).\033[0m"
     echo -e "  \033[1;33m[!] This Wi-Fi network may be heavily congested or actively scanned (e.g., arp-scan).\033[0m"
