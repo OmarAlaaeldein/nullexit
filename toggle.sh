@@ -261,10 +261,31 @@ fi
 #
 # Defined early (before the if/else branches and referenced by cleanup_handler's
 # ERR trap) so that any failure before the main logic can still tear down Tailscale.
+restart_tailscaled_daemon() {
+  echo "  [Tailscale Recovery] tailscaled daemon appears to be wedged/unresponsive."
+  echo "  [Tailscale Recovery] Attempting to restart tailscaled service..."
+  
+  # Try user-level restart first
+  if run_with_timeout 15 brew services restart tailscale >> output.log 2>&1; then
+    echo "  [Tailscale Recovery] Successfully restarted tailscaled (user service)."
+  # Fallback to system-level restart (using sudo -n so it doesn't block if NOPASSWD isn't set)
+  elif run_with_timeout 15 sudo -n brew services restart tailscale >> output.log 2>&1; then
+    echo "  [Tailscale Recovery] Successfully restarted tailscaled (system service)."
+  else
+    echo "  [Tailscale Recovery] WARNING: Failed to restart tailscaled. Manual intervention may be needed."
+  fi
+  sleep 3
+}
+
 disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
-    run_with_timeout 10 $TS_BIN down >> output.log 2>&1 || true
+    if ! run_with_timeout 10 $TS_BIN down >> output.log 2>&1; then
+      restart_tailscaled_daemon
+      # Retry once
+      echo "Retrying Tailscale disconnection..."
+      run_with_timeout 10 $TS_BIN down >> output.log 2>&1 || true
+    fi
   fi
 }
 
@@ -821,35 +842,41 @@ else
   if [ -n "$TS_BIN" ]; then
     echo -n "Verifying tailscaled is reachable"
     daemon_ready=false
+    status_exit=0
     for i in {1..10}; do
-      # `tailscale status` returns exit code 1 when the daemon is alive but
-      # disconnected ("Tailscale is stopped."). We check the daemon socket
-      # directly as a fallback — if the socket exists, tailscaled is running
-      # even if the host isn't connected to the mesh yet.
-      if run_with_timeout 5 $TS_BIN status >> output.log 2>&1 || [ -S /var/run/tailscaled.socket ]; then
+      # Test if the daemon responds to status check.
+      # If status returns non-zero, check if it was a normal "stopped/disconnected" state
+      # (exit code 1 is normal for disconnected). If the command exited quickly (not killed by timeout),
+      # and the error is just "Tailscale is stopped", then the daemon is alive and ready.
+      # But if it timed out (exit code 143) or is completely unresponsive, it's wedged.
+      status_exit=0
+      if run_with_timeout 5 $TS_BIN status >> output.log 2>&1; then
         daemon_ready=true
         break
+      else
+        status_exit=$?
+        if [ "$status_exit" -ne 143 ] && [ -S /var/run/tailscaled.socket ]; then
+          daemon_ready=true
+          break
+        fi
       fi
       echo -n "."
       sleep 1
     done
     echo ""
 
+    # If the daemon was unresponsive or socket check failed, attempt auto-restart
     if [ "$daemon_ready" != "true" ]; then
-      echo -e "\033[0;33m[!] tailscaled daemon is not running. Attempting to start it...\033[0m"
+      if [ "$status_exit" -eq 143 ]; then
+        echo -e "\033[0;33m[!] tailscaled daemon is wedged/unresponsive. Restarting it...\033[0m"
+      else
+        echo -e "\033[0;33m[!] tailscaled daemon is not running. Attempting to start it...\033[0m"
+      fi
+      restart_tailscaled_daemon
       
-      # Try system-wide daemon (with timeout — sudo may prompt for password)
-      if [ "$daemon_ready" != "true" ]; then
-        if run_with_timeout 10 sudo brew services start tailscale 2>> output.log; then
-          echo "  Started tailscaled as system LaunchDaemon."
-          for i in {1..15}; do
-            if run_with_timeout 5 $TS_BIN status >> output.log 2>&1; then
-              daemon_ready=true
-              break
-            fi
-            sleep 1
-          done
-        fi
+      # Re-verify
+      if run_with_timeout 5 $TS_BIN status >> output.log 2>&1 || [ -S /var/run/tailscaled.socket ]; then
+        daemon_ready=true
       fi
     fi
 
