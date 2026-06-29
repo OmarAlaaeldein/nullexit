@@ -68,12 +68,15 @@ elif [[ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]]; then
     TAILSCALE_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 fi
 
+RECOMMENDED_TS_VERSION="1.98.5"
+
 if [[ -z "$TAILSCALE_BIN" ]]; then
     warn "Tailscale not found on host — installing..."
 
     if [[ "$OSTYPE" == "darwin"* ]]; then
         if command -v brew >> output.log 2>&1; then
             step "Installing Tailscale CLI formula via Homebrew (standalone, no .app GUI)..."
+            # Note: We install Tailscale via Homebrew, targeting the stable version (recommended: 1.98.5)
             brew install tailscale -q
             TAILSCALE_BIN="tailscale"
 
@@ -87,7 +90,7 @@ if [[ -z "$TAILSCALE_BIN" ]]; then
             fi
             echo ""
         else
-            die "Homebrew not found. Install Tailscale manually:\n  https://tailscale.com/download/mac\n  Then re-run this script."
+            die "Homebrew not found. Install Tailscale manually (recommended version: ${RECOMMENDED_TS_VERSION}):\n  https://tailscale.com/download/mac\n  Then re-run this script."
         fi
 
     elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
@@ -96,12 +99,22 @@ if [[ -z "$TAILSCALE_BIN" ]]; then
         TAILSCALE_BIN="tailscale"
 
     else
-        die "Unsupported OS. Install Tailscale manually:\n  https://tailscale.com/download\n  Then re-run this script."
+        die "Unsupported OS. Install Tailscale manually (recommended version: ${RECOMMENDED_TS_VERSION}):\n  https://tailscale.com/download\n  Then re-run this script."
     fi
 
-    ok "Tailscale installed."
+    TAILSCALE_VER=$(${TAILSCALE_BIN} version 2>> output.log | head -n 1)
+    if [[ "$TAILSCALE_VER" != "$RECOMMENDED_TS_VERSION" ]]; then
+        warn "Tailscale installed, but version ($TAILSCALE_VER) differs from recommended version ($RECOMMENDED_TS_VERSION)."
+    else
+        ok "Tailscale installed (version $TAILSCALE_VER)."
+    fi
 else
-    ok "Tailscale is already installed ($(${TAILSCALE_BIN} version 2>> output.log | head -1))."
+    TAILSCALE_VER=$(${TAILSCALE_BIN} version 2>> output.log | head -n 1)
+    if [[ "$TAILSCALE_VER" != "$RECOMMENDED_TS_VERSION" ]]; then
+        warn "Tailscale is already installed ($TAILSCALE_VER), but recommended version is $RECOMMENDED_TS_VERSION for host/container consistency."
+    else
+        ok "Tailscale is already installed at recommended version ($TAILSCALE_VER)."
+    fi
 fi
 
 # Authenticate the host machine if it isn't already connected.

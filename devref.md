@@ -29,7 +29,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | Container | Image | Role |
 |-----------|-------|------|
 | `warp` | `qmcgaw/gluetun:v3.41.1` | Gluetun WireGuard client → Cloudflare WARP. Owns the network namespace. Strict firewall. |
-| `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
+| `tailscale` | `tailscale/tailscale:v1.98.5` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
 | `socks-proxy` | `python:3.13-alpine` | RFC 1928 SOCKS5 proxy. Outbound connections go through kernel routing → tun0 → WARP. |
 | `routing-fix` | `alpine:3.24` | Sidecar that maintains routing tables + iptables rules every 5 seconds. |
 | `adguardhome` | `adguard/adguardhome:v0.107.77` | DNS sinkhole for ads/trackers. Listens on port 5335. Upstream DNS: `127.0.0.1:53` (through WARP). |
