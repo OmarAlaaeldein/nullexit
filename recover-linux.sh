@@ -86,7 +86,7 @@ if command -v tailscale >> output.log 2>&1; then
     else
       warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
     fi
-    local ts_args=\"\"
+    ts_args=\"\"
     if grep -iq \"^KILL_SWITCH=true\" .env 2>/dev/null; then ts_args=\"--accept-risk=lose-ssh\"; fi
     if run_with_timeout 10 tailscale down $ts_args >> output.log 2>&1; then
       ok "Tailscale disconnected"
