@@ -4,6 +4,14 @@
 
 set -e
 
+# Define log file
+LOG_FILE="$PWD/output.log"
+
+# --- MAIN EXECUTION LOGGING ---
+echo -e "\n========================================================" >> "$LOG_FILE"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] toggle.sh invoked" >> "$LOG_FILE"
+echo "========================================================" >> "$LOG_FILE"
+
 # Unlock .env if it exists so Docker can parse it
 if [ -f ".env" ]; then
   chmod 600 .env 2>/dev/null || true
@@ -107,7 +115,9 @@ start_sleep_prevention() {
       sudo -n networksetup -setsecurewebproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       if command -v tailscale >/dev/null 2>&1; then
         tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
-        tailscale down >> \"$PWD/output.log\" 2>&1 &
+        TS_DOWN_ARGS=\"\"
+        if grep -iq \"^KILL_SWITCH=true\" .env 2>/dev/null; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
+        tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
       fi
       sleep 1
       echo \"[Shutdown Trap] Cleanup complete.\" >> \"$PWD/output.log\" 2>&1
@@ -303,11 +313,13 @@ restart_tailscaled_daemon() {
 disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
-    if ! run_with_timeout 10 $TS_BIN down >> output.log 2>&1; then
+    local ts_args=""
+    if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
+    if ! run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1; then
       restart_tailscaled_daemon
       # Retry once
       echo "Retrying Tailscale disconnection..."
-      run_with_timeout 10 $TS_BIN down >> output.log 2>&1 || true
+      run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1 || true
     fi
   fi
 }
@@ -607,18 +619,23 @@ reset_dns
 is_gateway_active() {
   # 1. Check if containers are running (suppress stderr to avoid errors if docker is down)
   if run_with_timeout 15 docker compose ps --status running 2>/dev/null | grep -q 'warp'; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: TRUE (warp container is running)" >> "$LOG_FILE"
     return 0
   fi
   # 2. Check if host DNS was hijacked (not 1.1.1.1 and not default/empty)
   if [[ -n "$INITIAL_DNS" && "$INITIAL_DNS" != "1.1.1.1" && ! "$INITIAL_DNS" =~ "There aren't any DNS Servers" ]]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: TRUE (DNS was hijacked: $INITIAL_DNS)" >> "$LOG_FILE"
     return 0
   fi
   # 3. Check if SOCKS proxy is enabled
   local socks_proxy
   socks_proxy=$(networksetup -getsocksfirewallproxy "$ACTIVE_SERVICE" 2>> output.log || true)
   if echo "$socks_proxy" | grep -q "Enabled: Yes"; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: TRUE (SOCKS proxy enabled)" >> "$LOG_FILE"
     return 0
   fi
+  
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: FALSE (Containers down, DNS clean, SOCKS disabled)" >> "$LOG_FILE"
   return 1
 }
 
@@ -678,6 +695,7 @@ if is_gateway_active; then
   ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
   echo -e "\nGateway has been successfully STOPPED in ${ELAPSED} seconds."
 else
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Action: STARTUP GATEWAY" >> "$LOG_FILE"
   echo -e "\n=============================================="
   echo "Gateway is STOPPED. Starting it now..."
   echo -e "==============================================\n"

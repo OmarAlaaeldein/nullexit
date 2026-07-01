@@ -100,7 +100,9 @@ start_sleep_prevention() {
       resolvectl revert \"$ACTIVE_SERVICE\" >> \"$PWD/output.log\" 2>&1 || true
       if command -v tailscale >/dev/null 2>&1; then
         tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
-        tailscale down >> \"$PWD/output.log\" 2>&1 &
+        TS_DOWN_ARGS=\"\"
+        if grep -iq \"^KILL_SWITCH=true\" .env 2>/dev/null; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
+        tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
       fi
       sleep 1
       echo \"[Shutdown Trap] Cleanup complete.\" >> \"$PWD/output.log\" 2>&1
@@ -279,7 +281,9 @@ fi
 disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
-    run_with_timeout 10 $TS_BIN down >> output.log 2>&1 || true
+    local ts_args=""
+    if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
+    run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1 || true
   fi
 }
 
@@ -760,7 +764,7 @@ else
         echo ""
         echo "      sudo tailscale up"
         echo ""
-        echo "  A browser will open. Log in to your Tailscale account, then re-run toggle.sh."
+        echo "  A browser will open. Log in to your Tailscale account, then re-run toggle-linux.sh."
       fi
     else
       echo -e "\033[0;31m[!] tailscaled could NOT be started automatically.\033[0m"
@@ -769,7 +773,7 @@ else
       echo "      sudo systemctl start tailscaled"
       echo "      sudo tailscale up"
       echo ""
-      echo "  Then re-run toggle.sh."
+      echo "  Then re-run toggle-linux.sh."
     fi
   else
     echo -e "\n[Warning] tailscale CLI not found on PATH. Skipping host Tailscale configuration..."

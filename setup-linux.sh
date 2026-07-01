@@ -353,14 +353,14 @@ until [[ -n "$TS_IP" ]]; do
         sleep 3; ELAPSED=$((ELAPSED + 3))
         if [[ $ELAPSED -ge $MAX ]]; then
             warn "Tailscale hasn't authenticated yet."
-            warn "Once it does, re-run toggle.sh — it will resolve the IP dynamically."
+            warn "Once it does, re-run toggle-linux.sh — it will resolve the IP dynamically."
             break
         fi
     fi
 done
 
 if [[ -n "$TS_IP" ]]; then
-    ok "Tailscale IP: ${TS_IP} (resolved dynamically by toggle.sh on each startup)"
+    ok "Tailscale IP: ${TS_IP} (resolved dynamically by toggle-linux.sh on each startup)"
 fi
 
 # ─── Compile Linux Desktop Shortcuts ──────────────────────────────────────────
