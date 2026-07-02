@@ -272,7 +272,7 @@ elif command -v python >> output.log 2>&1; then
 fi
 
 # Path to the DNS proxy script (sibling of this script)
-DNS_PROXY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dns-proxy.py"
+DNS_PROXY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/dns-proxy.py"
 
 # Resolve Tailscale CLI on host. We rely on the standalone Homebrew formula
 # (`brew install tailscale` + `brew services start tailscale`) — NOT the

@@ -261,11 +261,11 @@ ok "Directories ready."
 step "Compiling DNS filter rules (this may take a minute)"
 
 if command -v python3 >> output.log 2>&1; then
-    python3 sync-rules.py
+    python3 scripts/sync-rules.py
     ok "Rules compiled."
 else
     warn "python3 not found — skipping rule compilation."
-    warn "Run 'python3 sync-rules.py' manually after setup."
+    warn "Run 'python3 scripts/sync-rules.py' manually after setup."
 fi
 
 # ─── 10. Start containers ──────────────────────────────────────────────────────
@@ -352,14 +352,14 @@ until [[ -n "$TS_IP" ]]; do
         sleep 3; ELAPSED=$((ELAPSED + 3))
         if [[ $ELAPSED -ge $MAX ]]; then
             warn "Tailscale hasn't authenticated yet."
-            warn "Once it does, re-run toggle-linux.sh — it will resolve the IP dynamically."
+            warn "Once it does, re-run scripts/toggle-linux.sh — it will resolve the IP dynamically."
             break
         fi
     fi
 done
 
 if [[ -n "$TS_IP" ]]; then
-    ok "Tailscale IP: ${TS_IP} (resolved dynamically by toggle-linux.sh on each startup)"
+    ok "Tailscale IP: ${TS_IP} (resolved dynamically by scripts/toggle-linux.sh on each startup)"
 fi
 
 # ─── Compile Linux Desktop Shortcuts ──────────────────────────────────────────
@@ -370,7 +370,7 @@ cat <<EOF > "Toggle Gateway.desktop"
 Version=1.0
 Name=Toggle Gateway
 Comment=Start or Stop Nullexit Gateway
-Exec=bash -c "cd '$DIR' && ./toggle-linux.sh; read -p 'Press Enter to close...' dummy"
+Exec=bash -c "cd '$DIR' && ./scripts/toggle-linux.sh; read -p 'Press Enter to close...' dummy"
 Icon=utilities-terminal
 Terminal=true
 Type=Application
@@ -382,7 +382,7 @@ cat <<EOF > "Recover Gateway.desktop"
 Version=1.0
 Name=Recover Gateway
 Comment=Emergency DNS and Network Recovery
-Exec=bash -c "cd '$DIR' && ./recover-linux.sh; read -p 'Press Enter to close...' dummy"
+Exec=bash -c "cd '$DIR' && ./scripts/recover-linux.sh; read -p 'Press Enter to close...' dummy"
 Icon=utilities-terminal
 Terminal=true
 Type=Application
@@ -407,9 +407,9 @@ if [[ -n "${TS_IP:-}" ]]; then
 fi
 
 echo -e "${BOLD}To update your block/allow rules:${NC}"
-echo "  python3 sync-rules.py"
+echo "  python3 scripts/sync-rules.py"
 echo ""
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
 echo "  Linux: double-click the 'Toggle Gateway' desktop icon!"
-echo "  (or run ./toggle-linux.sh in terminal)"
+echo "  (or run ./scripts/toggle-linux.sh in terminal)"
 echo ""

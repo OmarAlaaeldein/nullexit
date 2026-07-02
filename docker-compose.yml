@@ -106,7 +106,7 @@ services:
       warp:
         condition: service_healthy
     volumes:
-      - ./socks5-proxy.py:/socks5-proxy.py:ro
+      - ./scripts/socks5-proxy.py:/socks5-proxy.py:ro
     command: python3 /socks5-proxy.py --bind 0.0.0.0 --port 1080
     restart: unless-stopped
     healthcheck:
@@ -140,7 +140,7 @@ services:
     environment:
       - WARP_ENDPOINT=162.159.192.1
     volumes:
-      - ./routing-fix.sh:/routing-fix.sh:ro
+      - ./scripts/routing-fix.sh:/routing-fix.sh:ro
       # SECURITY: ./adguard/work/ is bind-mounted into this container.
       # Never write to it from the host or another container. The
       # single allowed writer is `python3 sync-rules.py` — manual
@@ -188,7 +188,7 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: python sync-rules.py
+    command: python scripts/sync-rules.py
 
 volumes:
   tailscale_state:

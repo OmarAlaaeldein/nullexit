@@ -263,11 +263,11 @@ ok "Directories ready."
 step "Compiling DNS filter rules (this may take a minute)"
 
 if command -v python3 >> output.log 2>&1; then
-    python3 sync-rules.py
+    python3 scripts/sync-rules.py
     ok "Rules compiled."
 else
     warn "python3 not found — skipping rule compilation."
-    warn "Run 'python3 sync-rules.py' manually after setup."
+    warn "Run 'python3 scripts/sync-rules.py' manually after setup."
 fi
 
 # ─── 10. Start containers ──────────────────────────────────────────────────────
@@ -389,7 +389,7 @@ if [[ -n "${TS_IP:-}" ]]; then
 fi
 
 echo -e "${BOLD}To update your block/allow rules:${NC}"
-echo "  python3 sync-rules.py"
+echo "  python3 scripts/sync-rules.py"
 echo ""
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
 echo "  macOS:   double-click the 'Toggle Gateway' app icon!"
