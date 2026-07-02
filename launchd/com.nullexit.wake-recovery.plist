@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nullexit.wake-recovery</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/omar/Developer/nullexit/scripts/watcher.sh</string>
+    </array>
+
+    <!-- Start the daemon immediately on launchctl load (instead of waiting
+         for the next user login). Combined with keepAlive below this means
+         once installed: load once, runs forever across logouts/reboots. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart policy:
+         SuccessfulExit=false  → SIGTERM / clean exit does NOT relaunch (so
+                                 `launchctl bootout` cleanly stops, not loops).
+         Crashed=false        → HARD crashes ALSO do NOT relaunch. We've seen
+                                 that repeated sleep/wake cycles on macOS
+                                 Sonoma+ accumulate orphan watcher.sh PIDs
+                                 because SIGCONT/resume doesn't reliably kill
+                                 the prior instance. The watcher.sh script
+                                 now enforces single-instance via `flock -n`
+                                 at the top, so a re-launch on crash is
+                                 actively dangerous (it would skip the lock
+                                 and exit; better to surface the crash in
+                                 logs than to silently 0-process). -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <false/>
+    </dict>
+
+    <!-- Background hint to App Nap so it doesn't get suspended when
+         the user is inactive. We're the entire reason this LaunchAgent
+         needs to NOT nap. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- launchd-level stdout/stderr (the bash launcher shell). The script
+         itself writes to /tmp/nullexit-watcher.log via exec >>. These
+         separate channels help us tell "launchd crashed" from "the bash
+         wrapper piped to recover.sh errored". -->
+    <key>StandardOutPath</key>
+    <string>/tmp/nullexit-watcher.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/nullexit-watcher.err.log</string>
+</dict>
+</plist>
