@@ -915,6 +915,19 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
    * Force a DHCP rebind on the same SSID with `sudo ipconfig set en0 DHCP` — triggers `State:/Network/Global/IPv4` to update.
    * Trust the existing 5-second DNS Watcher inside `toggle.sh` for the DNS path: it re-hijacks DNS automatically. The post-wake watcher adds clear value mostly for tailscale exit-node re-assertion and warp gluetun force-recreate, both of which self-heal within ~30 s anyway.
 
+### 10.31 Infinite Egress Routing Loops & Subnet Takeover Paradoxes
+
+**Problem:** Two distinct network loops can break host egress connectivity entirely when the exit node is active:
+
+1. **The Recursive Host-VM Tunnel Loop:**
+   - **Mechanism:** The host Mac's default route points to the Tailscale exit node (`utun*`). The exit node container sends its encrypted tunnel packets (destined for the WARP endpoint `162.159.192.1`) back to the host via the VM NAT. Without a static route exception on the host Mac, the host Mac routes those packets right back into the exit node (`utun*`), creating an infinite loop that blackouts all host network egress.
+   - **ARP-Scoping Pitfall:** Simply binding the bypass route to the interface (`route add -host 162.159.192.1 -interface en0`) fails when the default route is deleted or redirected to `utun*`. Since `162.159.192.1` is not local to the physical link, macOS fails to resolve it via ARP, dropping all tunnel packets.
+   - **Fix:** Dynamically resolve the active physical gateway IP (e.g. `172.17.0.1`) on startup, and add the static host routes for the WARP endpoints via the gateway IP directly (`route add -host 162.159.192.1 <gateway_ip>`). Additionally, because standalone `tailscaled` on macOS does not automatically modify the system default route via the CLI, we manually redirect the default gateway to `utun*` using `setup_exit_node_routing`.
+
+2. **The Docker Compose Subnet Takeover Collision:**
+   - **Mechanism:** To avoid collisions with the host's campus network, Colima's default bridge (`docker.bip`) is moved (e.g. to `10.200.0.1/24`). However, because `172.17.0.0/16` is now free inside the VM, Docker Compose's IPAM dynamically takes it over for the project's custom network (`nullexit_default`). Because the containers receive IPs on `172.17.0.0/16`, the host Mac cannot send local peer discovery packets (e.g., Tailscale `magicsock` packets on `172.17.0.2:41641`) directly. The host routing table sends them out `en0` to the physical Wi-Fi, returning `host is down` or `no route to host`.
+   - **Fix:** Explicitly configure a custom default network subnet `10.200.1.0/24` in `docker-compose.yml` to prevent Docker Compose from ever reclaiming the conflicting `172.17/172.18` ranges.
+
 ---
 
 ## 11. Recent Updates

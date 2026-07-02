@@ -302,8 +302,48 @@ fi
 
 # ─── 5. Clear stale routing table (always — safe in both modes) ──────────
 step "Flushing stale routing table entries"
+# Resolve physical default gateway IP before flushing
+PHYSICAL_GW=$(route get default 2>> output.log | awk '/gateway:/{print $2; exit}')
 sudo -n route -n flush >> output.log 2>&1 || true
 ok "Routing table flushed"
+
+# CONDITIONAL BYPASS ROUTE RESTORATION:
+# If this was a post-wake recovery and the exit node is active, the route flush
+# just wiped the static bypass routes for the WARP endpoints. We must re-add
+# them immediately to prevent a routing loop when Tailscale starts sending traffic.
+if [ "$POST_WAKE" = "true" ]; then
+  if [ -z "${ACTIVE_IF:-}" ]; then
+    ACTIVE_IF=$(route get default 2>> output.log | awk '/interface:/{print $2; exit}')
+    if [ -z "$ACTIVE_IF" ] || [[ "$ACTIVE_IF" =~ ^utun ]] || [[ "$ACTIVE_IF" =~ ^tun ]]; then
+      for i in en0 en1 en2 en3; do
+        if ifconfig "$i" 2>> output.log | grep -q 'status: active'; then
+          ACTIVE_IF="$i"; break
+        fi
+      done
+    fi
+    [ -z "$ACTIVE_IF" ] && ACTIVE_IF="en0"
+  fi
+  
+  echo "Re-adding host bypass routes for Cloudflare WARP endpoints..."
+  sudo -n route delete -host 162.159.192.1 2>/dev/null || true
+  sudo -n route delete -host 162.159.193.1 2>/dev/null || true
+  if [ -n "${PHYSICAL_GW:-}" ]; then
+    sudo -n route add -host 162.159.192.1 "$PHYSICAL_GW" >> output.log 2>&1 || true
+    sudo -n route add -host 162.159.193.1 "$PHYSICAL_GW" >> output.log 2>&1 || true
+  else
+    sudo -n route add -host 162.159.192.1 -interface "$ACTIVE_IF" >> output.log 2>&1 || true
+    sudo -n route add -host 162.159.193.1 -interface "$ACTIVE_IF" >> output.log 2>&1 || true
+  fi
+
+  # Also re-apply the default route pointing to the Tailscale interface
+  local ts_iface
+  ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)
+  if [ -n "$ts_iface" ]; then
+    echo "Re-routing default gateway to $ts_iface..."
+    sudo -n route delete default 2>> output.log || true
+    sudo -n route add default -interface "$ts_iface" >> output.log 2>&1 || true
+  fi
+fi
 
 # ─── 6. Stop gateway Docker containers (default) / Force-recreate warp if unhealthy (post-wake) ─
 if [ "$POST_WAKE" = "true" ]; then

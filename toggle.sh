@@ -135,7 +135,7 @@ start_sleep_prevention() {
       sudo -n networksetup -setsecurewebproxystate \"$ACTIVE_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       sudo -n networksetup -setsecurewebproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       if command -v tailscale >/dev/null 2>&1; then
-        tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
+        tailscale up --reset --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
         TS_DOWN_ARGS=\"\"
         if grep -iq \"^KILL_SWITCH=true\" .env 2>/dev/null; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
         tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
@@ -384,6 +384,67 @@ ACTIVE_SERVICE=$(get_active_service)
 EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>> output.log | grep -B1 "Device: en0" | head -1 | sed -E 's/^\([0-9\*]+\) //' || true)
 [ -z "$EN0_SERVICE" ] && EN0_SERVICE="Wi-Fi"
 
+# Helper to add host-side bypass routes for the WARP WireGuard endpoints.
+# This prevents an infinite recursive routing loop (tunnel loop) where
+# the container's WireGuard packets exit the VM, reach the host, match the
+# default route (the exit node), and get routed back into the tunnel.
+# We route via the gateway IP (not interface) to ensure packets are routed
+# properly even when the host's default route changes to the Tailscale interface.
+add_warp_bypass_routes() {
+  local gateway_ip
+  gateway_ip=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
+  
+  if [ -z "$gateway_ip" ]; then
+    local iface
+    iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
+    if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
+      iface="en0"
+    fi
+    echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via interface $iface..."
+    sudo -n route delete -host 162.159.192.1 2>/dev/null || true
+    sudo -n route delete -host 162.159.193.1 2>/dev/null || true
+    sudo -n route add -host 162.159.192.1 -interface "$iface" >> output.log 2>&1 || true
+    sudo -n route add -host 162.159.193.1 -interface "$iface" >> output.log 2>&1 || true
+  else
+    echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via gateway $gateway_ip..."
+    sudo -n route delete -host 162.159.192.1 2>/dev/null || true
+    sudo -n route delete -host 162.159.193.1 2>/dev/null || true
+    sudo -n route add -host 162.159.192.1 "$gateway_ip" >> output.log 2>&1 || true
+    sudo -n route add -host 162.159.193.1 "$gateway_ip" >> output.log 2>&1 || true
+  fi
+}
+
+remove_warp_bypass_routes() {
+  echo -e "\nRemoving host bypass routes for Cloudflare WARP endpoints..."
+  sudo -n route delete -host 162.159.192.1 2>/dev/null || true
+  sudo -n route delete -host 162.159.193.1 2>/dev/null || true
+}
+
+# Helper to manually override the host's default route to point through the
+# Tailscale utun* interface. Standalone tailscaled on macOS (Homebrew version)
+# lacks the platform-specific integration to override the default gateway
+# automatically when --exit-node is used.
+setup_exit_node_routing() {
+  local ts_iface
+  ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)
+  if [ -z "$ts_iface" ]; then
+    for i in $(ifconfig 2>> output.log | grep -E '^utun[0-9]+' | cut -d: -f1); do
+      if ifconfig "$i" 2>> output.log | grep -q "inet 100."; then
+        ts_iface="$i"
+        break
+      fi
+    done
+  fi
+  
+  if [ -n "$ts_iface" ]; then
+    echo "Manually configuring host routing table for exit node via $ts_iface..."
+    sudo -n route delete default 2>> output.log || true
+    sudo -n route add default -interface "$ts_iface" >> output.log 2>&1 || true
+  else
+    echo "[Warning] Could not detect Tailscale utun interface for host routing."
+  fi
+}
+
   # Helper to restore host DNS to a clean state (used on script start, on failure,
   # and after a successful STOP). Without this, a successful toggle-off leaves the
   # host's resolver pinned to a now-dead gateway IP — every lookup stalls for macOS's
@@ -427,6 +488,7 @@ cleanup_network_state() {
   if command -v route >> output.log 2>&1; then
     sudo -n route -n flush >> output.log 2>&1 || true
   fi
+  remove_warp_bypass_routes
   echo "  Routing table flushed."
 
   # 4. Power-cycle Wi-Fi to clear any lingering interface state
@@ -953,7 +1015,7 @@ else
 
       # ── Phase A: Join mesh without exit node ───────────────────────────
       echo "Connecting host to Tailscale mesh (no exit node yet)..."
-      if $TS_BIN up --reset --ssh=true --accept-dns=false --exit-node=; then
+      if $TS_BIN up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node=; then
         HOST_ON_MESH=true
         echo "Host is on Tailscale mesh."
       else
@@ -1029,8 +1091,10 @@ else
     # Act based on check results
     if [ "$SKIP_EXIT_NODE" != "true" ]; then
       echo -e "\nAll checks passed. Enabling exit node $TS_IP..."
-      if $TS_BIN up --reset --ssh=true --accept-dns=false --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
+      if $TS_BIN up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
         echo "Exit node enabled."
+        add_warp_bypass_routes
+        setup_exit_node_routing
       else
         echo "[Warning] Failed to set exit node."
         SKIP_EXIT_NODE=true
