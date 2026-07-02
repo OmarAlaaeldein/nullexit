@@ -227,6 +227,9 @@ cleanup_handler() {
     stop_dns_watcher
     clear_gateway_active_marker
 
+    # Best-effort container teardown on failure
+    docker compose down --remove-orphans -t 30 2>> output.log || true
+
     # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
     if [ -n "$ACTIVE_SERVICE" ]; then
       cleanup_network_state
@@ -683,7 +686,7 @@ if is_gateway_active; then
   echo ""
 
   echo "Stopping Docker containers..."
-  docker compose down -t 5
+  docker compose down --remove-orphans -t 30
   
   # Only stop Colima if the user explicitly opted in (false by default) to prevent breaking their other Docker dev projects
   STOP_COLIMA=$(grep -E "^STOP_COLIMA_ON_EXIT=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')

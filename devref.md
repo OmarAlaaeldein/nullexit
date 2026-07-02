@@ -63,6 +63,8 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `scripts/sync-rules.py` | 668 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
 | **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`scripts/sync-rules.py`. See README §6.** |
 | `recover.sh` | 538 | Nuclear recovery script (gain: use `--post-wake` for non-destructive refresh after sleep/wake or Wi-Fi roam — keeps the gateway live while still re-hijacking DNS + refreshing Tailscale exit-node + force-recreating warp if unhealthy). Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
+| `scripts/diagnose-host-leak.sh` | 527 | **One-shot host-routing diagnostic.** Runs 7 checks (Tailscale, SOCKS5, CDN-cgi/trace, IPv6 leak, default route, output.log hints, gateway IP), classifies into ONE of three known leak scenarios (A=SOCKS5 fallback, B=IPv6 leak, C=route freeze) or OK, writes a timestamped report to `host-leak-diagnostic-<UTC>.txt`, and prints a ready-to-run fix on stdout. Pass `--fix` to apply the matched remediation and re-verify egress. See §10.30. |
+| `scripts/fix-docker-bridge-collision.sh` | ~290 | **One-shot fix for §9.13.** Detects Docker's `172.17.0.0/16` bridge colliding with the host Wi-Fi subnet (the symptom that produces `default 172.17.0.1 UGScg en0` in `netstat -rn`), picks a non-colliding `docker.bip` from a small candidate set, idempotently edits `~/.colima/default/colima.yaml` with a timestamped backup, restarts Colima, rebinds Wi-Fi DHCP, verifies the new default route is no longer Docker's bridge, and re-runs `toggle.sh` + `scripts/diagnose-host-leak.sh`. Supports `--dry` and `--skip-toggle`. |
 | `scripts/watcher.sh` | 194 | **Long-running post-wake + post-roam daemon.** Launched by launchd LaunchAgent; subscribes to `com.apple.powermanagement` events via `log stream` and to network-state changes via `scutil n.watch`. Both fire `recover.sh --post-wake`. Single-instance lock + SCRIPT_DIR-relative resolve of `RECOVER`. See §10.29. |
 | `scripts/toggle-linux.sh` | 930 | **Linux sibling of `toggle.sh`.** Native Linux equivalents for every macOS-specific primitive — `nmcli radio wifi off/on` instead of `networksetup -setairportpower`, `ip link set ... down/up` fallback, distro-detection for the gateway install, systemd-resolved wiring. Paired with the `.desktop` shortcuts `setup.sh` builds. |
 | `scripts/recover-linux.sh` | 256 | **Linux sibling of `recover.sh`.** Same nuclear semantics (flush, restart, verify) — but using `nmcli` / `ip link` instead of macOS `networksetup`, with a graceful fallback to `journalctl` for diagnostic-readback. |
@@ -181,6 +183,7 @@ Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the 
 6. **DNS is scoped to en0** — macOS scutil DNS resolver is scoped to en0 (Wi-Fi). DNS changes on other interfaces (like USB Ethernet) are ignored unless en0's service is also updated. The script always sets DNS on BOTH `$ACTIVE_SERVICE` and `$EN0_SERVICE`.
 7. **tailscaled clobbers DNS during exit-node transition** — `force_dns_to_gateway` is called a second time at the end of the ENABLE branch to counteract this.
 8. **`tailscale up --reset`** resets all unspecified flags to defaults — Every `--reset` call MUST also pass `--accept-dns=false` explicitly or tailscaled re-enables DNS management.
+9. **`docker compose ps` CWD pitfall** — `docker compose` commands require a `docker-compose.yml` in the current working directory. Use `docker ps` for raw container listing from any CWD; `docker compose ps` requires the project directory.
 
 ---
 
@@ -326,11 +329,19 @@ For debugging, logs are strictly segmented based on the component's lifecycle:
 4. **Tailscale Relay Saturation**: Because local peer-to-peer discovery is blackholed, Tailscale falls back to public DERP relay servers (e.g. `relay "tor"` in Toronto). When exit-node routing is enabled, all client web traffic is routed through the relay. Public relays impose strict rate limits and throttle high-volume traffic, resulting in packet drops. This saturation drops Tailscale's control packets, causing the connection to time out and showing the client as offline.
 
 **Fix:**
-Configure a custom, non-conflicting default bridge IP (`bip`) for the Docker daemon. 
-Edit the Colima configuration file (`~/.colima/default/colima.yaml`) on your Mac to define:
+The canonical script for this is `scripts/fix-docker-bridge-collision.sh`. **One command applies the entire fix:**
+
+```bash
+bash scripts/fix-docker-bridge-collision.sh        # apply
+bash scripts/fix-docker-bridge-collision.sh --dry  # preview changes without applying
+```
+
+It auto-detects the host's actual Wi-Fi subnet (no more guessing whether the campus DHCP handed out `172.x`, `10.x`, or `192.168.x`), picks a non-conflicting `docker.bip` from a small candidate set (defaulting to `172.26.0.1/24` if no overlap is matched), backs up `~/.colima/default/colima.yaml` with an ISO-8601 timestamp, edits the file **in place** (idempotent — replaces an existing `docker.bip` if present, appends under an existing `docker:` block, or creates a fresh block), restarts Colima, rebinds Wi-Fi DHCP, verifies the new default route is no longer Docker's bridge, and re-runs both `./toggle.sh` and `scripts/diagnose-host-leak.sh` to print the post-fix verdict.
+
+For reference, the underlying manual fix is: edit the Colima configuration file (`~/.colima/default/colima.yaml`) on your Mac to define:
 ```yaml
 docker:
-  bip: 172.26.0.1/24
+  bip: 172.26.0.1/24   # any /24 that does NOT overlap your Wi-Fi subnet
 ```
 Then, restart Colima to apply the new subnet inside the VM:
 ```bash
@@ -775,7 +786,43 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
   * `Label: com.nullexit.wake-recovery`
   * `ProgramArguments: ["/bin/bash", "<absolute-path-to-your-nullexit-install>/scripts/watcher.sh"]`
   * `RunAtLoad: true` — starts immediately on `launchctl load` (no need to log out and back in)
-  * `KeepAlive: { SuccessfulExit: false, Crashed: false }` — **don't** restart on clean SIGTERM exit (so `launchctl bootout` doesn't get stuck in a relaunch loop). Also **don't** restart on hard crash: we observed that macOS Sonoma+'s sleep/wake suspend-resume path accumulates orphan watcher.sh PIDs because SIGCONT does not reliably clean up the prior instance's listener grandchildren, and a `KeepAlive.Crashed=true`-driven relaunch actively races with the still-live prior process. The script enforces single-instance on its own via a `flock`-style PID-file lock, so a relaunch-on-crash would be skipped by the lock and produce 0 listener coverage until the live instance happened to die. Trade-off: a real crash leaves the user without auto-recovery until they run `launchctl load -w` manually — acceptable because (a) gateway still works without auto-recovery, (b) a relaunch wouldn't fix whatever caused the crash, and (c) the gateway-recovery itself is observably broken (no DNS, no exit-node) if it does go down.
+  * `KeepAlive: { SuccessfulExit: false, Crashed: false }` — **don't** restart on clean SIGTERM exit (so `launchctl bootout` doesn't get stuck in a relaunch loop). Also **don't** restart on hard crash: we observed that macOS Sonoma+'s sleep/wake suspend-resume path accumulates orphan watcher.sh PIDs because SIGCONT does not reliably clean up the prior instance's listener grandchildren, and a `KeepAlive.Crashed=true`-driven relaunch actively races with the still-live prior process. The script enforces single-instance on its own via a `flock`-style PID-file lock, so a relaunch-on-crash would be skipped by the lock and produce   0 listener coverage until the live instance happened to die. Trade-off: a real crash leaves the user without auto-recovery until they run `launchctl load -w` manually — acceptable because (a) gateway still works without auto-recovery, (b) a relaunch wouldn't fix whatever caused the crash, and (c) the gateway-recovery itself is observably broken (no DNS, no exit-node) if it does go down.
+
+### 10.30 Host-Side Traffic Leaking Past the Exit Node (with Remote Clients Routing Correctly)
+
+**Symptom.** `toggle.sh` reports success. Remote tailnet clients (e.g. an S24 phone) correctly egress through Cloudflare WARP and see a Cloudflare IP on `whatismyip.com`. But on the **HOST Mac running the gateway**, `whatismyip.com` reports the underlying physical ISP's ASN (e.g. `udem` for Université de Montréal campus Wi-Fi). The gateway container itself is healthy; the leak is specifically on the host.
+
+**Root causes.** Three distinct mechanisms can each produce this exact symptom on the host alone, while leaving remote clients unaffected. They are mutually rankable so the diagnostic picks the active one deterministically.
+
+* **(A) SOCKS5 fallback lane active.** `toggle.sh`'s three Phase-B pre-flight checks (`tailscale ping` → AdGuard via `dig +tcp` → WARP internet, toggle.sh ~lines 750-820) sometimes flake during the first minute. When ANY of the three fails, the script sets `SKIP_EXIT_NODE=true` (toggle.sh:849) and instead activates the SOCKS5 fallback path (toggle.sh:894). The SOCKS5 fallback hijacks DNS to `127.0.0.1` (so AdGuard filtering still works) but **modern browsers on macOS do NOT honor the system SOCKS5 proxy** — they ignore `networksetup -setsocksfirewallproxy`. Result: DNS gets ad-filtered but actual HTTP/S traffic exits direct through the campus ISP. This branch is invisible from a remote tailnet client because the client's tunnel is unaffected.
+
+* **(B) IPv6 leak over campus Wi-Fi.** The Tailscale exit node and WARP tunnel are both IPv4-only (gluetun + `post-rules.txt` drop all IPv6 forwarded traffic; devref §10.6). But UdeM (and most modern campus APs) are dual-stack — the host happily accepts AAAA DNS responses and sends IPv6 traffic straight out `en0`. macOS happily encrypts that traffic through Tailscale ONLY if Tailscale has IPv6 advertised; with an IPv4-only exit node, IPv6 traffic skips Tailscale entirely. This branch is invisible from a phone because iOS/Android Tailscale apps actively sinkhole IPv6 in their VPN profile, but the macOS host's `tailscaled` does not.
+
+* **(C) Route-table freeze after `tailscaled` wake/toggle.** `tailscale up --reset` installs a new default route via `utunX`, but macOS occasionally fails to apply the route (devref §10.26 — the same daemon-freeze failure mode). `netstat -rn` shows the default route still pointing at the physical Wi-Fi gateway `192.168.x.x` instead of the Tailscale `utunX` interface. The exit-node preference is set (so `tailscale status` looks fine) but packets never actually flow through the tunnel. Browser traffic exits direct.
+
+**Why remote clients don't see this.** Each remote phone/laptop uses its OWN Tailscale tunnel to reach the container's `100.x.x.x:443` over the mesh — they're end-to-end encrypted regardless of how the host Mac itself is configured. Only the HOST's own egress sockets (HTTP requests from the host's browser, curl, etc.) are affected.
+
+**Resolution.** A single one-shot script: `scripts/diagnose-host-leak.sh`. It runs the 7 checks, classifies into one of A / B / C / OK, prints a verdict + a ready-to-run fix command on stdout, AND writes the full report to `host-leak-diagnostic-<UTC>.txt` so the user can paste the file back instead of scrolling-and-copying from the terminal. With `--fix`, the matched remediation is applied and the two checks that could change (warp + ipv6) are re-verified.
+
+```bash
+# Diagnose only:
+bash scripts/diagnose-host-leak.sh
+
+# Diagnose + apply matched fix + re-verify:
+bash scripts/diagnose-host-leak.sh --fix
+```
+
+**What it prints.** A 7-section report (`tailscale status`, SOCKS5 state, `cdn-cgi/trace` warp=, IPv6 leak probe, host default route, last toggle.sh output.log hints, resolved gateway Tailscale IP), followed by a classification block (`Scenario: A | B | C | OK`) with the exact command(s) the user needs to paste into their terminal — they don't have to figure out which `tailscale up` flags match their environment.
+
+**What it does NOT do.** It does not touch `toggle.sh` or `toggle.sh`'s pre-flight logic, does not modify `.env` (except `--fix` mode appends `GATEWAY_BYPASS_PING=true` when fixing Scenario A), and does not restart Docker. It is a read-only diagnostic with an opt-in remediation flag. Safe to run on a healthy gateway — the worst case is a 30-line report that says "OK".
+
+**Why cdn-cgi/trace over whatismyip.com for the verdict.** `whatismyip.com`'s ISP database routinely mislabels campus IPv6 ranges as residential ISPs (that's why "udem" appears even when you're routing through Cloudflare). `cdn-cgi/trace` is hosted by Cloudflare ITSELF and reports `warp=on|off` plus the exact edge colo serving the request. It is the only public endpoint that can truthfully confirm whether the WARP tunnel is in use.
+
+**Common false alarms.**
+
+* **`warp=on` but whatismyip.com still says "udem".** `whatismyip.com`'s ISP-detection database is unreliable on academic networks. Trust `cdn-cgi/trace`'s `warp=on` over `whatismyip.com`'s ISP string. Use `https://api.ipify.org` (returns just the IP, no ISP DB lookup) as a third confirmatory check.
+* **`tailscale status` shows the host online but exit node preference is missing.** `tailscale up --reset --exit-node=` (empty value) clears any stale preference; `tailscale up --reset --exit-node=<100.x.x.x>` re-establishes it. The diagnostic prints the exact command with the resolved TS_IP filled in.
+* **Both IPv6 leak AND route-freeze flags set simultaneously.** Scenario B outranks Scenario C — fixing IPv6 makes IPv4 the only viable egress, after which the route-freeze usually self-resolves within ~30s (or one more `toggle.sh` cycle).
   * `ProcessType: Background` — hint to App Nap not to suspend us.
   * `StandardOutPath/StandardErrorPath: /tmp/nullexit-watcher.{out,err}.log` — separates launchd-level diagnostics from the script's own `/tmp/nullexit-watcher.log` (which `exec >>` redirects).
 

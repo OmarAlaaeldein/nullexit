@@ -27,3 +27,4 @@ output.log
 *.desktop
 blocked.log
 wtf.md
+host-leak-diagnostic-*.txt
