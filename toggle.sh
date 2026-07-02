@@ -79,6 +79,28 @@ run_gui_cmd() {
   fi
 }
 
+# Active-state marker: written at end of START path so external watchers
+# (see launchd/com.nullexit.wake-recovery.plist + scripts/watcher.sh +
+# devref §10.29) know the gateway is currently up. They only fire
+# recover.sh --post-wake when this file is present. Cleared at the top
+# of the STOP path and inside cleanup_handler on any error/signal path
+# so a half-broken gateway never re-triggers post-wake refreshes.
+write_gateway_active_marker() {
+  date -u +%FT%TZ > /tmp/nullexit-gateway-active.marker
+}
+
+clear_gateway_active_marker() {
+  rm -f /tmp/nullexit-gateway-active.marker
+}
+
+# Defensive: clear any stale marker from a prior crashed/aborted run. If a
+# previous toggle.sh wrote the marker but was OOM-killed in the middle of the
+# START block (before the END-of-START write) — or if the user rebooted mid
+# session — this prevents the watcher from firing post-wake against a
+# non-running gateway on every wake event. Placed AFTER the function
+# definitions so bash resolves the call at parse time.
+clear_gateway_active_marker
+
 PID_FILE="/tmp/nullexit-caffeinate.pid"
 
 # Start macOS caffeinate to prevent sleep while gateway is running
@@ -203,6 +225,7 @@ cleanup_handler() {
     # Stop sleep prevention
     stop_sleep_prevention
     stop_dns_watcher
+    clear_gateway_active_marker
 
     # Nuke leftover network state (proxies, routes, DNS cache, Wi-Fi)
     if [ -n "$ACTIVE_SERVICE" ]; then
@@ -683,6 +706,7 @@ if is_gateway_active; then
   # Stop background daemons
   stop_sleep_prevention
   stop_dns_watcher
+  clear_gateway_active_marker
 
   # 4. Nuke leftover network state so internet actually works after teardown
   cleanup_network_state
@@ -1092,6 +1116,9 @@ else
   # Reset sharing services after network configuration to prevent AirDrop freezes
   echo "Resetting macOS sharing services (AirDrop/AirPlay)..."
   sudo -n killall sharingd rapportd 2>> output.log || true
+
+  # Tell external watchers (post-wake / network-change) the gateway is up.
+  write_gateway_active_marker
 fi
 
 SUCCESS_RUN=true
