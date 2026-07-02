@@ -5,10 +5,22 @@
     <key>Label</key>
     <string>com.nullexit.wake-recovery</string>
 
+    <!-- WorkingDirectory + relative program arg keeps this plist install-agnostic.
+         The source-of-truth for the install path is __NULLEXIT_HOME__, which
+         setup.sh or the user must substitute with their absolute nullexit
+         install root at install time. Program arg is `scripts/watcher.sh`
+         RELATIVE to WorkingDirectory, so launchd's evaluated cwd IS the
+         install root — and BASH_SOURCE inside scripts/watcher.sh still
+         resolves to the real <install>/scripts/watcher.sh, preserving the
+         SCRIPT_DIR pattern. After install-time `sed -i '' 's|__NULLEXIT_HOME__|<abs_path>|'`,
+         the plist is portable to any clone location. -->
+    <key>WorkingDirectory</key>
+    <string>__NULLEXIT_HOME__</string>
+
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/omar/Developer/nullexit/scripts/watcher.sh</string>
+        <string>scripts/watcher.sh</string>
     </array>
 
     <!-- Start the daemon immediately on launchctl load (instead of waiting

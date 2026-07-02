@@ -322,7 +322,7 @@ For debugging, logs are strictly segmented based on the component's lifecycle:
 
 **Fix:**
 Configure a custom, non-conflicting default bridge IP (`bip`) for the Docker daemon. 
-Edit the Colima configuration file (`/Users/omar/.colima/default/colima.yaml`) on your Mac to define:
+Edit the Colima configuration file (`~/.colima/default/colima.yaml`) on your Mac to define:
 ```yaml
 docker:
   bip: 172.26.0.1/24
@@ -440,7 +440,7 @@ Once unblocked, `sharingd` immediately resumes broadcasting mDNS/Bonjour discove
 ### 10.12 Hard Reboots Leave Stale Docker Socket in Colima VM
 
 **Problem:** If the macOS host machine is subjected to a hard reboot, sudden power loss, or a kernel panic, the Colima VM running in the background is abruptly killed. Upon next boot, running `toggle.sh` resulted in the contradictory output:
-`Colima is already running.` followed by `Cannot connect to the Docker daemon at unix:///Users/omar/.colima/default/docker.sock.`
+`Colima is already running.` followed by `Cannot connect to the Docker daemon at unix://~/.colima/default/docker.sock.`
 
 **Root Cause:** The hard crash prevents the inner Docker daemon from executing its graceful shutdown routines. It leaves behind a corrupted `docker.sock` file inside the VM. On boot, the outer VM spins up (hence "already running"), but the inner Docker daemon sees the stale socket, assumes another instance is running, and crashes.
 
@@ -675,9 +675,9 @@ Or apply Flavor A if you'd prefer to preserve the contents while resetting the m
 - This pattern generalizes. Any time a script ends up producing a "locked file that the next run can't update" situation, the same trick applies without a single chmod anywhere.
 
 **Empirical verification (user machine, July 1, 2026):**
-- `.env` was `mode=000` (owner omar): Flavor A unblocked it in 3 commands, no chmod.
-  - Before: `----------  1 omar  staff  899 Jun 28 07:07 .env`
-  - After:  `-rw-r--r--@ 1 omar  staff  899 Jul  1 20:39 .env`
+- `.env` was `mode=000` (owner $USER, i.e. you): Flavor A unblocked it in 3 commands, no chmod.
+  - Before: `----------  1 $USER  staff  899 Jun 28 07:07 .env`
+  - After:  `-rw-r--r--@ 1 $USER  staff  899 Jul  1 20:39 .env`
   - `docker compose config` immediately picked up `TS_AUTHKEY` + `WIREGUARD_PRIVATE_KEY` substitution.
 - `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/1782645604.txt` were `mode=0444`: Flavor B (`mv`-aside) unblocked all three.
   - scripts/sync-rules.py then ran clean: 279587 block rules + 171 allow rules + 16710 IP entries compiled; new files came out at `0644`.
@@ -686,7 +686,7 @@ Or apply Flavor A if you'd prefer to preserve the contents while resetting the m
 **When this trick is appropriate vs. inappropriate:**
 - ✓ You own the parent directory and the file (typical desktop scenario).
 - ✓ The lock is a leftover from a removed `chmod` call that you want off disk forever.
-- ✓ NOPASSWD sudo includes at least one interpreter (`python3` on this system) that can be used to read mode-0 files. If it does not, add it first: `omar ALL=(ALL) NOPASSWD: /usr/bin/python3`.
+- ✓ NOPASSWD sudo includes at least one interpreter (`python3` on this system) that can be used to read mode-0 files. If it does not, add it first: `<USER> ALL=(ALL) NOPASSWD: /usr/bin/python3`.
 - ✗ The file is owned by another user (root, another account) and the lock is intentional — respect it; do not bypass another user's security boundary.
 - ✗ The parent directory is owned/writable only by another user — escalate properly via sudo, or stop and ask the user.
 - ✗ You do not actually own the file and there is a legitimate reason for its lock state — restore the file via a trusted source rather than circumventing the perms.
@@ -781,10 +781,16 @@ The plist lives in the repo at **`launchd/com.nullexit.wake-recovery.plist`** fo
 ```bash
 # Copy the plist to the user-launchd location (run from repo root)
 cp ./launchd/com.nullexit.wake-recovery.plist \
-   /Users/omar/Library/LaunchAgents/
+   ~/Library/LaunchAgents/
+
+# Substitute __NULLEXIT_HOME__ with your local install absolute path.
+# The plist uses WorkingDirectory + a relative program arg, so this
+# single substitution is the only place it references your machine.
+sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|" \
+    ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 
 # Validate the XML
-plutil -lint /Users/omar/Library/LaunchAgents/com.nullexit.wake-recovery.plist
+plutil -lint ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 
 # Load + persist this user session + every future login
 launchctl load -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
