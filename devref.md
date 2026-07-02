@@ -1,6 +1,6 @@
 # nullexit — Development Reference & Resolved Issues
 
-> **Last updated:** June 28, 2026
+> **Last updated:** July 1, 2026
 > **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
 
 ---
@@ -53,18 +53,23 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `toggle.sh` | ~900 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
-| `setup.sh` | ~392 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
-| `docker-compose.yml` | ~160 | Service definitions for all 5 containers. |
-| `scripts/routing-fix.sh` | ~175 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
-| `post-rules.txt` | ~16 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
-| `scripts/socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
-| `scripts/dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
-| `scripts/sync-rules.py` | ~560 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
+| `toggle.sh` | 1143 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
+| `setup.sh` | 406 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
+| `docker-compose.yml` | 194 | Service definitions for all 5 containers. |
+| `scripts/routing-fix.sh` | 201 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
+| `post-rules.txt` | 18 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
+| `scripts/socks5-proxy.py` | 198 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
+| `scripts/dns-proxy.py` | 91 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
+| `scripts/sync-rules.py` | 668 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
 | **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`scripts/sync-rules.py`. See README §6.** |
-| `recover.sh` | ~280 | Nuclear recovery script. Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
-| `black_list.txt` | ~70 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
-| `white_list.txt` | ~120 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
+| `recover.sh` | 538 | Nuclear recovery script (gain: use `--post-wake` for non-destructive refresh after sleep/wake or Wi-Fi roam — keeps the gateway live while still re-hijacking DNS + refreshing Tailscale exit-node + force-recreating warp if unhealthy). Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
+| `scripts/watcher.sh` | 194 | **Long-running post-wake + post-roam daemon.** Launched by launchd LaunchAgent; subscribes to `com.apple.powermanagement` events via `log stream` and to network-state changes via `scutil n.watch`. Both fire `recover.sh --post-wake`. Single-instance lock + SCRIPT_DIR-relative resolve of `RECOVER`. See §10.29. |
+| `scripts/toggle-linux.sh` | 930 | **Linux sibling of `toggle.sh`.** Native Linux equivalents for every macOS-specific primitive — `nmcli radio wifi off/on` instead of `networksetup -setairportpower`, `ip link set ... down/up` fallback, distro-detection for the gateway install, systemd-resolved wiring. Paired with the `.desktop` shortcuts `setup.sh` builds. |
+| `scripts/recover-linux.sh` | 256 | **Linux sibling of `recover.sh`.** Same nuclear semantics (flush, restart, verify) — but using `nmcli` / `ip link` instead of macOS `networksetup`, with a graceful fallback to `journalctl` for diagnostic-readback. |
+| `scripts/setup-linux.sh` | 415 | **Linux sibling of `setup.sh`.** Distro detection (apt/dnf/pacman), installs distro-specific deps (Docker, Tailscale CLI, wgcf), generates Tailscale + AdGuard systemd-resolved wiring, creates `.desktop` shortcuts that point at the linux scripts. |
+| `logger.py` | 60 | **Internal logger piped from `scripts/routing-fix.sh`** inside the `warp` container. Not invoked from the host; emits the routing-fix loop's structured output. |
+| `black_list.txt` | 71 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
+| `white_list.txt` | 222 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
 | `.env` | ~14 | WARP WireGuard keys, Tailscale auth key, rule profile. **Contains secrets.** |
 | `ADGUARD_IP.txt` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
 
@@ -862,3 +867,20 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
    * Walk between two real SSIDs via `networksetup -switchtolocation` (or actual physical station movement) — guaranteed to fire the scutil event.
    * Force a DHCP rebind on the same SSID with `sudo ipconfig set en0 DHCP` — triggers `State:/Network/Global/IPv4` to update.
    * Trust the existing 5-second DNS Watcher inside `toggle.sh` for the DNS path: it re-hijacks DNS automatically. The post-wake watcher adds clear value mostly for tailscale exit-node re-assertion and warp gluetun force-recreate, both of which self-heal within ~30 s anyway.
+
+---
+
+## 11. Recent Updates
+
+Reflects the current branch's state. Each entry one line + commit hash; read the commit message for detail.
+
+- **July 1, 2026 — `c5b92c0` (refactor: omar cleanup)** — eliminated every residual `omar` personal-username leak across source + config files. The launchd `com.nullexit.wake-recovery.plist` now uses `WorkingDirectory` + a relative program arg with the `__NULLEXIT_HOME__` sentinel; the install recipe in §10.29 gains a single `sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|"` step right after the `cp`. 8 `devref.md` prose sites genericized to `~/.colima/...`, `~/Library/LaunchAgents/...`, `$USER` for sample output, `<USER>` for the sudoers example.
+- **July 1, 2026 — `a5e2a5a` (refactor: script-relative paths)** — replaced 6 hardcoded `/Users/omar/Developer/nullexit/...` source-code sites with script-relative resolution. `recover.sh` injects `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` near the top and uses it for the post-wake warn (l.321) and the broken-for-60s hint echo (l.446). `scripts/watcher.sh` uses the same pattern; `RECOVER="$SCRIPT_DIR/../recover.sh"` resolves without launching-path dependency.
+- **June 28, 2026 — `f8f8e4e` (M1: scripts/ move)** — 8 internal-collaborator scripts (routing-fix.sh, socks5-proxy.py, dns-proxy.py, sync-rules.py, logger.py, toggle-linux.sh, recover-linux.sh, setup-linux.sh) consolidated into a `scripts/` subfolder. The 4 user-facing / orchestrator / config files (`toggle.sh`, `recover.sh`, `setup.sh`, `docker-compose.yml`) deliberately stayed at repo root.
+- **June 28, 2026 — `0875ef3` (ci: glob)** — CI `py_compile` line switched from `python3 -m py_compile *.py scripts/*.py` to `python3 -m py_compile scripts/*.py` after M1 left root with zero `.py` files (the old form was lazy-empty on bash `nullglob=off` runners).
+- **June 28, 2026 — `25b37a1` (docs: scripts/ prefix)** — `devref.md` + `README.md` updated to use the `scripts/` prefix for every reference of the 8 moved files. ~22 sites in devref + ~9 sites in README = ~31 patches.
+
+### End-to-end verification (commit `c5b92c0` cyclone)
+Manual START → STOP cycle ran clean on macOS after the path relativization + omar cleanup landed:
+- `bash toggle.sh` START: exit 0, ~135s (cold Colima boot); marker present (`2026-07-02T03:41:41Z`), all 5 containers healthy, host DNS hijacked to `100.100.21.8` (no fallback), exit node selected, Cloudflare trace through WARP succeeds.
+- `bash toggle.sh` STOP: exit 0, ~12s; marker cleared, all nullexit containers gone, host DNS restored to `1.1.1.1`, Tailscale disconnected.
