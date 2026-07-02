@@ -768,7 +768,7 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
   * `wait` blocks indefinitely while both pipelines feed it.
 4. **`launchd/com.nullexit.wake-recovery.plist`** (LaunchAgent in the user domain — runs as the console user at every login without needing sudo).
   * `Label: com.nullexit.wake-recovery`
-  * `ProgramArguments: ["/bin/bash", "/Users/omar/Developer/nullexit/scripts/watcher.sh"]`
+  * `ProgramArguments: ["/bin/bash", "<absolute-path-to-your-nullexit-install>/scripts/watcher.sh"]`
   * `RunAtLoad: true` — starts immediately on `launchctl load` (no need to log out and back in)
   * `KeepAlive: { SuccessfulExit: false, Crashed: false }` — **don't** restart on clean SIGTERM exit (so `launchctl bootout` doesn't get stuck in a relaunch loop). Also **don't** restart on hard crash: we observed that macOS Sonoma+'s sleep/wake suspend-resume path accumulates orphan watcher.sh PIDs because SIGCONT does not reliably clean up the prior instance's listener grandchildren, and a `KeepAlive.Crashed=true`-driven relaunch actively races with the still-live prior process. The script enforces single-instance on its own via a `flock`-style PID-file lock, so a relaunch-on-crash would be skipped by the lock and produce 0 listener coverage until the live instance happened to die. Trade-off: a real crash leaves the user without auto-recovery until they run `launchctl load -w` manually — acceptable because (a) gateway still works without auto-recovery, (b) a relaunch wouldn't fix whatever caused the crash, and (c) the gateway-recovery itself is observably broken (no DNS, no exit-node) if it does go down.
   * `ProcessType: Background` — hint to App Nap not to suspend us.
@@ -779,8 +779,8 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
 The plist lives in the repo at **`launchd/com.nullexit.wake-recovery.plist`** for version control. The installed (live) copy must land in `~/Library/LaunchAgents/` so launchd picks it up on the user session.
 
 ```bash
-# Copy the plist to the user-launchd location
-cp /Users/omar/Developer/nullexit/launchd/com.nullexit.wake-recovery.plist \
+# Copy the plist to the user-launchd location (run from repo root)
+cp ./launchd/com.nullexit.wake-recovery.plist \
    /Users/omar/Library/LaunchAgents/
 
 # Validate the XML

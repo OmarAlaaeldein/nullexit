@@ -523,4 +523,4 @@ This happens because almost all mobile carriers use Carrier-Grade NAT (CGNAT), w
 
 ## 17. License
 
-This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](file:///Users/omar/Developer/nullexit/LICENSE) file for details.
+This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](./LICENSE) file for details.

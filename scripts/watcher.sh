@@ -20,7 +20,7 @@
 #   - checks /tmp/nullexit-gateway-active.marker (only act when toggle.sh left
 #     the gateway up)
 #   - debounces (10s default) so multiple events don't pile up
-#   - shells out to `bash /Users/omar/Developer/nullexit/recover.sh --post-wake`
+#   - shells out to `bash <repo>/recover.sh --post-wake`
 #
 # See devref.md §10.29 for the full Apple power management primer and the
 # rationale behind using `log stream` + `scutil n.watch` from a shell daemon.
@@ -35,7 +35,11 @@
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 LOG="/tmp/nullexit-watcher.log"
-RECOVER="/Users/omar/Developer/nullexit/recover.sh"
+# Resolve our own directory; recover.sh lives one level up at the repo root.
+# This makes the daemon install-agnostic — no need to template the path
+# in launchd, no need to keep a deploy-specific hardcoded location in sync.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RECOVER="$SCRIPT_DIR/../recover.sh"
 MARKER="/tmp/nullexit-gateway-active.marker"
 DEBOUNCE_FILE="/tmp/nullexit-watcher.last-recovery"
 DEBOUNCE_SECONDS="${NULLEXIT_DEBOUNCE_SECONDS:-10}"

@@ -43,6 +43,12 @@ warn()  { echo -e "  ${YELLOW}⚠ $*${NC}"; }
 fail()  { echo -e "  ${RED}✗ $*${NC}"; }
 die()   { echo -e "\n  ${RED}✗ $*${NC}\n"; exit 1; }
 
+# ─── Resolve script directory (used for path-relative refs) ─────────────────
+# recover.sh lives at the repo root; SCRIPT_DIR lets us launch toggle.sh
+# (and reference any other repo-root file) from the same directory no
+# matter where the user invoked recover.sh from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ─── Pure-bash timeout (no dependency on GNU coreutils' `timeout`) ────────────
 # macOS lacks the `timeout` command by default. This bash-native replacement
 # runs a command with a safety cutoff so a wedged daemon can't hang the script.
@@ -312,7 +318,7 @@ if [ "$POST_WAKE" = "true" ]; then
       ok "warp container is healthy (no recreate needed)"
       ;;
     missing)
-      warn "warp container is missing — leaving gateway containers alone (full relaunch requires /Users/omar/Developer/nullexit/toggle.sh)"
+      warn "warp container is missing — leaving gateway containers alone (full relaunch requires \"$SCRIPT_DIR/toggle.sh\")"
       ;;
     *)
       warn "warp container health = '$WARP_STATE' — force-recreating to nudge UDP rebind"
@@ -437,7 +443,7 @@ if [ "$POST_WAKE" = "true" ]; then
   else
     echo -e "  ${YELLOW}${BOLD}⚠ Gateway recovery is in-progress.${NC}"
     echo "    The route may need another 30s before queries succeed."
-    echo "    If it stays broken for >60s, run: bash /Users/omar/Developer/nullexit/toggle.sh"
+    echo "    If it stays broken for >60s, run: bash \"$SCRIPT_DIR/toggle.sh\""
   fi
 else
   step "Verifying internet connectivity"
