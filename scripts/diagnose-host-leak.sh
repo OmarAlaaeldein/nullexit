@@ -398,7 +398,7 @@ case "$SCENARIO" in
     echo ""
     echo "  ${BOLD}Recommended fix:${NC}"
     echo "    echo 'GATEWAY_BYPASS_PING=true' >> $PROJECT_ROOT/.env"
-    echo "    sudo tailscale up --reset --ssh=true --accept-dns=false \\"
+    echo "    sudo tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true \\"
     if [ -n "$GATEWAY_TS_IP" ]; then
     echo "        --exit-node=$GATEWAY_TS_IP --exit-node-allow-lan-access=true"
     else
@@ -431,10 +431,10 @@ case "$SCENARIO" in
     echo "    sudo route -n flush"
     echo "    sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
     if [ -n "$GATEWAY_TS_IP" ]; then
-    echo "    sudo tailscale up --reset --ssh=true --accept-dns=false \\"
+    echo "    sudo tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true \\"
     echo "        --exit-node=$GATEWAY_TS_IP --exit-node-allow-lan-access=true"
     else
-    echo "    sudo tailscale up --reset --ssh=true --accept-dns=false --exit-node=\$TS_IP --exit-node-allow-lan-access=true"
+    echo "    sudo tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node=\$TS_IP --exit-node-allow-lan-access=true"
     fi
     echo "    ./toggle.sh"
     ;;
@@ -516,7 +516,7 @@ if [ "$DO_FIX" = "true" ] && [ "$SCENARIO" != "OK" ] && [ "$SCENARIO" != "UNKNOW
           printf '\nGATEWAY_BYPASS_PING=true\n' >> "$ENV"
         fi
         line "→ re-asserting tailscale exit-node (with --reset)"
-        sudo -n tailscale up --reset --ssh=true --accept-dns=false \
+        sudo -n tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true \
              --exit-node="$GATEWAY_TS_IP" --exit-node-allow-lan-access=true \
              >> "$LOG_FILE" 2>&1 \
           && ok "tailscale exit-node re-asserted for $GATEWAY_TS_IP" \
@@ -543,7 +543,7 @@ if [ "$DO_FIX" = "true" ] && [ "$SCENARIO" != "OK" ] && [ "$SCENARIO" != "UNKNOW
       sudo -n killall -HUP mDNSResponder >> "$LOG_FILE" 2>&1 || true
       if [ -n "$GATEWAY_TS_IP" ]; then
         line "→ re-asserting exit-node after restart"
-        sudo -n tailscale up --reset --ssh=true --accept-dns=false \
+        sudo -n tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true \
              --exit-node="$GATEWAY_TS_IP" --exit-node-allow-lan-access=true \
              >> "$LOG_FILE" 2>&1 \
           && ok "tailscale exit-node re-asserted for $GATEWAY_TS_IP" \
