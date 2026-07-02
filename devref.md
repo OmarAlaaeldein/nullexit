@@ -56,12 +56,12 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `toggle.sh` | ~900 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
 | `setup.sh` | ~392 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
 | `docker-compose.yml` | ~160 | Service definitions for all 5 containers. |
-| `routing-fix.sh` | ~175 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
+| `scripts/routing-fix.sh` | ~175 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
 | `post-rules.txt` | ~16 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
-| `socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
-| `dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
-| `sync-rules.py` | ~560 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
-| **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`sync-rules.py`. See README §6.** |
+| `scripts/socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
+| `scripts/dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
+| `scripts/sync-rules.py` | ~560 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
+| **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`scripts/sync-rules.py`. See README §6.** |
 | `recover.sh` | ~280 | Nuclear recovery script. Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
 | `black_list.txt` | ~70 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
 | `white_list.txt` | ~120 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
@@ -78,7 +78,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 ### START Path (gateway OFF → ON)
 1. **Reset DNS to 1.1.1.1** — Prevents deadlocks during startup
 2. **Disconnect host Tailscale** — `tailscale down` (prevents exit-node routing during container boot)
-3. **Compile DNS rules** — `python3 sync-rules.py`
+3. **Compile DNS rules** — `python3 scripts/sync-rules.py`
 4. **Boot Colima VM** — `colima start --memory 0.6` if not running
 5. **Configure VM swap** — 400MB swap file inside the VM to prevent OOM
 6. **Clean corrupted AdGuard config** — Remove empty `AdGuardHome.yaml`
@@ -152,18 +152,18 @@ To fix this, we use `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0
 Because every mesh device's traffic passes through the `warp` container's network namespace, this namespace serves as the ultimate choke point for network-wide firewall rules.
 
 **Where to Put Rules**
-The right place to add firewall rules is `routing-fix.sh`. It runs a 5-second loop inside the namespace and already handles re-injecting rules that Gluetun resets on reconnect. **Do not use `post-rules.txt` for dynamic rules**, as Gluetun flushes and resets it upon VPN reconnects.
+The right place to add firewall rules is `scripts/routing-fix.sh`. It runs a 5-second loop inside the namespace and already handles re-injecting rules that Gluetun resets on reconnect. **Do not use `post-rules.txt` for dynamic rules**, as Gluetun flushes and resets it upon VPN reconnects.
 
 **The Dual iptables Backend Constraint (CRITICAL)**
 The container runs two simultaneous iptables backends: `iptables` (for the nftables backend used by Gluetun) and `iptables-legacy` (for Tailscale). Every rule **must** be added to both stacks, or it will silently fail for certain traffic. 
 
 **Avoiding Duplication**
-Because `routing-fix.sh` runs in a loop, you must always check for a rule's existence with `-C` before appending with `-A`. Otherwise, your rules will duplicate every 5 seconds.
+Because `scripts/routing-fix.sh` runs in a loop, you must always check for a rule's existence with `-C` before appending with `-A`. Otherwise, your rules will duplicate every 5 seconds.
 
 **Per-Device Identification & Filtering**
 Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the `src` IP in the `FORWARD` chain. This is how you identify devices for filtering.
 * **Domain-level:** AdGuard Home (port 3000, credentials `admin/nullexit`) provides a REST API that supports per-client blocking rules based on their Tailscale IP.
-* **IP-level:** Use `iptables` in `routing-fix.sh` (e.g., `iptables -I FORWARD -s 100.x.x.x -d <blocked_ip> -j DROP`).
+* **IP-level:** Use `iptables` in `scripts/routing-fix.sh` (e.g., `iptables -I FORWARD -s 100.x.x.x -d <blocked_ip> -j DROP`).
 * **Country-level:** Add `ipset` to the `routing-fix` apk install step in `docker-compose.yml`, and load CIDR ranges from `ipdeny.com` into an ipset, then block that set in the `FORWARD` chain.
 
 ## 6. macOS Quirks to Remember
@@ -245,12 +245,12 @@ This section documents issues encountered during development, their status, and 
 
 **Root Cause:** `docker-compose.yml` included `FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10`. Gluetun created a strict routing rule (`ip rule add to 100.64.0.0/10 lookup 199`, priority 99) that forced all Tailscale CGNAT traffic to bypass the VPN via the Docker bridge. Return packets were sent to the macOS host instead of back through `tailscale0`.
 
-**Fix:** Removed `FIREWALL_OUTBOUND_SUBNETS` entirely. `routing-fix.sh` now injects `lookup 52`, and return packets correctly flow back into `tailscale0`. The SOCKS5 proxy was repurposed as a bulletproof failover.
+**Fix:** Removed `FIREWALL_OUTBOUND_SUBNETS` entirely. `scripts/routing-fix.sh` now injects `lookup 52`, and return packets correctly flow back into `tailscale0`. The SOCKS5 proxy was repurposed as a bulletproof failover.
 
 ### 9.2 Gluetun Resets nftables FORWARD Rules
 **Symptom:** FORWARD RELATED,ESTABLISHED rule disappears after Gluetun health check.
 
-**Fix:** `routing-fix.sh` re-adds to both iptables backends every 5 seconds. Legacy backend (policy ACCEPT) acts as safety net.
+**Fix:** `scripts/routing-fix.sh` re-adds to both iptables backends every 5 seconds. Legacy backend (policy ACCEPT) acts as safety net.
 
 ### 9.3 docker compose exec `\r` Injection
 **Fix:** All `docker compose exec` output piped through `tr -d '\r'`.
@@ -277,7 +277,7 @@ This section documents issues encountered during development, their status, and 
 ### 9.7 Missing iptables in routing-fix Container
 **Root Cause:** `alpine:3.20` does not have iptables installed. Commands failed silently with `2>/dev/null || true`.
 
-**Fix:** Updated `docker-compose.yml` to `apk add --no-cache iptables iproute2` before `routing-fix.sh`.
+**Fix:** Updated `docker-compose.yml` to `apk add --no-cache iptables iproute2` before `scripts/routing-fix.sh`.
 
 ### 9.8 DOCKER_GW Variable Parsing Bug
 **Root Cause:** `ip route show default` printed two lines; `awk '{print $3}'` picked up both, causing route commands to fail.
@@ -299,7 +299,7 @@ This section documents issues encountered during development, their status, and 
 
 ### 9.11 Logging Architecture
 For debugging, logs are strictly segmented based on the component's lifecycle:
-- **`output.log` (Host-side):** Contains all standard error (`stderr`) and verbose output from the host scripts (`toggle.sh`, `recover.sh`, `setup.sh`). Since the `rule-compiler` container is ephemeral and deleted after running, its logs (and any Python errors from `sync-rules.py`) are extracted and appended to this file before deletion.
+- **`output.log` (Host-side):** Contains all standard error (`stderr`) and verbose output from the host scripts (`toggle.sh`, `recover.sh`, `setup.sh`). Since the `rule-compiler` container is ephemeral and deleted after running, its logs (and any Python errors from `scripts/sync-rules.py`) are extracted and appended to this file before deletion.
 - **`docker logs <container>` (Guest-side):** The persistent containers (`warp`, `tailscale`, `routing-fix`, `adguardhome`, `socks-proxy`) use the Docker `json-file` logging driver with a strict `max-size` (1m-10m) to prevent VM disk exhaustion. Use standard `docker logs` to view them.
 
 ### 9.12 Chrome Remote Desktop Connection Failures
@@ -346,11 +346,11 @@ These bugs and edge cases were discovered and resolved during development.
 - **socat** forwards raw bytes — it does not prepend the 2-byte length prefix that DNS-over-TCP requires. AdGuard parses the stream incorrectly and returns garbage.
 - **dnsmasq** tries UDP first to reach the upstream (`127.0.0.1#5354`), but Colima's SSH tunnel only forwards TCP. With a single upstream server, dnsmasq doesn't fall back to TCP even with `--timeout=1`.
 
-**Solution:** Replaced both with a **Python DNS proxy** (`dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
+**Solution:** Replaced both with a **Python DNS proxy** (`scripts/dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
 
 ### 10.2 Exit Node Routing Conflict & The SOCKS5 Failover
 
-**Problem:** For days, Tailscale's exit node refused to return traffic back to the client (`rx 0`), leading to the assumption that Tailscale's userspace forwarding was bypassing `iptables` and ignoring the WARP `tun0` interface. In a desperate attempt to fix this, a **SOCKS5 proxy** (`socks5-proxy.py`) was introduced as a replacement.
+**Problem:** For days, Tailscale's exit node refused to return traffic back to the client (`rx 0`), leading to the assumption that Tailscale's userspace forwarding was bypassing `iptables` and ignoring the WARP `tun0` interface. In a desperate attempt to fix this, a **SOCKS5 proxy** (`scripts/socks5-proxy.py`) was introduced as a replacement.
 
 **The Real Root Cause:** Tailscale's userspace forwarding was *not* the problem. The issue was an environment variable in Gluetun (`FIREWALL_OUTBOUND_SUBNETS=100.64.0.0/10`) that instructed the VPN container to hijack all Tailscale CGNAT traffic and forcibly route it out the unencrypted Docker bridge (`eth0`). This blackholed all return packets back to the client.
 
@@ -408,7 +408,7 @@ This extracts the actual subnet and gateway directly from the routing table, wor
 
 ### 10.8 SOCKS5 Proxy Threading Race Condition
 
-**Problem:** The `forward` function in `socks5-proxy.py` called `select.select([src, dst], [], [])` which raised `ValueError: file descriptor cannot be a negative integer (-1)` when one thread closed a socket while the other thread was selecting on it.
+**Problem:** The `forward` function in `scripts/socks5-proxy.py` called `select.select([src, dst], [], [])` which raised `ValueError: file descriptor cannot be a negative integer (-1)` when one thread closed a socket while the other thread was selecting on it.
 
 **Fix:** Added `ValueError` exception handling around `select.select()` and `recv()` calls. When a file descriptor becomes negative, the thread breaks out of the forwarding loop cleanly instead of crashing.
 
@@ -507,9 +507,9 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 | Finding | Status | Evidence |
 |---------|--------|----------|
-| Table 199 CGNAT route hijacks exit node return traffic | **Fixed** | Changed `lookup 199` to `lookup 52` in `routing-fix.sh`. Return packets now route via tailscale0. |
+| Table 199 CGNAT route hijacks exit node return traffic | **Fixed** | Changed `lookup 199` to `lookup 52` in `scripts/routing-fix.sh`. Return packets now route via tailscale0. |
 | FORWARD RELATED,ESTABLISHED missing | **Fixed** | Installed `iptables` via apk in `docker-compose.yml`. Rule now injects successfully. |
-| DOCKER_GW variable parsing error | **Fixed** | Added `head -1` in `routing-fix.sh`. |
+| DOCKER_GW variable parsing error | **Fixed** | Added `head -1` in `scripts/routing-fix.sh`. |
 | `FIREWALL_OUTBOUND_SUBNETS` was the root cause | **Fixed** | Removed from `docker-compose.yml`. Gluetun no longer hijacks CGNAT routing. |
 | Host tailscaled error state from aggressive `tailscale down` | **Mitigated** | Toggle script now detects and auto-restarts. |
 
@@ -521,7 +521,7 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 ### 10.15 Linux Native Wi-Fi Bouncing
 
-**Problem:** The generated `recover-linux.sh` incorrectly retained the macOS `networksetup` commands, which would crash and fail to bounce Wi-Fi on Linux hosts.
+**Problem:** The generated `scripts/recover-linux.sh` incorrectly retained the macOS `networksetup` commands, which would crash and fail to bounce Wi-Fi on Linux hosts.
 
 **Fix:** Swapped the macOS logic for native Linux commands. The script now attempts `nmcli radio wifi off/on` first, and gracefully falls back to `ip link set wl... down/up` if NetworkManager is unavailable.
 
@@ -535,14 +535,14 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 ### 10.18 Routing Fix: 5-Second Polling vs Netlink Socket
 
-**Decision:** Instead of building a complex Netlink socket listener (`ip monitor`) to react instantly to iptables and routing flushes from Gluetun, we retained the 5-second `sleep` loop in `routing-fix.sh`. 
+**Decision:** Instead of building a complex Netlink socket listener (`ip monitor`) to react instantly to iptables and routing flushes from Gluetun, we retained the 5-second `sleep` loop in `scripts/routing-fix.sh`. 
 - **Reasoning:** Building a netlink listener in pure bash on Alpine is incredibly brittle and complex (especially for iptables events). The 5-second polling loop is bulletproof. The only trade-off is a potential 1-4 second stutter if Gluetun reconnects, which was deemed an acceptable edge case for absolute reliability.
 
-### 10.19 Cache Poisoning and URL Rot in sync-rules.py
+### 10.19 Cache Poisoning and URL Rot in scripts/sync-rules.py
 
 **Problem:** If a remote blocklist URL went permanently offline (404 Not Found), the Python `urllib` request would return the 404 HTML string. The script would aggressively regex-parse this HTML, find no domains, and overwrite the healthy local cache with a 0-domain file. This effectively disabled ad-blocking until the URL was fixed.
 
-**Fix:** Implemented a defensive programming sanity check in `sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 10 (and 1 for IP feeds). If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, raises a `ValueError`, and keeps the previous day's healthy cache intact.
+**Fix:** Implemented a defensive programming sanity check in `scripts/sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 10 (and 1 for IP feeds). If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, raises a `ValueError`, and keeps the previous day's healthy cache intact.
 
 ### 10.20 Cellular Networks & PMTUD Blackholes (The 1280 Byte Limit)
 
@@ -603,7 +603,7 @@ This punches a tiny hole straight through the paradox, letting the Mac's WARP pa
 
 **Problem:** AdGuard Home does not perform cross-list deduplication in memory. When it loads its own native subscription filters (e.g., `AdGuard DNS filter`) alongside our massive `compiled_rules.txt`, overlapping rules are loaded twice, wasting significant RAM in the Colima VM. The UI would show ~500k rules, representing the sum of all lists rather than unique domains.
 
-**Fix:** Updated `sync-rules.py` to intelligently cross-reference AdGuard's configuration and deduplicate our list against it.
+**Fix:** Updated `scripts/sync-rules.py` to intelligently cross-reference AdGuard's configuration and deduplicate our list against it.
 1. The script now reads `adguard/conf/AdGuardHome.yaml` to dynamically fetch the exact URLs of any enabled native AdGuard filters.
 2. The parsing engine was upgraded to normalize basic AdGuard syntax (`||domain^`) back into raw base domains during the build process.
 3. The script subtracts the native AdGuard domains from our custom blocklist *before* compiling, immediately purging ~83,000 completely redundant rules. 
@@ -615,11 +615,11 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 
 **Problem:** DNS sinkholing cannot stop malware or botnets that bypass DNS entirely by hardcoding direct IP addresses (a common technique for C2 communication). These connections pass straight through AdGuard unseen.
 
-**Fix:** Added a second compilation pipeline to `sync-rules.py` that runs on every startup alongside the DNS pipeline.
+**Fix:** Added a second compilation pipeline to `scripts/sync-rules.py` that runs on every startup alongside the DNS pipeline.
 1. The compiler concurrently fetches four curated threat-intelligence feeds: **Feodo Tracker** (abuse.ch — botnet C2 IPs), **Spamhaus DROP** (IPs allocated to criminal organizations), **Emerging Threats** (Proofpoint — active C2 and scanners), and **CINS** (active brute-force sources).
 2. All entries are normalized via Python's `ipaddress` module. Any IP or CIDR that overlaps with RFC1918 private ranges, loopback, link-local, or the Tailscale CGNAT range (`100.64.0.0/10`) is stripped to prevent accidentally locking users out of their own LAN or mesh.
 3. The cleaned list (16,721 unique IPs/CIDRs) is written as an `ipset restore` file using an **atomic swap pattern**: `create_new → populate → swap with live → destroy_new`. This guarantees the live `block_malicious` ipset is never empty during a reload.
-4. `routing-fix.sh` watches the file's mtime every 5 seconds. On change it runs `ipset restore` and idempotently re-injects `FORWARD DROP` rules for both `src` and `dst` into both iptables backends (nftables + legacy).
+4. `scripts/routing-fix.sh` watches the file's mtime every 5 seconds. On change it runs `ipset restore` and idempotently re-injects `FORWARD DROP` rules for both `src` and `dst` into both iptables backends (nftables + legacy).
 5. `docker-compose.yml` mounts `adguard/work/userfilters/` into `routing-fix` as `/userfilters:ro` and adds `rule-compiler: service_completed_successfully` to its `depends_on`, eliminating the race condition where routing-fix could start before the file existed.
 
 **Memory cost:** The entire 16,721-entry ipset costs only ~1.6 MiB of kernel memory — negligible in the 600MB VM budget.
@@ -645,7 +645,7 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 
 ### 10.28 Unlocking Mode-Locked Output Files Without `chmod`
 
-**Context:** The nullexit project has a strict project-wide policy of `no chmod from scripts` (see README §6). This rule exists because every prior `chmod 0444` (post-write tamper-proof lock) and `chmod 000` (post-toggle `.env` lock) call from `sync-rules.py` / `toggle.sh` could leave a file permanently unreadable on disk if the script exited early, was killed mid-flight, or simply set a restrictive mode without ever being re-flipped. We've stripped every `chmod` from the codebase. But files **written by older versions of those scripts** are still on disk in those restrictive modes (`0444` for `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/<id>.txt`; `000` for `.env` after end-of-toggle lock). Re-running `toggle.sh` or `sync-rules.py` against those leftovers hits `PermissionError: [Errno 13] Permission denied` immediately.
+**Context:** The nullexit project has a strict project-wide policy of `no chmod from scripts` (see README §6). This rule exists because every prior `chmod 0444` (post-write tamper-proof lock) and `chmod 000` (post-toggle `.env` lock) call from `scripts/sync-rules.py` / `toggle.sh` could leave a file permanently unreadable on disk if the script exited early, was killed mid-flight, or simply set a restrictive mode without ever being re-flipped. We've stripped every `chmod` from the codebase. But files **written by older versions of those scripts** are still on disk in those restrictive modes (`0444` for `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/<id>.txt`; `000` for `.env` after end-of-toggle lock). Re-running `toggle.sh` or `scripts/sync-rules.py` against those leftovers hits `PermissionError: [Errno 13] Permission denied` immediately.
 
 **Problem:** You (the owner) cannot `cat`, `cp`, `rm`, `> redirect`, or any normal POSIX write against a `mode=000` file even though you own it — the basic mode bits block ALL access for owner, group, and other. The script does not call `chmod` and you want a permanent fix that never relies on a chmod from any future run either.
 
@@ -661,11 +661,11 @@ ls -la <FILE>          # mode is now 0644
 ```
 The old `mode=000` inode is unlinked by `mv`; the new `mode=0644` inode (created by base64-decode via the calling user's umask) takes the path. No chmod ever called. The parent directory just needs to be writable by you (it always is, since you own it).
 
-**Flavor B — locked file is mode `0444` (you can READ but cannot WRITE; `sync-rules.py` needs to re-write):**
+**Flavor B — locked file is mode `0444` (you can READ but cannot WRITE; `scripts/sync-rules.py` needs to re-write):**
 You own the file and can read it, you just cannot truncate/overwrite it. The simplest path is to rename it aside and let the writer create a fresh inode from scratch (which gets the umask-default `0644`):
 ```bash
 mv <FILE> /tmp/old.<FILE>.$$
-python3 sync-rules.py    # now writes <FILE> cleanly at mode 0644
+python3 scripts/sync-rules.py    # now writes <FILE> cleanly at mode 0644
 ```
 Or apply Flavor A if you'd prefer to preserve the contents while resetting the mode.
 
@@ -680,7 +680,7 @@ Or apply Flavor A if you'd prefer to preserve the contents while resetting the m
   - After:  `-rw-r--r--@ 1 omar  staff  899 Jul  1 20:39 .env`
   - `docker compose config` immediately picked up `TS_AUTHKEY` + `WIREGUARD_PRIVATE_KEY` substitution.
 - `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/1782645604.txt` were `mode=0444`: Flavor B (`mv`-aside) unblocked all three.
-  - sync-rules.py then ran clean: 279587 block rules + 171 allow rules + 16710 IP entries compiled; new files came out at `0644`.
+  - scripts/sync-rules.py then ran clean: 279587 block rules + 171 allow rules + 16710 IP entries compiled; new files came out at `0644`.
 - `toggle.sh` then went end-to-end in 48s (warp / routing-fix / adguardhome / socks-proxy / tailscale all healthy, gateway mesh-joined, DNS hijack verified single-server).
 
 **When this trick is appropriate vs. inappropriate:**
