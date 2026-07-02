@@ -53,7 +53,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `toggle.sh` | 1143 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
+| `toggle.sh` | ~1211 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
 | `setup.sh` | 406 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
 | `docker-compose.yml` | 194 | Service definitions for all 5 containers. |
 | `scripts/routing-fix.sh` | 201 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
@@ -92,7 +92,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 7. **Start containers** — `docker compose up -d`
 8. **Wait for gateway Tailscale** — Poll `tailscale status` for "offers exit node" (up to 60s, abort at 40 consecutive NoState)
 9. **Resolve gateway IP** — From `ADGUARD_IP.txt` or `docker compose exec tailscale tailscale ip -4`
-10. **Connect host to mesh** — Verify `tailscaled` is running (auto-start if needed), then `tailscale up --reset --ssh=true --accept-dns=false --exit-node=`
+10. **Connect host to mesh** — Verify `tailscaled` is running (auto-start if needed), then `tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node=` (`--accept-routes=true` must be explicit — `--reset` reverts it to `false` otherwise, silently preventing the default route from switching to `utun*`)
 11. **Pre-flight checks** — [1/3] `tailscale ping` gateway, [2/3] `dig +tcp` AdGuard DNS, [3/3] WARP container internet
 12. **If all pass** → Set exit node + hijack DNS to gateway IP (single server, no fallback)
 13. **If any fail** → Enable SOCKS5 proxy + local DNS proxy as fallback
@@ -928,11 +928,15 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
    - **Mechanism:** To avoid collisions with the host's campus network, Colima's default bridge (`docker.bip`) is moved (e.g. to `10.200.0.1/24`). However, because `172.17.0.0/16` is now free inside the VM, Docker Compose's IPAM dynamically takes it over for the project's custom network (`nullexit_default`). Because the containers receive IPs on `172.17.0.0/16`, the host Mac cannot send local peer discovery packets (e.g., Tailscale `magicsock` packets on `172.17.0.2:41641`) directly. The host routing table sends them out `en0` to the physical Wi-Fi, returning `host is down` or `no route to host`.
    - **Fix:** Explicitly configure a custom default network subnet `10.200.1.0/24` in `docker-compose.yml` to prevent Docker Compose from ever reclaiming the conflicting `172.17/172.18` ranges.
 
+> See also §10.23 (The Hotspot Paradox) for the related infinite loop that occurs when the physical upstream router is also a Tailscale exit-node client.
+
 ---
 
 ## 11. Recent Updates
 
 Reflects the current branch's state. Each entry one line + commit hash; read the commit message for detail.
+
+- **July 2, 2026 — `8c5fae1` + `181e1e1` (feat(routing): resolve recursive host-VM tunnel loop & Docker subnet collision)** — Two infinite routing loops fixed. (1) Host-VM tunnel loop: WARP endpoint bypass routes now injected via physical gateway IP (not interface scoping) to avoid ARP failures under default-route redirection; `setup_exit_node_routing` added to manually force the host default route to `utun*` since standalone `tailscaled` CLI on macOS does not update the routing table automatically. (2) Docker Compose subnet takeover: `docker-compose.yml` now locks the default project network to `10.200.1.0/24` to prevent IPAM reclaiming `172.17/172.18` after `docker.bip` is moved. `--accept-routes=true` added explicitly to all `tailscale up --reset` calls. Documented in §10.31.
 
 - **July 1, 2026 — `c5b92c0` (refactor: personal-leak cleanup)** — eliminated every residual personal-username leak across source + config files. The launchd `com.nullexit.wake-recovery.plist` now uses `WorkingDirectory` + a relative program arg with the `__NULLEXIT_HOME__` sentinel; the install recipe in §10.29 gains a single `sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|"` step right after the `cp`. 8 `devref.md` prose sites genericized to `~/.colima/...`, `~/Library/LaunchAgents/...`, `$USER` for sample output, `<USER>` for the sudoers example.
 - **July 1, 2026 — `a5e2a5a` (refactor: script-relative paths)** — replaced 6 hardcoded `/Users/<user>/<anywhere>/nullexit/...` source-code sites (former per-user install-location literals) with script-relative resolution. `recover.sh` injects `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` near the top and uses it for the post-wake warn (l.321) and the broken-for-60s hint echo (l.446). `scripts/watcher.sh` uses the same pattern; `RECOVER="$SCRIPT_DIR/../recover.sh"` resolves without launching-path dependency.

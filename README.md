@@ -482,7 +482,11 @@ To prevent this, you can configure the TCP Maximum Segment Size (MSS) clamp in y
 > 
 > A single web request physically travels through the air across the room *twice* just to load a page! Because this architecture stacks multiple nested NATs and MTU bottlenecks, Tailscale might fail to P2P hole-punch and fall back to a high-latency DERP relay. But thanks to the centralized `1120` MSS clamp inside the gateway, even a packet making this chaotic journey will seamlessly shrink to fit without ever fragmenting or stalling!
 
-## 14. The Infinite Recursive Routing Loop (Hotspot Paradox)
+## 14. Infinite Routing Loops
+
+Two distinct infinite routing loops are possible in this architecture. Both have been mitigated in the gateway scripts.
+
+### Loop 1 — The Hotspot Paradox
 **DANGER: Never use the Gateway as an Exit Node for the router that provides the Gateway with internet.**
 
 If PC-1 is hosting the Exit Node and getting its Wi-Fi connection from a Mobile Hotspot running on PC-2, **you MUST disable "Use Exit Node" in PC-2's Tailscale client.**
@@ -496,10 +500,10 @@ If you enable "Use Exit Node" on the physical upstream router (PC-2), you create
 The packet gets trapped in an infinite ping-pong match, wrapping itself in endless layers of encryption until the Wi-Fi bandwidth saturates and the network collapses instantly. PC-2 *must* be allowed to route its traffic directly to the physical cellular internet to allow PC-1's packets to escape the local network.
 
 **Advanced Workaround (The Dynamic Static Route):**
-If you *must* keep "Use Exit Node" enabled on PC-2 (e.g. you want the Windows machine to also be ad-blocked and encrypted), you can forcefully punch a hole through the paradox by injecting a permanent static route on PC-2 for the Cloudflare WARP endpoints. By binding the route to the physical Wi-Fi adapter's Interface Index (IF), it becomes a permanent, roaming-aware bypass.
+If you *must* keep "Use Exit Node" enabled on PC-2, inject a static route on PC-2 for the Cloudflare WARP endpoints so those packets bypass Tailscale and escape directly to the internet.
 
 On Windows (Admin Command Prompt):
-1. Run `route print` and find the "Interface List" at the top. Note the Interface number (e.g., `15`) for your upstream internet adapter.
+1. Run `route print` and note the Interface number for your upstream adapter (e.g., `15`).
 2. Run `route -p add 162.159.192.1 mask 255.255.255.255 0.0.0.0 IF 15`
 3. Run `route -p add 162.159.193.1 mask 255.255.255.255 0.0.0.0 IF 15`
 
@@ -509,15 +513,34 @@ ip route add 162.159.192.1 dev wlan0
 ip route add 162.159.193.1 dev wlan0
 ```
 
-On macOS (Root Terminal):
+On macOS — route via your physical gateway IP (get it with `route get default | grep gateway`):
 ```bash
-route add -host 162.159.192.1 -interface en0
-route add -host 162.159.193.1 -interface en0
+# Replace 192.168.1.1 with your actual physical gateway IP
+sudo route add -host 162.159.192.1 192.168.1.1
+sudo route add -host 162.159.193.1 192.168.1.1
 ```
+
+> [!IMPORTANT]
+> On macOS, always route via the **gateway IP**, not via the interface (`-interface en0`). Routing by interface requires ARP resolution for the remote Cloudflare IP on the local link, which always fails since `162.159.192.1` is not a local device. Routing by gateway IP sends packets directly to your router's MAC address and works correctly.
 
 *(Note: If the upstream router is an iPhone or Android device, you cannot inject static routes without jailbreak/root. You must simply disable "Use Exit Node" in the mobile Tailscale app).*
 
-This forces the upstream router's kernel to bypass Tailscale entirely for Cloudflare WARP packets, allowing them to escape to the internet while keeping all other traffic securely inside the Exit Node.
+### Loop 2 — The Recursive Host-VM Tunnel Loop
+
+This loop occurs on the **host Mac itself** when the exit node is active. It is automatically resolved by `toggle.sh`.
+
+**How it happens:**
+1. The host Mac's default route points to the Tailscale exit node (`utun*`).
+2. The exit node container needs to send encrypted WARP packets to Cloudflare (`162.159.192.1`) out through the VM's NAT to the internet.
+3. Those packets arrive at the host Mac and are evaluated against the routing table. The default route is `utun*` — so the host routes the WARP packets **right back into the Tailscale tunnel**.
+4. The packets loop forever between the host and the container, saturating bandwidth and blacking out all internet connectivity.
+
+**How `toggle.sh` resolves it:**
+1. Before changing the default route, it resolves the physical gateway IP (e.g. `172.17.0.1`).
+2. It injects static host-bypass routes for the WARP endpoints **via that gateway IP**, anchoring them to the physical router before the default route changes.
+3. It then manually redirects the host's default gateway to `utun*` via `setup_exit_node_routing`.
+
+This ensures WARP packets escape to Cloudflare while all other traffic flows through the encrypted exit node.
 
 ## 15. Tailscale P2P vs. DERP Relays (The Double NAT Dilemma)
 
@@ -545,6 +568,7 @@ This project is licensed under the GNU Affero General Public License version 3. 
 
 Cross-references: `devref.md` is the source of truth for full architecture history; this changelog is a user-facing summary of user-visible features.
 
+- **July 2, 2026** — Two infinite routing loops resolved (`devref.md §10.31`): (1) Recursive Host-VM Tunnel Loop — `toggle.sh` now injects WARP endpoint bypass routes via the physical gateway IP and manually forces the host default route to `utun*`; (2) Docker Compose Subnet Takeover — `docker-compose.yml` locks the project network to `10.200.1.0/24`. `--accept-routes=true` now passed explicitly on all `tailscale up --reset` calls.
 - **July 2, 2026** — Auto-Recovery Daemon (post-wake + post-roam) now documented in §6.4: install the launchd LaunchAgent (`scripts/watcher.sh` + `launchd/com.nullexit.wake-recovery.plist`) so the gateway self-heals after sleep/wake + Wi-Fi roam. See `devref.md §10.29` for the deep dive.
 - **July 2, 2026** — Linux cousin scripts (`scripts/toggle-linux.sh`, `scripts/recover-linux.sh`, `scripts/setup-linux.sh`) now documented in §6 (Linux sub-section). Same `nmcli` / `ip link` semantics as macOS's `networksetup` / Wi-Fi bouncing — but flat-out, no Dock sleeps, no menu bar.
 - **July 1, 2026** — `recover.sh --post-wake` (non-destructive recovery) ships in `recover.sh`; wired up to the watcher daemon in step 1 above. Triggered automatically on every sleep/wake or `scutil n.watch` event.
