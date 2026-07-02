@@ -21,8 +21,14 @@ jobs:
 
       - name: Lint Python Scripts
         run: |
-          # Check syntax correctness for all Python scripts in the repo
-          python3 -m py_compile *.py scripts/*.py
+          # Check syntax correctness for all Python scripts in the repo.
+          # All .py files now live in scripts/ (the migration to scripts/ moved
+          # them out of root). Listing scripts/*.py alone — without the
+          # `*.py scripts/*.py` form — is robust across shell-glob behaviors
+          # (CI runners that have nullglob on would silently drop an empty
+          # root glob and pass, but bash with default nullglob off passes the
+          # literal `*.py` to py_compile which then errors with FileNotFoundError).
+          python3 -m py_compile scripts/*.py
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
