@@ -117,7 +117,7 @@ if ($isGatewayActive) {
     Get-Command python -ErrorAction SilentlyContinue >$null
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Compiling DNS blocklists..." -ForegroundColor Cyan
-        python sync-rules.py
+        python scripts/sync-rules.py
     } else {
         Write-Host "Python not found in PATH. Skipping rule pre-compilation." -ForegroundColor Yellow
     }

@@ -160,7 +160,7 @@ add_ip_blocklist() {
 # Start background block logger (DNS + IP)
 if ! pgrep -f "logger.py" >/dev/null; then
   echo "routing-fix: Starting background block logger..."
-  python3 /app/logger.py &
+  python3 /app/scripts/logger.py &
 fi
 
 add_country_block

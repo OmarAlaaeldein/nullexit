@@ -22,7 +22,7 @@ jobs:
       - name: Lint Python Scripts
         run: |
           # Check syntax correctness for all Python scripts in the repo
-          python3 -m py_compile *.py
+          python3 -m py_compile *.py scripts/*.py
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -30,7 +30,7 @@ jobs:
       - name: Lint Shell Scripts
         run: |
           # Lint shell scripts to catch actual code-breaking errors, ignoring styling/formatting recommendations
-          shellcheck --severity=error *.sh
+          shellcheck --severity=error *.sh scripts/*.sh
 
       - name: Validate Docker Compose Configuration
         run: |
