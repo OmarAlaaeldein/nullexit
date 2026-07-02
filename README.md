@@ -1,5 +1,7 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
+> **Last updated:** July 2, 2026
+
 **nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel. It acts as a "Personal Great Firewall" for your entire mesh network, featuring built-in, kernel-level IP/country blocking (`ipset`/`iptables`) and network-wide DNS ad-blocking (AdGuard Home).
 
 ## 1. Prerequisites
@@ -136,21 +138,35 @@ The compiler safely strips out any private/LAN/Tailscale ranges and compiles the
 
 This operates atomically at the kernel level and requires absolutely zero configuration on your part.
 
-## 6. Quick Toggle Scripts (macOS & Windows)
+## 6. Quick Toggle Scripts (macOS, Linux, Windows)
 
-For convenience (e.g., temporarily disabling the gateway for gaming), this repository includes native quick-toggle scripts for both operating systems. 
+For convenience (e.g., temporarily disabling the gateway for gaming), this repository includes native quick-toggle entry points for all three target platforms.
 
-- **macOS:** The toggle logic lives in `toggle.sh`, a robust bash script with process timeouts, ordered VPN teardown, DNS recovery, and all the safeguards described in Section 9. You can launch it from a native macOS Application by compiling the provided `Toggle-Gateway.applescript` (which simply opens a Terminal window and runs `toggle.sh`):
-  ```bash
-  osacompile -o "Toggle Gateway.app" Toggle-Gateway.applescript
-  ```
-  This creates a self-contained app in the current directory. You can then right-click it and choose "Make Alias", and drag that alias to your Desktop for quick access. This ensures it intelligently toggles the **nullexit** gateway and the Colima VM on or off from the correct folder.
-  
-  **Automatic DNS Hijacking:** The toggle script automatically resolves your gateway's Tailscale IP by querying the container (`docker compose exec tailscale tailscale ip -4`) after it joins the mesh. It then overrides your host DNS servers with that IP so that AdGuard can intercept requests, block ads, and hand off any remaining legitimate traffic securely through the Tailscale mesh, which then routes it out through the Cloudflare WARP tunnel. No manual configuration file is needed.
-  
-  *Important Note on Routing:* Because `tailscaled` now runs as a background service, the host's mesh state is already determined before the toggle script runs — there is no need to launch any `.app` or click a menu bar item. When toggling ON, the script first issues `tailscale up --exit-node=` to clear any stale exit-node preference so the host can safely reach the gateway's `100.x.y.z` IP via plain Tailscale (otherwise we'd be routing the DNS lookup itself through a likely-dead exit node), and only then hijacks Wi-Fi DNS to the AdGuard container — **exclusively**, with no `1.1.1.1` fallback in the resolver list. Because the standalone `tailscaled` daemon briefly clobbers local DNS during the exit-node transition, the script calls `force_dns_to_gateway` once more at the very tail of the ENABLE branch and verifies via `networksetup -getdnsservers` that the host terminates pointing only at the AdGuard IP. When toggling OFF, the script reverts host DNS to `1.1.1.1` before halting containers, so a hung or failed stop can never leave you with no DNS.
-  
-- **Windows:** Simply double-click the `Toggle-Gateway.bat` script included in the root of the project. It natively hooks into Docker Desktop to cleanly toggle the **nullexit** gateway state without requiring manual command line input.
+### macOS
+
+The toggle logic lives in `toggle.sh`, a robust bash script with process timeouts, ordered VPN teardown, DNS recovery, and all the safeguards described in Section 9. You can launch it from a native macOS Application by compiling the provided `Toggle-Gateway.applescript` (which simply opens a Terminal window and runs `toggle.sh`):
+```bash
+osacompile -o "Toggle Gateway.app" Toggle-Gateway.applescript
+```
+This creates a self-contained app in the current directory. You can then right-click it and choose "Make Alias", and drag that alias to your Desktop for quick access. This ensures it intelligently toggles the **nullexit** gateway and the Colima VM on or off from the correct folder.
+
+**Automatic DNS Hijacking:** The toggle script automatically resolves your gateway's Tailscale IP by querying the container (`docker compose exec tailscale tailscale ip -4`) after it joins the mesh. It then overrides your host DNS servers with that IP so that AdGuard can intercept requests, block ads, and hand off any remaining legitimate traffic securely through the Tailscale mesh, which then routes it out through the Cloudflare WARP tunnel. No manual configuration file is needed.
+
+*Important Note on Routing:* Because `tailscaled` now runs as a background service, the host's mesh state is already determined before the toggle script runs — there is no need to launch any `.app` or click a menu bar item. When toggling ON, the script first issues `tailscale up --exit-node=` to clear any stale exit-node preference so the host can safely reach the gateway's `100.x.y.z` IP via plain Tailscale (otherwise we'd be routing the DNS lookup itself through a likely-dead exit node), and only then hijacks Wi-Fi DNS to the AdGuard container — **exclusively**, with no `1.1.1.1` fallback in the resolver list. Because the standalone `tailscaled` daemon briefly clobbers local DNS during the exit-node transition, the script calls `force_dns_to_gateway` once more at the very tail of the ENABLE branch and verifies via `networksetup -getdnsservers` that the host terminates pointing only at the AdGuard IP. When toggling OFF, the script reverts host DNS to `1.1.1.1` before halting containers, so a hung or failed stop can never leave you with no DNS.
+
+### Linux
+
+The Linux cousins of the macOS scripts live in `scripts/` next to the rest of the helper scripts. Run from any directory:
+
+```bash
+# Default Linux toggle (analogous to ./toggle.sh on macOS):
+./scripts/toggle-linux.sh
+
+# The companion recovery tool (analogous to ./recover.sh):
+./scripts/recover-linux.sh
+```
+
+Both use `nmcli radio wifi off/on` (with `ip link set <iface> down/up` fallback) instead of macOS's `networksetup -setairportpower`, and dy
 
 ### System Sleep Prevention (macOS)
 
@@ -524,3 +540,13 @@ This happens because almost all mobile carriers use Carrier-Grade NAT (CGNAT), w
 ## 17. License
 
 This project is licensed under the GNU Affero General Public License version 3. See the [LICENSE](./LICENSE) file for details.
+
+## 18. Changelog
+
+Cross-references: `devref.md` is the source of truth for full architecture history; this changelog is a user-facing summary of user-visible features.
+
+- **July 2, 2026** — Auto-Recovery Daemon (post-wake + post-roam) now documented in §6.4: install the launchd LaunchAgent (`scripts/watcher.sh` + `launchd/com.nullexit.wake-recovery.plist`) so the gateway self-heals after sleep/wake + Wi-Fi roam. See `devref.md §10.29` for the deep dive.
+- **July 2, 2026** — Linux cousin scripts (`scripts/toggle-linux.sh`, `scripts/recover-linux.sh`, `scripts/setup-linux.sh`) now documented in §6 (Linux sub-section). Same `nmcli` / `ip link` semantics as macOS's `networksetup` / Wi-Fi bouncing — but flat-out, no Dock sleeps, no menu bar.
+- **July 1, 2026** — `recover.sh --post-wake` (non-destructive recovery) ships in `recover.sh`; wired up to the watcher daemon in step 1 above. Triggered automatically on every sleep/wake or `scutil n.watch` event.
+- **June 28, 2026** — Repository consolidation: 8 internal-collaborator scripts moved into `scripts/` (commit `f8f8e4e`). The 4 user-facing / orchestrator files (`toggle.sh`, `recover.sh`, `setup.sh`, `docker-compose.yml`) deliberately stayed at repo root for entry-point symmetry.
+- **June 28, 2026** — All hardcoded personal install paths (e.g. `/Users/<you>/<anywhere>/nullexit/...`) removed from runtime code (commits `a5e2a5a`, `c5b92c0`). Both docs and code now use `SCRIPT_DIR` (`recover.sh`) or `__NULLEXIT_HOME__` placeholders (the launchd plist) so the project is portable to any clone location on any user's machine.
