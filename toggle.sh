@@ -12,10 +12,9 @@ echo -e "\n========================================================" >> "$LOG_FI
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] toggle.sh invoked" >> "$LOG_FILE"
 echo "========================================================" >> "$LOG_FILE"
 
-# Unlock .env if it exists so Docker can parse it
-if [ -f ".env" ]; then
-  chmod 600 .env 2>/dev/null || true
-fi
+# (Previously this script chmod 600'd .env at start to "unlock" it for docker compose,
+# and chmod 000'd it on exit. That pattern broke docker compose on macOS/Colima when
+# the umask produced 0600 — the script removed its own ability to read .env before
 
 # Start execution timer
 TOGGLE_START_TIME=$SECONDS
@@ -210,10 +209,6 @@ cleanup_handler() {
       cleanup_network_state
     fi
     
-    # Secure .env file again on exit
-    if [ -f ".env" ]; then
-      chmod 000 .env 2>/dev/null || true
-    fi
     
     if [ "$trigger_type" = "ERR" ]; then
       echo -e "\n=============================================="
@@ -716,7 +711,7 @@ else
   # and avoids unnecessarily wearing out the SSD with proactive background swapping.
   if ! run_with_timeout 15 colima ssh -- grep -q 'swapfile' /proc/swaps >> output.log 2>&1; then
     echo "Configuring 400MB swap file inside the VM to prevent OOM..."
-    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=400 status=none && chmod 600 /swapfile && mkswap /swapfile; fi && swapon /swapfile && sysctl vm.swappiness=10" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
+    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=400 status=none && mkswap /swapfile; fi && swapon /swapfile && sysctl vm.swappiness=10" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
   fi
 
   # 4. Clean up corrupted AdGuardHome configurations
@@ -1117,9 +1112,5 @@ if [ "$START_GATEWAY" = "true" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
-# Secure .env file again on successful exit
-if [ -f ".env" ]; then
-  chmod 000 .env 2>/dev/null || true
-fi
 
 echo -e "\nYou can close this terminal window now."

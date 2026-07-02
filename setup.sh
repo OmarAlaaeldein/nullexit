@@ -164,7 +164,6 @@ if ! command -v wgcf >> output.log 2>&1; then
         curl -sfL \
             "https://github.com/ViRb3/wgcf/releases/download/${WGCF_VERSION}/wgcf_${WGCF_VERSION#v}_linux_${WGCF_ARCH}" \
             -o /usr/local/bin/wgcf
-        chmod +x /usr/local/bin/wgcf
     else
         die "Unsupported OS. Install wgcf manually: https://github.com/ViRb3/wgcf/releases"
     fi
