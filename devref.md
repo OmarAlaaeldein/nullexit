@@ -714,3 +714,145 @@ mv <FILE> /tmp/old.<FILE>.$(date +%s)
 ls -la <FILE>             # mode should be 0644
 <your normal validation command>
 ```
+
+
+### 10.29 Gateway Breakage on Lid Close / Wi-Fi Roam — Post-Wake + Post-Roam Auto-Recovery
+
+**Context / Symptom.** Closing the lid (sleep/wake) OR losing + reconnecting Wi-Fi (e.g. in an elevator, café, or roaming between APs) leaves the gateway in a partly-dead state. Symptoms range from a ~30s window of dead DNS to a permanent outage that only full `recover.sh` or `toggle.sh` fixes. The root cause is that nullexit has **no daemon watching macOS sleep/wake or network-state-change events** — the existing DNS Watcher inside `toggle.sh` only runs in-process and is suspended along with the rest of the user shell on lid close, so the gateway cannot self-heal after either event.
+
+**Diagnosis.** Two distinct failure modes share the same root gap.
+
+* **(A) Lid close → sleep → wake.** `caffeinate -i` (used by `toggle.sh`) blocks *idle* sleep but **does not block forced sleep from lid close**. Closing the lid hard-suspends Colima VM + every container + every Tailscale-quit-shells-except-tailscaled. On wake the VM clock needs ~5-30s to resync via NTP, during which TLS cert validation fails: Cloudflare WARP `162.159.192.1:2408` rejects the handshake → gluetun's healthcheck (`interval: 2s, retries: 15`) eventually flips unhealthy → Docker `unless-stopped` restarts the `warp` container (~30s gap). `mDNSResponder`'s in-memory cache still holds pre-sleep entries (stale A records for tailnet hosts) so the first dozen DNS queries after wake time out. `tailscaled` on the host often keeps its stale DERP relay preference and routes packets through a dead relay for another 30-60s.
+* **(B) Wi-Fi roam / loss in elevators, captive portals.** WARP is a UDP tunnel to Cloudflare's anycast edge. Carrier NATs and captive-portal networks silently invalidate the UDP binding on roam and on hotspot-bound re-association. macOS `networksetup` *should* preserve DNS settings on the same Wi-Fi service across a roam, but most captive-portal networks DHCP-replace DNS to the captive-portal resolver **during the captive-portal dance itself**, before the user has authenticated — so even DNS hijack survives a clean roam and quietly breaks on captive-portal handoff.
+
+**Resolution.** A single **launchd LaunchAgent** (`com.nullexit.wake-recovery`) runs a long-running shell daemon (`scripts/watcher.sh`) that listens for both event sources and, on each fire, executes `bash recover.sh --post-wake` — a *lighter-touch* recovery mode that's the opposite of the existing `--nuclear` semantics: it keeps the gateway live while still refreshing every stale subsystem.
+
+#### Apple Power Management Primer (for the unfamiliar)
+
+macOS exposes several relevant surfaces; the right primitive depends on what you actually need to detect. None of these are obvious and none of them have a standard splash screen in the docs.
+
+* **`caffeinate <flags>`** creates I/O Kit power assertions via `IOPMAssertionCreateWithName`. It does NOT block forced sleep (lid close, low-battery shutdown, sleep timer firing on a per-set Energy Settings policy). Flags:
+  * `-i`  PreventIdleSleep (the only one `toggle.sh` uses; protects against the OS going idle while the user is active — but a clamshell close still hard-puts it to sleep)
+  * `-s`  PreventSystemSleep (only honored on AC power; the user may be on battery)
+  * `-u`  DeclareUserActive (resets the idle timer every 5s by default; equivalent to keeping the cursor moving)
+  * `-d`  PreventDisplaySleep
+  * `-m`  PreventDiskIdleSleep
+  * There is NO `-l` (lid-block) flag in any modern macOS. Lid close is a kernel-firmware-level event that ignores user-space assertions.
+  * To prove any of this on live hardware: `pmset -g assertions` lists every active assertion with type / process / reason / timeout.
+* **`pmset`** is the read-side of the same system:
+  * `pmset -g log | grep -E 'Sleep|Wake|DarkWake'` shows the recent timeline.
+  * `pmset -g history` is the per-day summary.
+  * `pmset -g assertions` is the live assertion list (matches `-i -s -d -u` to processes).
+* **`launchd` does NOT have a native "on-wake" hook.** Not in any version of macOS as of Sonoma. The canonical recipe is `StartCalendarInterval` with a sub-minute cadence and let launchd queue missed intervals for replay-on-wake, or use a third-party daemon (Sleepwatcher). For our use case a long-running shell daemon listening to the unified log is more responsive than a polling agent.
+* **`com.apple.system.powermanagement.*` Darwin notifications** (`willSleep`, `didWake`, `didDim`, `didUndim`) are the C-level signal. From a shell, they are best reached through the unified log with `log stream --predicate` — see the watcher implementation.
+* **`scutil n.watch`** is the canonical CLI for live-following network-state changes. Pairs with `n.add State:/Network/Global/IPv4` to get a single tap that fires on **any** IPv4 link/route/DNS/address change across **all** interfaces. This is what `scripts/watcher.sh`'s network-change listener uses.
+* **`com.apple.networkChange` Darwin notification** is the C-level equivalent but has no shell-friendly listener; use `scutil` instead.
+* **`SCNetworkReachability`** is the Objective-C API used by SOCKS5/HTTP clients to detect route changes per target. Never a fit for shell scripts.
+
+#### The Fix (component-by-component)
+
+1. **`recover.sh --post-wake`** (new flag, **non-destructive** by design). Adding `--post-wake` to the existing nuclear recovery script inverts the semantics. The default mode still tears down Tailscale, resets DNS to empty, stops caffeinate, runs `docker compose down`, power-cycles Wi-Fi. The new mode does:
+  * Skip Tailscale disconnect (we WANT it to keep the mesh connection)
+  * **Re-hijack** DNS to the gateway Tailscale IP read from `ADGUARD_IP.txt` (instead of resetting to empty) — applies to both `ACTIVE_SERVICE` and `EN0_SERVICE` because the system resolver is scoped to en0
+  * **Refresh** the exit-node preference with `tailscale up --reset --ssh=true --accept-dns=false --exit-node=\"$TS_IP\" --exit-node-allow-lan-access=true` (the exact flags `toggle.sh` START uses). This re-asserts DERP mapping without dropping the mesh
+  * Inspect `docker inspect --format '{{.State.Health.Status}}' nullexit-warp-1` and **only** `docker compose up -d --force-recreate warp` if gluetun is unhealthy — this single targeted recreate nudges the UDP NAT binding back to Cloudflare without disturbing Tailscale or AdGuard
+  * Run the §10.27 sharingd-reset step (existing fix from `toggle.sh` START path) so AirDrop doesn't freeze on the new IP lease
+  * Verify the gateway with `dig +tcp @127.0.0.1 -p 5354 google.com` (AdGuard via TCP through Colima's SSH tunnel) and a 4-second `tailscale ping` to the gateway Tailscale IP, instead of the default mode's direct-to-1.1.1.1 check
+  * Crucially: **skip `sudo -v`** because the LaunchAgent has no TTY to prompt on; all privileged calls use `sudo -n` and lean on `/etc/sudoers.d/nullexit` NOPASSWD entries (`networksetup`, `dnsmasq`, `dscacheutil`, `killall`, `pkill`).
+2. **`toggle.sh`** writes and clears `/tmp/nullexit-gateway-active.marker` (an ISO-8601 UTC timestamp) at the bottom of the START path and the top of the STOP path / `cleanup_handler`. Two new helpers: `write_gateway_active_marker` and `clear_gateway_active_marker`. The watcher uses this file as its **only signal** that the gateway is live: if `toggle.sh` was stopped (or never started), the watcher no-ops. This prevents waking-up-only-on-counterfactual events from churning DNS.
+3. **`scripts/watcher.sh`** (long-running daemon, sibling-style source file). Two backgrounded pipelines:
+  * **Wake listener**: `log stream --predicate 'composedMessage CONTAINS[c] "didWake" OR composedMessage CONTAINS[c] "Wake from Sleep" OR composedMessage CONTAINS[c] "Waking from" OR composedMessage CONTAINS[c] "DarkWake"' --style compact --info` piped through `while read; do run_recover "WAKE: ..."; done`. `[c]` makes the predicate case-insensitive (the unified log writes phrases in mixed case across versions).
+  * **Network listener**: `(echo "n.add State:/Network/Global/IPv4"; echo "n.watch"; while true; do sleep 86400; done) | scutil 2>/dev/null` piped through a `case` match on `n.state*` / `SCEventUpdate*`.
+  * **`run_recover`** checks the marker, debounces via `/tmp/nullexit-watcher.last-recovery` (default 10s, configurable via `NULLEXIT_DEBOUNCE_SECONDS`), and shells out to `bash recover.sh --post-wake`. The 10s debounce prevents a single wake event (which typically emits 2-3 log lines) from triggering multiple recoveries.
+  * `trap ... TERM INT` → `kill 0` cleanly tears down the process group on launchctl `bootout` so the `sleep 86400` inside the scutil pipe also dies.
+  * `wait` blocks indefinitely while both pipelines feed it.
+4. **`launchd/com.nullexit.wake-recovery.plist`** (LaunchAgent in the user domain — runs as the console user at every login without needing sudo).
+  * `Label: com.nullexit.wake-recovery`
+  * `ProgramArguments: ["/bin/bash", "/Users/omar/Developer/nullexit/scripts/watcher.sh"]`
+  * `RunAtLoad: true` — starts immediately on `launchctl load` (no need to log out and back in)
+  * `KeepAlive: { SuccessfulExit: false, Crashed: false }` — **don't** restart on clean SIGTERM exit (so `launchctl bootout` doesn't get stuck in a relaunch loop). Also **don't** restart on hard crash: we observed that macOS Sonoma+'s sleep/wake suspend-resume path accumulates orphan watcher.sh PIDs because SIGCONT does not reliably clean up the prior instance's listener grandchildren, and a `KeepAlive.Crashed=true`-driven relaunch actively races with the still-live prior process. The script enforces single-instance on its own via a `flock`-style PID-file lock, so a relaunch-on-crash would be skipped by the lock and produce 0 listener coverage until the live instance happened to die. Trade-off: a real crash leaves the user without auto-recovery until they run `launchctl load -w` manually — acceptable because (a) gateway still works without auto-recovery, (b) a relaunch wouldn't fix whatever caused the crash, and (c) the gateway-recovery itself is observably broken (no DNS, no exit-node) if it does go down.
+  * `ProcessType: Background` — hint to App Nap not to suspend us.
+  * `StandardOutPath/StandardErrorPath: /tmp/nullexit-watcher.{out,err}.log` — separates launchd-level diagnostics from the script's own `/tmp/nullexit-watcher.log` (which `exec >>` redirects).
+
+#### Install (one-time)
+
+The plist lives in the repo at **`launchd/com.nullexit.wake-recovery.plist`** for version control. The installed (live) copy must land in `~/Library/LaunchAgents/` so launchd picks it up on the user session.
+
+```bash
+# Copy the plist to the user-launchd location
+cp /Users/omar/Developer/nullexit/launchd/com.nullexit.wake-recovery.plist \
+   /Users/omar/Library/LaunchAgents/
+
+# Validate the XML
+plutil -lint /Users/omar/Library/LaunchAgents/com.nullexit.wake-recovery.plist
+
+# Load + persist this user session + every future login
+launchctl load -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
+
+# Confirm it actually started
+launchctl list | grep nullexit
+```
+
+To **stop** the watcher (without uninstalling):
+
+```bash
+launchctl bootout gui/$UID/com.nullexit.wake-recovery
+# or:
+launchctl unload -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
+```
+
+To **uninstall** completely:
+
+```bash
+launchctl bootout gui/$UID/com.nullexit.wake-recovery 2>/dev/null || true
+rm ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
+```
+
+#### Why this fix was preferred over alternatives
+
+* **Polling with `StartCalendarInterval`** would have given ~30-60s detection latency per wake. The unified-log stream is sub-second.
+* **Sleepwatcher** would have covered wake events but not network changes. We'd still need a separate `scutil` listener, and introducing a third-party dependency for what amounts to ~150 lines of shell is unjustified.
+* **Forcing `caffeinate -l`** doesn't exist and the closest equivalent (`caffeinate -s`) only works on AC power. The whole point of the gateway is to stay usable on battery while traveling — lid close must NOT silently kill the gateway.
+* **A kernel extension** is impossible (no entitlement) and out of scope.
+
+#### Reproduction recipe
+
+Test both events in isolation to confirm the fix actually closes the gap.
+
+* **(A) Lid-only repro**: with the gateway up, run in a terminal: `pmset displaysleepnow && sleep 30 && pmset wake` (without physically closing the lid). Watch the wake wake-fires the watcher → post-wake routine runs — login should still work in <5s after wake. Compare to baseline pre-fix: pre-fix the gateway would be dead for 30-90s.
+* **(B) Roam-only repro**: with the gateway up: `networksetup -setairportpower off && sleep 30 && networksetup -setairportpower on` (or simply walk out of Wi-Fi range and back). The captive-portal WILL repave DHCP DNS for a few seconds; the watcher fires on the second `State:/Network/Global/IPv4` change (after the Wi-Fi re-associates) and the post-wake routine re-hijacks DNS within 2-3s.
+
+#### Operative files
+
+* `recover.sh` — added arg parsing; wrapped destructive sections behind `POST_WAKE`; added re-hijack DNS / refresh exit-node / force-recreate-if-unhealthy path.
+* `toggle.sh` — added `write_gateway_active_marker` / `clear_gateway_active_marker` called at the END of START and TOP of STOP / cleanup_handler.
+* `scripts/watcher.sh` — new long-running daemon.
+* `launchd/com.nullexit.wake-recovery.plist` — launchd LaunchAgent descriptor.
+* `~/Library/LaunchAgents/com.nullexit.wake-recovery.plist` — the installed copy (one-time copy).
+
+#### Honest assessment (read before testing)
+
+This fix has two asymmetric halves:
+
+* **Network / roam / captive-portal path — RELIABLE.** `scutil n.watch` on `State:/Network/Global/IPv{4,6}` catches every Wi-Fi roam, captive-portal DHCP-rebind, hotspot handoff, and VPN change with zero missed events. To validate, drop Wi-Fi for 30 s and re-add it; `/tmp/nullexit-watcher.log` will record a `NET:` trigger and `recover.sh --post-wake` will run within ~10 s of the network coming back.
+* **Lid close / wake path — BEST-EFFORT on macOS Sonoma+.** Apple *suspends* LaunchAgents process-state during forced sleep and *resumes* them on wake; it does NOT re-launch them every wake. As a result: (a) `log stream` is a live subscription — events emitted during the agent's suppressed window are DROPPED, not buffered, so the wake event that prompted the resume is invisible to `log stream` on resume; (b) the "fire on startup" guard runs once on `launchctl load -w` and after a `KeepAlive` crash-recovery, NOT on every successive wake; (c) `subsystem == "com.apple.powermanagement"` will catch FUTURE emissions (display dim/restore, manual sleep/wake) but not the lid-close→open wake directly.
+
+In practice the lid-wake gap is short, because `toggle.sh`'s existing DNS Watcher already polls every 5 s and re-hijacks DNS (so DNS recovers within 5 s of any roam or wake), `tailscaled` self-heals via DERP fallback within 30–60 s, and `gluetun` reconnects via its healthcheck retry within 30 s. The user-visible pain on lid open is ~30 s of wonky DNS, not a permanent outage.
+
+**Test the ROAM path FIRST.** If ROAM works in your testing, the lid-wake gap is acceptable. If lid-wake handling is critical, the two clean follow-ups are:
+1. **Sleepwatcher** (one canonical install): `brew install sleepwatcher`; drop `recover.sh --post-wake` into `~/.sleep` and `~/.wake` so Sleepwatcher invokes it directly on every wake without the launchd propagation problem.
+2. **Move the watcher to a LaunchDaemon** (root) and use `IOPMSchedulePowerEvent` via a tiny C wrapper — not portable to shell.
+
+A truly reliable shell-only solution to "wake events from inside a LaunchAgent" does not exist on macOS Sonoma+.
+
+#### Empirical lessons from deployment
+
+Two findings came up while deploying this fix end-to-end; recording so the next operator doesn't lose an evening to each.
+
+1. **Bash function-call-before-definition gotcha.** While introducing the gateway-active marker helpers, the defensive `clear_gateway_active_marker` call was inserted at the very top of `toggle.sh` (right after `set -e`), but the function definition lived near `PID_FILE="/tmp/nullexit-caffeinate.pid"` ~90 lines down. Bash parses top-to-bottom and resolves names at first invocation, so the call site exited with code 127 (`clear_gateway_active_marker: command not found`). The gateway stayed unreachable from the START path even though `bash -n` passed (the parser doesn't catch order-of-resolution errors). Rule: define functions BEFORE any block that calls them. Verify with `grep -n '^name()\s*{'` followed by `grep -n '^name\s*$'` — the latter must appear on a line number AFTER the former.
+
+2. **`networksetup -setairportpower off+on` is not a faithful roam reproduction.** Synthetic Wi-Fi radio-cycling (`sudo networksetup -setairportpower Wi-Fi off` for 30 s, then back on) is expected to produce a `NET:` trigger in `scutil n.watch` but produced ZERO during testing — because `setairportpower` powers the radio at the driver level while leaving the network SERVICE in the `"up"` state from scutil's perspective, so no `n.state State:/Network/Global/IPv4` event is generated. A real roam (macOS briefly loses the AP and re-associates into a different one) DOES fire the event because the link actually changes.
+   Better reproduction recipes in priority order:
+   * Walk between two real SSIDs via `networksetup -switchtolocation` (or actual physical station movement) — guaranteed to fire the scutil event.
+   * Force a DHCP rebind on the same SSID with `sudo ipconfig set en0 DHCP` — triggers `State:/Network/Global/IPv4` to update.
+   * Trust the existing 5-second DNS Watcher inside `toggle.sh` for the DNS path: it re-hijacks DNS automatically. The post-wake watcher adds clear value mostly for tailscale exit-node re-assertion and warp gluetun force-recreate, both of which self-heal within ~30 s anyway.
