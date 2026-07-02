@@ -141,6 +141,10 @@ services:
       - WARP_ENDPOINT=162.159.192.1
     volumes:
       - ./routing-fix.sh:/routing-fix.sh:ro
+      # SECURITY: ./adguard/work/ is bind-mounted into this container.
+      # Never write to it from the host or another container. The
+      # single allowed writer is `python3 sync-rules.py` — manual
+      # edits corrupt the AdGuard cache + BoltDB session store.
       - ./adguard/work/userfilters:/userfilters:ro
       - ./adguard/work:/adguard_work:ro
       - .:/app
@@ -170,6 +174,10 @@ services:
       timeout: 5s
       retries: 10
     volumes:
+      # SECURITY: ./adguard/work/ is bind-mounted into this container.
+      # Never write to it from the host or another container. The
+      # single allowed writer is `python3 sync-rules.py` — manual
+      # edits corrupt the AdGuard cache + BoltDB session store.
       - ./adguard/work:/opt/adguardhome/work
       - ./adguard/conf:/opt/adguardhome/conf
     restart: unless-stopped

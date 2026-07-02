@@ -209,12 +209,14 @@ ggpht.com
 edge-mqtt.facebook.com
 gateway.instagram.com
 i.instagram.com
-whatsapp.net
 
 facebook.com
 fb.com
 fbcdn.net
 fbsbx.com
 messenger.com
-
+whatsapp.com
+web.whatsapp.com
+instagram.com
+cdninstagram.com
 

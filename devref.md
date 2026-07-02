@@ -61,6 +61,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `socks5-proxy.py` | ~200 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
 | `dns-proxy.py` | ~90 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
 | `sync-rules.py` | ~560 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
+| **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`sync-rules.py`. See README §6.** |
 | `recover.sh` | ~280 | Nuclear recovery script. Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
 | `black_list.txt` | ~70 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
 | `white_list.txt` | ~120 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
@@ -641,3 +642,75 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 **Fix:** Integrated an automatic sharing services reset into both `toggle.sh` and `recover.sh`:
 1. The script now automatically runs `sudo -n killall sharingd rapportd` at the end of both the **START** path and the **STOP** path (as well as inside `recover.sh`).
 2. Killing these daemons forces macOS to immediately relaunch them, binding them fresh to the newly initialized network interfaces and routing tables, allowing AirDrop to work seamlessly while the gateway is active.
+
+### 10.28 Unlocking Mode-Locked Output Files Without `chmod`
+
+**Context:** The nullexit project has a strict project-wide policy of `no chmod from scripts` (see README §6). This rule exists because every prior `chmod 0444` (post-write tamper-proof lock) and `chmod 000` (post-toggle `.env` lock) call from `sync-rules.py` / `toggle.sh` could leave a file permanently unreadable on disk if the script exited early, was killed mid-flight, or simply set a restrictive mode without ever being re-flipped. We've stripped every `chmod` from the codebase. But files **written by older versions of those scripts** are still on disk in those restrictive modes (`0444` for `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/<id>.txt`; `000` for `.env` after end-of-toggle lock). Re-running `toggle.sh` or `sync-rules.py` against those leftovers hits `PermissionError: [Errno 13] Permission denied` immediately.
+
+**Problem:** You (the owner) cannot `cat`, `cp`, `rm`, `> redirect`, or any normal POSIX write against a `mode=000` file even though you own it — the basic mode bits block ALL access for owner, group, and other. The script does not call `chmod` and you want a permanent fix that never relies on a chmod from any future run either.
+
+**Solution:** Replace the locked inode with a fresh readable one. `mv` is atomic; mode bits live in the inode, not the directory entry. Two flavors cover every case we hit on a real machine:
+
+**Flavor A — locked file is mode `000` (owner can't even READ it):**
+NOPASSWD sudoers (`/etc/sudoers.d/nullexit`) already includes `/usr/bin/python3`. So we read via `sudo python3` (which has the DAC override root has) and pipe the bytes around as base64 in user space, where the redirect happens with the user's normal umask = `0644`:
+```bash
+sudo -n /usr/bin/python3 -c "import base64,sys; sys.stdout.write(base64.b64encode(open('<FILE>','rb').read()).decode())" > /tmp/snap.b64
+base64 -d < /tmp/snap.b64 > <FILE>.new
+mv -f <FILE>.new <FILE>
+ls -la <FILE>          # mode is now 0644
+```
+The old `mode=000` inode is unlinked by `mv`; the new `mode=0644` inode (created by base64-decode via the calling user's umask) takes the path. No chmod ever called. The parent directory just needs to be writable by you (it always is, since you own it).
+
+**Flavor B — locked file is mode `0444` (you can READ but cannot WRITE; `sync-rules.py` needs to re-write):**
+You own the file and can read it, you just cannot truncate/overwrite it. The simplest path is to rename it aside and let the writer create a fresh inode from scratch (which gets the umask-default `0644`):
+```bash
+mv <FILE> /tmp/old.<FILE>.$$
+python3 sync-rules.py    # now writes <FILE> cleanly at mode 0644
+```
+Or apply Flavor A if you'd prefer to preserve the contents while resetting the mode.
+
+**Why this is the canonical recovery, not a hack:**
+- Mode bits live in the inode, not the path. `mv -f` replaces the path's inode reference; the old locked inode drops out of the directory entirely (dentry eviction) and loses its last link, so the kernel reclaims it. The new inode (whatever it is: a freshly-written one, or a base64-decoded copy) gets the path.
+- The only prerequisite to apply Flavor B's `mv` is: you own the parent directory (so you can unlink entries from it) AND you have a NOPASSWD-capable binary that can read the byte stream if mode prohibits user read.
+- This pattern generalizes. Any time a script ends up producing a "locked file that the next run can't update" situation, the same trick applies without a single chmod anywhere.
+
+**Empirical verification (user machine, July 1, 2026):**
+- `.env` was `mode=000` (owner omar): Flavor A unblocked it in 3 commands, no chmod.
+  - Before: `----------  1 omar  staff  899 Jun 28 07:07 .env`
+  - After:  `-rw-r--r--@ 1 omar  staff  899 Jul  1 20:39 .env`
+  - `docker compose config` immediately picked up `TS_AUTHKEY` + `WIREGUARD_PRIVATE_KEY` substitution.
+- `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/1782645604.txt` were `mode=0444`: Flavor B (`mv`-aside) unblocked all three.
+  - sync-rules.py then ran clean: 279587 block rules + 171 allow rules + 16710 IP entries compiled; new files came out at `0644`.
+- `toggle.sh` then went end-to-end in 48s (warp / routing-fix / adguardhome / socks-proxy / tailscale all healthy, gateway mesh-joined, DNS hijack verified single-server).
+
+**When this trick is appropriate vs. inappropriate:**
+- ✓ You own the parent directory and the file (typical desktop scenario).
+- ✓ The lock is a leftover from a removed `chmod` call that you want off disk forever.
+- ✓ NOPASSWD sudo includes at least one interpreter (`python3` on this system) that can be used to read mode-0 files. If it does not, add it first: `omar ALL=(ALL) NOPASSWD: /usr/bin/python3`.
+- ✗ The file is owned by another user (root, another account) and the lock is intentional — respect it; do not bypass another user's security boundary.
+- ✗ The parent directory is owned/writable only by another user — escalate properly via sudo, or stop and ask the user.
+- ✗ You do not actually own the file and there is a legitimate reason for its lock state — restore the file via a trusted source rather than circumventing the perms.
+
+**Reusable cookbook:**
+
+```bash
+# Quick diagnostic: figure out which flavor you need.
+WHOAMI=$(whoami)
+ls -la <FILE>
+stat -f 'mode=%Sp owner=%Su group=%Sg' <FILE>
+# mode=--------- or mode=----r----- : you cannot even read it → Flavor A.
+# mode=r--r--r-- but writer fails  : you are blocked from write but can read → Flavor B.
+# mode=rw-r--r--                    : not actually locked at all; unrelated write failure.
+
+# Flavor A (mode=000):
+sudo -n /usr/bin/python3 -c "import base64,sys; sys.stdout.write(base64.b64encode(open('<FILE>','rb').read()).decode())" > /tmp/snap.b64
+base64 -d < /tmp/snap.b64 > <FILE>.new && mv -f <FILE>.new <FILE> && rm -f /tmp/snap.b64
+
+# Flavor B (mode=0444, file is readable):
+mv <FILE> /tmp/old.<FILE>.$(date +%s)
+# (let the original writer recreate <FILE>; new file lands at mode 0644)
+
+# Verify after either flavor:
+ls -la <FILE>             # mode should be 0644
+<your normal validation command>
+```

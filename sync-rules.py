@@ -1,4 +1,6 @@
 import os
+import shutil
+import time as _time
 import urllib.request
 import re
 
@@ -164,6 +166,53 @@ def get_adguard_native_lists():
         
     return enabled_urls
 
+def get_adguard_compiled_rules_cache_path():
+    """Resolve the on-disk path of AdGuard Home's cached copy of compiled_rules.txt.
+
+    AdGuard Home stores cached filter content in
+    ``adguard/work/data/filters/<filter_id>.txt`` where ``<filter_id>`` is a
+    timestamp-derived integer assigned at subscription time (this depends on
+    AdGuard internals and is *not* predictable from our config). The previous
+    hardcoded path ``data/filters/4.txt`` silently fell out of sync with reality,
+    so the cache deletion was a no-op and AdGuard kept serving stale in-memory
+    rules across restarts.
+
+    Parses ``adguard/conf/AdGuardHome.yaml`` using the same regex approach as
+    ``get_adguard_native_lists()`` to find the block whose URL contains our
+    compiled rules file, then returns ``data/filters/<id>.txt``.
+
+    Returns ``None`` if AdGuardHome.yaml is missing, no filter URL matches, or
+    parsing fails (caller should log and continue).
+    """
+    yaml_path = "adguard/conf/AdGuardHome.yaml"
+    if not os.path.exists(yaml_path):
+        return None
+
+    try:
+        with open(yaml_path, "r") as f:
+            content = f.read()
+
+        # Same regex used by get_adguard_native_lists() to locate the filters: block.
+        filters_match = re.search(
+            r'^filters:(.*?)(?:^[a-zA-Z_]+:|\Z)',
+            content,
+            re.MULTILINE | re.DOTALL,
+        )
+        if not filters_match:
+            return None
+
+        # Each filter entry begins with `  - id: <int>` (the first entry begins with `- id:`).
+        blocks = filters_match.group(1).split("\n  - ")
+        for block in blocks:
+            if "compiled_rules.txt" not in block:
+                continue
+            id_match = re.search(r'id:\s*(\d+)', block)
+            if id_match:
+                return f"adguard/work/data/filters/{id_match.group(1)}.txt"
+    except Exception as e:
+        print(f"Warning: Failed to resolve compiled_rules.txt cache path ({e})")
+    return None
+
 def fetch_remote_domains(url):
     import hashlib
     import time
@@ -201,13 +250,11 @@ def fetch_remote_domains(url):
             if len(domains) < 10:
                 raise ValueError(f"Sanity check failed: only found {len(domains)} domains. Possible 404 or bad URL.")
             
-            # Save raw content to cache ONLY if sanity check passes
+            # Save raw content to cache ONLY if sanity check passes.
+            # setup may have written the file with restrictive mode).
             try:
-                if os.path.exists(cache_file):
-                    os.chmod(cache_file, 0o644)
                 with open(cache_file, 'w', encoding='utf-8') as f:
                     f.write(content)
-                os.chmod(cache_file, 0o444)
             except Exception as e:
                 print(f" -> Warning: Failed to save cache file ({e})")
                 
@@ -330,11 +377,8 @@ def fetch_remote_ips(url):
             raise ValueError(f"Sanity check failed: only {len(ips)} IPs found. Possible 404.")
 
         try:
-            if os.path.exists(cache_file):
-                os.chmod(cache_file, 0o644)
             with open(cache_file, 'w', encoding='utf-8') as f:
                 f.write(content)
-            os.chmod(cache_file, 0o444)
         except Exception as e:
             print(f" -> Warning: cache write failed ({e})")
 
@@ -413,11 +457,6 @@ def compile_ip_blocklist():
     # the live ipset (block_malicious) is never empty during a reload, even
     # if routing-fix.sh triggers an ipset restore mid-refresh.
     os.makedirs(os.path.dirname(IP_OUTPUT_PATH), exist_ok=True)
-    if os.path.exists(IP_OUTPUT_PATH):
-        try:
-            os.chmod(IP_OUTPUT_PATH, 0o644)
-        except Exception:
-            pass
 
     with open(IP_OUTPUT_PATH, 'w') as f:
         f.write(f"# nullexit Compiled IP Blocklist\n")
@@ -434,11 +473,6 @@ def compile_ip_blocklist():
         f.write("swap block_malicious block_malicious_new\n")
         # Step 5: Destroy temp (now contains old data)
         f.write("destroy block_malicious_new\n")
-
-    try:
-        os.chmod(IP_OUTPUT_PATH, 0o444)
-    except Exception:
-        pass
 
     print(f"IP blocklist written to {IP_OUTPUT_PATH}")
     return len(clean_ips)
@@ -518,12 +552,6 @@ def main():
 
     # Generate AdGuard Syntax
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    if os.path.exists(OUTPUT_PATH):
-        try:
-            os.chmod(OUTPUT_PATH, 0o644)
-        except Exception:
-            pass
-            
     with open(OUTPUT_PATH, 'w') as f:
         f.write("! Custom Compiled Rules (Auto-Generated)\n")
         f.write(f"! Memory Profile: {profile.upper()}\n")
@@ -556,37 +584,82 @@ def main():
             else:
                 f.write(f"@@||{domain}^\n")
 
-    try:
-        os.chmod(OUTPUT_PATH, 0o444)
-    except Exception:
-        pass
-
     print(f"\nSuccessfully compiled {len(black_list)} block rules and {len(white_list)} allow rules to {OUTPUT_PATH}")
 
-    # Delete AdGuard's cached filter file if it exists, to force AdGuard Home to reload the fresh compiled rules
-    cache_path = "adguard/work/data/filters/4.txt"
-    if os.path.exists(cache_path):
+    # Atomically replace AdGuard Home's cached filter file so the next restart
+    # loads the new whitelist. We OVERWRITE — not DELETE — because AdGuard Home
+    # treats a missing cache file as "filter disabled" rather than "filter
+    # needs re-fetch"; deleting silently disables the filter instead of
+    # reloading from disk.
+    # NOTE: We do not touch file permissions here. The cache file is written
+    # with whatever mode the caller / umask produces — that's fine.
+    cached_filter_path = get_adguard_compiled_rules_cache_path()
+    if cached_filter_path:
         try:
-            os.remove(cache_path)
-            print(f"Removed stale AdGuard filter cache: {cache_path}")
+            shutil.copyfile(OUTPUT_PATH, cached_filter_path)
+            print(f"Updated AdGuard filter cache: {cached_filter_path}")
         except Exception as e:
-            print(f"Warning: Could not remove stale cache {cache_path} ({e})")
+            print(f"Warning: Could not update AdGuard filter cache {cached_filter_path} ({e})")
+    else:
+        print("Warning: Could not determine compiled_rules.txt cache path from AdGuardHome.yaml; skipping cache update.")
 
-    # Restart AdGuard Home container if docker is running to apply changes immediately
-    # (This only applies if sync-rules.py is run manually on the host. When running
-    # inside the rule-compiler container on startup, docker is not installed, which
-    # is fine because AdGuard Home will boot immediately after the container finishes).
-    import shutil
+    adguard_reachable = False
+
+    # Restart AdGuard Home container if docker is running, then trigger an
+    # explicit filter refresh via the REST API so the new whitelist is loaded
+    # without waiting for AdGuard's periodic refresh interval (default 24h).
+    # (Python's urllib is used because the adguardhome image does not include
+    # curl/wget — and when sync-rules.py is invoked from the rule-compiler
+    # container, adguardhome isn't yet running, so this block is a no-op there.)
     if os.path.exists("docker-compose.yml") and shutil.which("docker"):
         try:
             import subprocess
             res = subprocess.run(["docker", "compose", "ps", "--status", "running", "-q", "adguardhome"], capture_output=True, text=True)
             if res.returncode == 0 and res.stdout.strip():
-                print("Restarting AdGuard Home container to apply changes immediately...")
-                subprocess.run(["docker", "compose", "restart", "adguardhome"], capture_output=True)
-                print("AdGuard Home restarted successfully.")
+                print("Force-recreating AdGuard Home container to drop persisted filter state...")
+                # `restart` is SIGTERM+SIGHUP, which AdGuard Home catches and gracefully
+                # reloads from its BoltDB-persisted snapshot. For file:// subscriptions,
+                # AdGuard hashes the URL content and considers it "unchanged" if the hash
+                # matches the previous run, even when the file's *contents* have evolved.
+                # --force-recreate destroys the container and starts a fresh one, which
+                # forces AdGuard to genuinely re-read the source file.
+                subprocess.run(
+                    ["docker", "compose", "up", "-d", "--force-recreate", "--no-deps", "adguardhome"],
+                    capture_output=True,
+                )
+                print("AdGuard Home force-recreated successfully.")
+                # AdGuard's REST listener takes a while to come up after a force-recreate
+                # on Colima. 8s is conservative but necessary; on faster hosts we waste
+                # only ~5s. Without this sleep the /control/filtering/refresh POST races
+                # the bind and silently returns "Empty reply from server".
+                _time.sleep(8)
+                adguard_reachable = True
         except Exception as e:
             print("Failed to restart AdGuard Home. Is it running?")
+
+    # Trigger AdGuard's filter refresh API to force-load the new whitelist into
+    # in-memory rules immediately, without waiting for the periodic refresh
+    # interval or another container restart. Uses urllib because curl/wget are
+    # not present in the adguardhome image.
+    if adguard_reachable:
+        try:
+            import urllib.request as _ur, base64 as _b64
+            creds = _b64.b64encode(b"admin:nullexit").decode("ascii")
+            req = _ur.Request(
+                "http://127.0.0.1:80/control/filtering/refresh",
+                method="POST",
+                headers={"Authorization": f"Basic {creds}", "Content-Type": "application/json"},
+                data=b"{}",
+            )
+            resp = _ur.urlopen(req, timeout=15)
+            print(f"Triggered AdGuard filter refresh via REST API (HTTP={resp.status}).")
+        except Exception as e:
+            # IMPORTANT: container force-recreate alone is NOT sufficient. AdGuard
+            # Home stores filter rules in its BoltDB and only re-reads cache files on
+            # an explicit refresh. If this REST POST fails, the new whitelist
+            # will not be honored until the next periodic refresh tick (default
+            # 24h) OR a manual /control/filtering/refresh call.
+            print(f"Warning: AdGuard filter refresh API call failed ({e}). New whitelist will not load until next refresh tick (~24h) or manual refresh.")
 
     # Compile IP blocklist for kernel-level blocking in routing-fix.sh
     compile_ip_blocklist()
