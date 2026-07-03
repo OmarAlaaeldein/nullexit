@@ -70,10 +70,10 @@ exec 3>> "$REPORT_FILE" || {
 }
 section() {
   local title="$1"
-  printf '\n%s═══════ %s ═══════%s\n' "$BOLD" "$title" "$NC" >&3
-  printf '\n%s═══════ %s ═══════%s\n' "$BOLD" "$title" "$NC"
+  printf '\n%b═══════ %s ═══════%b\n' "$BOLD" "$title" "$NC" >&3
+  printf '\n%b═══════ %s ═══════%b\n' "$BOLD" "$title" "$NC"
 }
-line()   { printf '  %s\n' "$1" >&3; printf '  %s\n' "$1"; }
+line()   { printf '  %b\n' "$1" >&3; printf '  %b\n' "$1"; }
 ok()     { line "${GREEN}✓${NC} $1"; }
 warn()   { line "${YELLOW}⚠${NC} $1"; }
 fail()   { line "${RED}✗${NC} $1"; }
@@ -378,7 +378,7 @@ fi
 case "$SCENARIO" in
   SE_PENDING)
     echo ""
-    echo "  ${RED}${BOLD}VERDICT:  Scenario SE_PENDING — Tailscale System Extension Pending Uninstall${NC}"
+    echo -e "  ${RED}${BOLD}VERDICT:  Scenario SE_PENDING — Tailscale System Extension Pending Uninstall${NC}"
     echo "  A prior App Store Tailscale System Extension is pending uninstall."
     echo "  Since System Integrity Protection (SIP) is enabled, macOS blocks manual"
     echo "  uninstallation of terminated system extensions until the next reboot."
@@ -390,7 +390,7 @@ case "$SCENARIO" in
     ;;
   A)
     echo ""
-    echo "  ${RED}${BOLD}VERDICT:  Scenario A — SOCKS5 fallback lane${NC}"
+    echo -e "  ${RED}${BOLD}VERDICT:  Scenario A — SOCKS5 fallback lane${NC}"
     echo "  toggle.sh's pre-flight checks failed last run. The script activated"
     echo "  SOCKS5 + local DNS proxy as a fallback. DNS gets hijacked but"
     echo "  browsers on macOS ignore the system SOCKS5 → traffic egresses"
@@ -409,7 +409,7 @@ case "$SCENARIO" in
     ;;
   B)
     echo ""
-    echo "  ${RED}${BOLD}VERDICT:  Scenario B — IPv6 leak over UdeM campus IPv6${NC}"
+    echo -e "  ${RED}${BOLD}VERDICT:  Scenario B — IPv6 leak over UdeM campus IPv6${NC}"
     echo "  Tailscale exit-node advertises only IPv4. macOS sends AAAA queries"
     echo "  straight out en0, which is dual-stack on UdeM campus APs — IPv6"
     echo "  traffic bypasses the WARP tunnel entirely."
@@ -421,7 +421,7 @@ case "$SCENARIO" in
     ;;
   C)
     echo ""
-    echo "  ${RED}${BOLD}VERDICT:  Scenario C — Tailscale route-freeze${NC}"
+    echo -e "  ${RED}${BOLD}VERDICT:  Scenario C — Tailscale route-freeze${NC}"
     echo "  Host's default route points at the Wi-Fi gateway instead of the"
     echo "  Tailscale utun* interface. The exit-node preference is set but the"
     echo "  routing-table assertion did not take effect (devref §10.26)."
@@ -440,7 +440,7 @@ case "$SCENARIO" in
     ;;
   OK)
     echo ""
-    echo "  ${GREEN}${BOLD}VERDICT:  No host leak detected — tunnel is working${NC}"
+    echo -e "  ${GREEN}${BOLD}VERDICT:  No host leak detected — tunnel is working${NC}"
     echo "  The 'udem' ISP string from whatismyip.com is its IP-database"
     echo "  misclassifying the Cloudflare egress IP.  CDN-CGI's trace endpoint"
     echo "  (which is what we use here) reports warp=on because that endpoint"
@@ -450,7 +450,7 @@ case "$SCENARIO" in
     ;;
   *)
     echo ""
-    echo "  ${YELLOW}${BOLD}VERDICT:  Could not classify automatically${NC}"
+    echo -e "  ${YELLOW}${BOLD}VERDICT:  Could not classify automatically${NC}"
     echo "  The diagnostic data did not match any known scenario cleanly."
     echo "  Likely causes:"
     echo "    - tailscaled is logged out / expired (see Section 1)"

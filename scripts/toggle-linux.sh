@@ -420,8 +420,8 @@ start_local_dns_proxy() {
     echo -n "  Hijacking host DNS to 127.0.0.1 for ad-blocking... "
     resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
     resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
-    if ! networksetup -setdnsservers "$ACTIVE_SERVICE" 127.0.0.1; then
-      echo "FAILED (networksetup error — check permissions)."
+    if ! sudo -n resolvectl dns "$ACTIVE_SERVICE" 127.0.0.1; then
+      echo "FAILED (resolvectl error — check permissions)."
       stop_local_dns_proxy
       return 1
     fi
