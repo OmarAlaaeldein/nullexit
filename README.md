@@ -70,6 +70,38 @@ Enable **MagicDNS** in the Tailscale Admin DNS tab. Traffic through the exit nod
 ### AdGuard Dashboard
 Navigate to `http://<gateway-tailscale-ip>:3000` — credentials: **`admin` / `nullexit`**.
 
+### Access Any Mesh Device From Anywhere (SFTP/SSH)
+
+Once the gateway exit node is online, **any device on your Tailscale mesh can reach any other mesh device, anywhere in the world** — as long as both devices are on the mesh and the target device has an SSH server running. No port forwarding, no public IPs, no firewall holes.
+
+#### Example: Browse your Android phone's files from your Mac
+
+1. **On your Android phone**, install [Termux](https://termux.dev/) and [Termux:Boot](https://f-droid.org/packages/com.termux.boot/) from F-Droid.
+2. In Termux, install and start the SSH server:
+   ```bash
+   pkg install openssh
+   sshd
+   ```
+   Termux defaults to **port 8022** (ports below 1024 require root on Android).
+3. Find your phone's Tailscale IP:
+   ```bash
+   tailscale ip -4   # e.g. 100.87.42.87
+   ```
+4. **Stop Android from killing Termux** — do ALL of these (Samsung One UI is especially aggressive):
+   - **Settings → Apps → Termux → Battery → Unrestricted**
+   - **Device Care → Battery → Background usage limits → Sleeping apps / Deep sleeping apps** — remove Termux if listed
+   - In Termux, run `termux-wake-lock` to hold a persistent wakelock
+5. **On your Mac/PC**, open [Cyberduck](https://cyberduck.io/) (or any SFTP client: WinSCP, FileZilla, FE File Explorer on iOS) and connect to:
+   - **Server:** `100.87.42.87` (your phone's Tailscale IP)
+   - **Port:** `8022`
+   - **Protocol:** SFTP (SSH File Transfer Protocol)
+   - **Username:** (your Termux username, usually `u0_a123` — run `whoami` in Termux to check)
+   - **Password:** (your Termux password — set with `passwd` in Termux if you haven't already)
+
+That's it — you can now browse, download, and upload files to your phone from any device on the mesh, no matter where either device is physically located. This works identically for any mesh device: Mac ↔ Mac, Windows ↔ Linux, phone ↔ NAS, etc.
+
+> **Troubleshooting:** If the connection hangs for ~30 seconds before failing, your phone's SSH server isn't running. Open Termux and run `sshd` again. If Android keeps killing it despite Unrestricted battery, the `termux-wake-lock` command is your fix.
+
 ---
 
 ## 5. Dual-Layer Firewall
@@ -125,6 +157,7 @@ See `devref.md §10.29` for the full deep dive.
 - **Tailscale P2P vs DERP:** On the same Wi-Fi, Tailscale establishes a fast P2P connection. On cellular (CGNAT), it always falls back to a DERP relay (~80-200ms). See `devref.md §5.5`.
 - **AirDrop / AirPlay:** Unaffected — the gateway only touches standard Wi-Fi/Ethernet interfaces, not `awdl0`.
 - **VPN coexistence:** Do **not** run a local VPN client (WARP, Mullvad, NordVPN) simultaneously with the exit node. Both fight for the default route and will blackhole your connection.
+- **Banking & financial sites:** May intermittently block logins through WARP. Banks use anti-fraud databases that flag datacenter IP ranges (like Cloudflare's `104.28.x.x`) as VPN/proxy traffic. Success fluctuates depending on which WARP IP you land on. If a site blocks you, either disable the exit node temporarily for that session or use the bank's mobile app (which often uses different fraud detection).
 - **MSS clamping:** Double-tunnelling adds ~120-160 bytes of overhead per packet. On cellular or hotspot connections (MTU 1280), set `GATEWAY_MSS=1120` in `.env` to prevent stalls. On standard Wi-Fi (MTU 1500), `GATEWAY_MSS=1180` is fine.
 
 ---
@@ -150,7 +183,7 @@ See `devref.md §8` for the full threat model, Snowden programme analysis, and t
 ## 9. Debugging
 
 - **`output.log`** — All stderr from `toggle.sh`, `recover.sh`, `setup.sh`, and the rule-compiler is written here. Check this first.
-- **`bash scripts/diagnose-host-leak.sh`** — One-shot host-routing diagnostic. Classifies your state into one of three known leak scenarios (SOCKS5 fallback, IPv6 leak, route-table freeze) or OK, and prints the exact fix command.
+- **`bash scripts/diagnose-host-leak.sh`** — One-shot host-routing diagnostic. Classifies your state into one of three known leak scenarios (SOCKS5 fallback, IPv6 leak, route-table freeze) or OK, and prints the exact fix command. Pass `--fix` to apply the remediation automatically. Pass `--watch` (or `--watch 30`) to run a full baseline diagnostic then continuously monitor warp/IPv6/default-route for leaks, alerting on any state change.
 - **`devref.md`** — Complete architecture reference, routing deep-dives, and full resolved-issues log. Read this before modifying any routing or firewall logic.
 
 > [!CAUTION]

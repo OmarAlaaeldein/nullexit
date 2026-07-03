@@ -15,9 +15,11 @@
 # See devref.md §10.30 for the deep-dive rationale.
 #
 # Usage:
-#   bash scripts/diagnose-host-leak.sh          # diagnose + write report
-#   bash scripts/diagnose-host-leak.sh --fix    # diagnose + fix + re-verify
-#   bash scripts/diagnose-host-leak.sh --help   # this message
+#   bash scripts/diagnose-host-leak.sh              # diagnose + write report
+#   bash scripts/diagnose-host-leak.sh --fix        # diagnose + fix + re-verify
+#   bash scripts/diagnose-host-leak.sh --watch      # full baseline then loop checks every 60s
+#   bash scripts/diagnose-host-leak.sh --watch 30   # same, with custom interval (seconds)
+#   bash scripts/diagnose-host-leak.sh --help       # this message
 #
 # Multiple runs produce timestamped files (one per run) so historical
 # reports can be diffed. The newest file is the most recent.
@@ -36,10 +38,20 @@ REPORT_FILE="$PROJECT_ROOT/host-leak-diagnostic-$TIMESTAMP.txt"
 
 # ─── Argument parsing ───────────────────────────────────────────────────────
 DO_FIX=false
+DO_WATCH=false
+WATCH_INTERVAL=60
+WATCH_LOG="$PROJECT_ROOT/host-leak-watch.log"
 case "${1:-}" in
   --fix) DO_FIX=true ;;
+  --watch)
+    DO_WATCH=true
+    # Optional second argument: custom interval in seconds
+    if [ -n "${2:-}" ] && [[ "$2" =~ ^[0-9]+$ ]]; then
+      WATCH_INTERVAL="$2"
+    fi
+    ;;
   --help|-h)
-    sed -n '2,28p' "$0"
+    sed -n '2,31p' "$0"
     exit 0
     ;;
   "")
@@ -61,9 +73,6 @@ else
 fi
 
 # ─── Output helpers — write to BOTH stdout and the report file ──────────────
-# tee-to-file approach: every diagnostic line is printed live (so the user
-# sees progress when running interactively) and captured to REPORT_FILE
-# (so they have a saved artefact they don't have to scroll-and-copy from).
 exec 3>> "$REPORT_FILE" || {
   printf '\n[FATAL] cannot open %s for write\n' "$REPORT_FILE" >&2
   exit 1
@@ -79,34 +88,41 @@ warn()   { line "${YELLOW}⚠${NC} $1"; }
 fail()   { line "${RED}✗${NC} $1"; }
 note()   { line "(no ${1})"; }
 
-echo "════════════════════════════════════════════════════════════"
-echo " n u l l e x i t   h o s t - r o u t i n g   d i a g n o s t i c"
-echo "════════════════════════════════════════════════════════════"
-echo " Timestamp (UTC): $TIMESTAMP"
-echo " Project root:    $PROJECT_ROOT"
-echo " Report file:     $REPORT_FILE"
-echo " Mode:            $([ "$DO_FIX" = true ] && echo "diagnose + apply fix" || echo "diagnose only (pass --fix to remediate)")"
-echo "════════════════════════════════════════════════════════════"
-echo "" >&3
-echo "════════════════════════════════════════════════════════════" >&3
-echo " n u l l e x i t   h o s t - r o u t i n g   d i a g n o s t i c" >&3
-echo "════════════════════════════════════════════════════════════" >&3
-echo " Timestamp (UTC): $TIMESTAMP" >&3
-echo " Mode:            $([ "$DO_FIX" = true ] && echo "diagnose + apply fix" || echo "diagnose only")" >&3
+# ─── Watch-mode header (only shown when entering watch loop) ────────────────
+if [ "$DO_WATCH" = "true" ]; then
+  echo ""
+  echo "════════════════════════════════════════════════════════════"
+  echo " n u l l e x i t   w a t c h   m o d e"
+  echo "════════════════════════════════════════════════════════════"
+  echo " Interval:        ${WATCH_INTERVAL}s"
+  echo " Watch log:       $WATCH_LOG"
+  echo "════════════════════════════════════════════════════════════"
+else
+  echo "════════════════════════════════════════════════════════════"
+  echo " n u l l e x i t   h o s t - r o u t i n g   d i a g n o s t i c"
+  echo "════════════════════════════════════════════════════════════"
+  echo " Timestamp (UTC): $TIMESTAMP"
+  echo " Project root:    $PROJECT_ROOT"
+  echo " Report file:     $REPORT_FILE"
+  echo " Mode:            $([ "$DO_FIX" = true ] && echo "diagnose + apply fix" || echo "diagnose only (pass --fix to remediate)")"
+  echo "════════════════════════════════════════════════════════════"
+  echo "" >&3
+  echo "════════════════════════════════════════════════════════════" >&3
+  echo " n u l l e x i t   h o s t - r o u t i n g   d i a g n o s t i c" >&3
+  echo "════════════════════════════════════════════════════════════" >&3
+  echo " Timestamp (UTC): $TIMESTAMP" >&3
+  echo " Mode:            $([ "$DO_FIX" = true ] && echo "diagnose + apply fix" || echo "diagnose only")" >&3
+fi
 
 # ─── Always add Homebrew to PATH (same as toggle.sh / recover.sh) ──────────
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 # ─── Pure-bash timeout (macOS lacks GNU `timeout`) ──────────────────────────
-# Borrowed verbatim from recover.sh — same semantics with one caveat: we
-# use `kill -9` (SIGKILL) for the timeout victim, so the child exits with
-# code 137 (128+9), NOT 143 (SIGTERM = 128+15). Same "kill the watchdog
-# on completion" trick to avoid the watchdog subprocess racing ahead.
 run_with_timeout() {
   local timeout_sec="$1"
   shift
   if [ "$#" -eq 0 ]; then return 1; fi
-  "$@" &  # ? "$@" & or "$@" >> "$LOG_FILE" 2>&1 &
+  "$@" &
   local cmd_pid=$!
   (
     sleep "$timeout_sec"
@@ -144,14 +160,158 @@ resolve_active_service() {
   printf '%s\n' "$svc"
 }
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Quick-check functions (used by --watch loop; return simple status strings)
+# Each echoes its result so the caller can capture and compare.
+# ═══════════════════════════════════════════════════════════════════════════
+
+quick_warp() {
+  # Returns: "on", "off", "unknown"
+  local out
+  out=$(run_with_timeout 8 curl -s --max-time 6 \
+        https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null || echo "")
+  local warp
+  warp=$(printf '%s' "$out" | awk -F'=' '/^warp=/{print $2; exit}')
+  printf '%s' "${warp:-unknown}"
+}
+
+quick_ipv6() {
+  # Returns: the IPv6 address if leaking, or empty string if clean
+  local out
+  out=$(run_with_timeout 7 curl -6 -s --max-time 5 ifconfig.co 2>/dev/null || echo "")
+  if [ -n "$out" ] && printf '%s' "$out" | grep -qE '^[0-9a-fA-F:]+$'; then
+    printf '%s' "$out"
+  fi
+}
+
+quick_default_route() {
+  # Returns: "utun" if default route is via Tailscale utun*,
+  #          "wifi" if via physical Wi-Fi (192.168.x.x),
+  #          "other" otherwise
+  local route
+  route=$(netstat -rn 2>/dev/null | awk '/^default/ {print $0; exit}')
+  if [ -z "$route" ]; then
+    printf '%s' "none"
+  elif printf '%s' "$route" | grep -qE 'utun[0-9]+'; then
+    printf '%s' "utun"
+  elif printf '%s' "$route" | grep -qE '^(default|0\.0\.0\.0).*\b192\.168\.'; then
+    printf '%s' "wifi"
+  else
+    printf '%s' "other"
+  fi
+}
+
+# ─── Watch loop (runs after baseline diagnostic when --watch is passed) ─────
+run_watch_loop() {
+  local baseline_warp="$1"
+  local baseline_default="$2"
+  local baseline_ipv6_leak="$3"
+  local interval="$4"
+
+  echo ""
+  echo "────────────────────────────────────────────────────────────"
+  echo " Baseline established. Monitoring every ${interval}s..."
+  echo "  warp:     $baseline_warp"
+  echo "  default:  $baseline_default"
+  echo "────────────────────────────────────────────────────────────"
+
+  # ── Safety: warn if interval is very short (avoids hammering APIs) ──
+  if [ "$interval" -lt 30 ]; then
+    printf '%b⚠  Short interval (%ss) — rate-limiting risk on external APIs%b\n' "$YELLOW" "$interval" "$NC"
+    printf '  Consider 30s or longer for production use.\n'
+  fi
+  printf '[%s] WATCH START  warp=%s  default=%s  interval=%ss\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$baseline_warp" "$baseline_default" "$interval" \
+    >> "$WATCH_LOG"
+
+  local iteration=0
+  local last_warp="$baseline_warp"
+  local last_default="$baseline_default"
+  local last_ipv6_ok=$([ "$baseline_ipv6_leak" = "false" ] && echo true || echo false)
+
+  trap 'printf "\n%bWatch stopped by user. Log at: %s%b\n" "$YELLOW" "$WATCH_LOG" "$NC"; exit 0' INT TERM
+
+  while true; do
+    iteration=$((iteration + 1))
+
+    local warp_now ipv6_now default_now
+    warp_now=$(quick_warp)
+    ipv6_now=$(quick_ipv6)
+    default_now=$(quick_default_route)
+
+    local ts
+    ts=$(date -u +%H:%M:%S)
+
+    # ─── WARP check ──────────────────────────────────────────────────────
+    if [ "$warp_now" != "$last_warp" ]; then
+      if [ "$warp_now" = "off" ] || [ "$warp_now" = "unknown" ]; then
+        printf '\n%b━━━━━━━━ ALERT ━━━━━━━━%b\n' "$RED$BOLD" "$NC"
+        printf '%b[%s] %bWARP FLIPPED: %s → %s%b — YOUR IP IS LEAKING!\n' \
+          "$RED" "$ts" "$BOLD" "$last_warp" "$warp_now" "$NC"
+        printf '[%s] ALERT  warp flipped  %s→%s\n' "$ts" "$last_warp" "$warp_now" >> "$WATCH_LOG"
+      else
+        printf '\n%b[%s] ✓ warp recovered: %s → %s%b\n' \
+          "$GREEN" "$ts" "$last_warp" "$warp_now" "$NC"
+        printf '[%s] OK     warp recovered  %s→%s\n' "$ts" "$last_warp" "$warp_now" >> "$WATCH_LOG"
+      fi
+      last_warp="$warp_now"
+    fi
+
+    # ─── IPv6 check ──────────────────────────────────────────────────────
+    if [ -n "$ipv6_now" ]; then
+      if [ "$last_ipv6_ok" = true ]; then
+        printf '\n%b━━━━━━━━ ALERT ━━━━━━━━%b\n' "$RED$BOLD" "$NC"
+        printf '%b[%s] %bIPv6 LEAK DETECTED → %s%b\n' \
+          "$RED" "$ts" "$BOLD" "$ipv6_now" "$NC"
+        printf '[%s] ALERT  IPv6 leak  %s\n' "$ts" "$ipv6_now" >> "$WATCH_LOG"
+        last_ipv6_ok=false
+      fi
+    else
+      if [ "$last_ipv6_ok" = false ]; then
+        printf '%b[%s] ✓ IPv6 leak resolved%b\n' "$GREEN" "$ts" "$NC"
+        printf '[%s] OK     IPv6 resolved\n' "$ts" >> "$WATCH_LOG"
+      fi
+      last_ipv6_ok=true
+    fi
+
+    # ─── Default route check ─────────────────────────────────────────────
+    if [ "$default_now" != "$last_default" ]; then
+      if [ "$default_now" != "utun" ]; then
+        printf '\n%b━━━━━━━━ ALERT ━━━━━━━━%b\n' "$RED$BOLD" "$NC"
+        printf '%b[%s] %bDEFAULT ROUTE CHANGED: %s → %s%b — traffic may bypass WARP!\n' \
+          "$RED" "$ts" "$BOLD" "$last_default" "$default_now" "$NC"
+        printf '[%s] ALERT  route changed  %s→%s\n' "$ts" "$last_default" "$default_now" >> "$WATCH_LOG"
+      else
+        printf '%b[%s] ✓ default route recovered: %s → %s%b\n' \
+          "$GREEN" "$ts" "$last_default" "$default_now" "$NC"
+        printf '[%s] OK     route recovered  %s→%s\n' "$ts" "$last_default" "$default_now" >> "$WATCH_LOG"
+      fi
+      last_default="$default_now"
+    fi
+
+    # ─── Heartbeat (every 10th iteration or if all OK) ───────────────────
+    if [ $((iteration % 10)) -eq 0 ]; then
+      printf '[%s] #%d  warp=%s  ipv6=%s  route=%s\n' \
+        "$ts" "$iteration" "$warp_now" "${ipv6_now:-none}" "$default_now" >> "$WATCH_LOG"
+      printf '\r%b[%s] #%d  warp=%s  route=%s  (Ctrl+C to stop)%b' \
+        "$GREEN" "$ts" "$iteration" "$warp_now" "$default_now" "$NC"
+    fi
+
+    sleep "$interval"
+  done
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Begin main diagnostic (skipped in non-watch modes if we're just watching)
+# ═══════════════════════════════════════════════════════════════════════════
+
 ACTIVE_SERVICE=$(resolve_active_service)
 EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>> "$LOG_FILE" \
               | grep -B 1 "Device: en0" | head -1 \
               | sed -E 's/^\([0-9\*]+\) //' || true)
 [ -z "$EN0_SERVICE" ] && EN0_SERVICE="Wi-Fi"
 
-# Resolve the gateway's Tailscale IP. Primary: ADGUARD_IP.txt (fast). Fallback:
-# docker compose exec on the running tailscale container (handles re-auths).
+# Resolve the gateway's Tailscale IP.
 GATEWAY_TS_IP=""
 if [ -f "$PROJECT_ROOT/ADGUARD_IP.txt" ]; then
   GATEWAY_TS_IP=$(cat "$PROJECT_ROOT/ADGUARD_IP.txt" 2>> "$LOG_FILE" \
@@ -165,10 +325,10 @@ if [ -z "$GATEWAY_TS_IP" ] && command -v docker >> "$LOG_FILE" 2>&1 \
 fi
 
 # ─── Scenario classification state ──────────────────────────────────────────
-SCENARIO=""          # A | B | C | ""
-WARP_STATUS=""       # "on" | "off" | "unknown"
+SCENARIO=""
+WARP_STATUS=""
 SOCKS5_ENABLED=false
-TS_ON_MESH=false     # is the host on the tailnet with the gateway reachable?
+TS_ON_MESH=false
 DEFAULT_VIA_UTUN=false
 IPV6_LEAK=false
 
@@ -179,15 +339,6 @@ if ! command -v tailscale >> "$LOG_FILE" 2>&1; then
   fail "tailscale CLI not on PATH — install via 'brew install tailscale' then re-run"
   echo "  (a Tailscale daemon is required for the exit-node path to work)"
 else
-  # 5s timeout: a wedged tailscaled manifests as a hang, not an immediate
-  # error (devref §10.26 documents this exact failure mode).
-  # Two bugs avoided here:
-  #   (a) `|| true` after run_with_timeout makes the pipeline exit 0 regardless,
-  #       so $TS_EXIT always reads 0 and the wedged-daemon check below is dead.
-  #   (b) run_with_timeout uses `kill -9` for the timeout victim, so the exit
-  #       code propagated is 137 (SIGKILL = 128+9), NOT 143 (SIGTERM = 128+15).
-  # The deliberate set +e / set -uo pipefail window captures the real exit code
-  # without disabling errexit for the rest of the script.
   set +e
   TS_OUT=$(run_with_timeout 5 tailscale status 2>&1)
   TS_EXIT=$?
@@ -218,10 +369,6 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 section "2/8  Active SOCKS5 proxy on Wi-Fi"
 # ═══════════════════════════════════════════════════════════════════════════
-# SOCKS5 "Enabled: Yes" means toggle.sh's pre-flight checks failed last run
-# and the script fell back to SOCKS5 + local DNS proxy (toggle.sh:849,894).
-# Modern browsers on macOS do NOT honor the system SOCKS5 proxy, so traffic
-# exits directly through UdeM even though DNS is hijacked.
 SOCKS_OUT=$(networksetup -getsocksfirewallproxy "$ACTIVE_SERVICE" 2>> "$LOG_FILE" \
              || networksetup -getsocksfirewallproxy Wi-Fi 2>> "$LOG_FILE" \
              || echo "Could not query SOCKS5 proxy state")
@@ -238,9 +385,6 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 section "3/8  Egress IP + WARP tunnel verification (definitive test)"
 # ═══════════════════════════════════════════════════════════════════════════
-# CDN-CGI's `trace` endpoint reports warp=on|off and the resolved colo —
-# it is far more reliable than whatismyip.com's ISP-detection database,
-# which frequently mislabels campus IPv6 ranges.
 CDN_OUT=$(run_with_timeout 8 curl -s --max-time 6 \
           https://www.cloudflare.com/cdn-cgi/trace 2>&1 || echo "(curl failed)")
 CDN_WARP=$(printf '%s' "$CDN_OUT" | awk -F'=' '/^warp=/{print $2; exit}')
@@ -264,9 +408,6 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 section "4/8  IPv6 leak probe (bypasses IPv4 exit-node on campus networks)"
 # ═══════════════════════════════════════════════════════════════════════════
-# The exit node AND WARP are IPv4-only. If the host has IPv6 enabled (true on
-# virtually every UdeM campus AP), any IPv6 AAAA query resolves and egresses
-# straight out en0, even when Tailscale is set as the exit node (devref §10.6).
 IPV6_OUT=$(run_with_timeout 7 curl -6 -s --max-time 5 ifconfig.co 2>&1 || echo "")
 if [ -n "$IPV6_OUT" ] && printf '%s' "$IPV6_OUT" | grep -qE '^[0-9a-fA-F:]+$'; then
   fail "host has live IPv6 egress → $IPV6_OUT (A6 record bypasses WARP)"
@@ -280,9 +421,6 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 section "5/8  Host default route (should be utun*, NOT 192.168.x.x)"
 # ═══════════════════════════════════════════════════════════════════════════
-# When Tailscale exit-node is active, macOS installs utunX as default route.
-# If the host default route points at the Wi-Fi gateway (192.168.x.x), the
-# routing-table assertion failed (devref §10.26 — route freeze).
 DEFAULT_ROUTE=$(netstat -rn 2>> "$LOG_FILE" | awk '/^default/ {print $0; exit}')
 if [ -z "$DEFAULT_ROUTE" ]; then
   warn "no default route detected"
@@ -352,14 +490,6 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════
 section "CLASSIFICATION  →  applies ONE of the four known scenarios"
 # ═══════════════════════════════════════════════════════════════════════════
-# Priority order (most-specific first):
-#   SE_PENDING. System Extension Pending Uninstall — brew tailscaled blocked by a pending SE delete
-#   A. SOCKS5 fallback lane active                — host traffic bypasses because browsers ignore macOS SOCKS5
-#   B. Tailscale routing OK, but IPv6 leak         — campus IPv6 AAAA egress skips the IPv4-only tunnel
-#   C. Route-freeze                               — Tailscale default route assertion failed on host
-#   OK. Everything checks out                     — host IS going through WARP; whatismyip.com's ISP DB is lying
-# We only pick the first scenario whose preconditions fully hold, to keep
-# the fix deterministic (one scenario → one fix command).
 
 if [ "$WARP_STATUS" = "on" ] && [ "$IPV6_LEAK" = "false" ]; then
   SCENARIO="OK"
@@ -462,8 +592,7 @@ esac
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Write the verdict block to the report file too (mirrors stdout so a user
-# inspecting the file without running the script gets the same conclusion).
+# Write the verdict block to the report file
 # ═══════════════════════════════════════════════════════════════════════════
 SECOND_BLOCK=$(cat <<EOF
 
@@ -483,10 +612,7 @@ EOF
 printf '%s\n' "$SECOND_BLOCK" >&3
 
 # ═══════════════════════════════════════════════════════════════════════════
-# --fix mode: apply the scenario-matched remediation, then re-verify only the
-# two checks that could change (warp + ipv6). We deliberately do NOT loop —
-# if the first fix doesn't take, the user gets a clearer second report to
-# paste back than a confused mid-fix-loop mess.
+# --fix mode
 # ═══════════════════════════════════════════════════════════════════════════
 if [ "$DO_FIX" = "true" ] && [ "$SCENARIO" != "OK" ] && [ "$SCENARIO" != "UNKNOWN" ]; then
   echo ""
@@ -502,11 +628,6 @@ if [ "$DO_FIX" = "true" ] && [ "$SCENARIO" != "OK" ] && [ "$SCENARIO" != "UNKNOW
       ;;
     A)
       if [ -n "$GATEWAY_TS_IP" ]; then
-        # In-place update of .env WITHOUT a temp-file round-trip. The naive
-        # `grep -v > tmp && mv tmp back` pattern destroys the file when the
-        # variable was not already present (grep matches nothing → tmp is
-        # empty → mv overwrites .env with empty content, wiping the user's
-        # WARP private key + TS auth key). Replace-or-append is safe.
         line "→ writing GATEWAY_BYPASS_PING=true to .env"
         ENV="$PROJECT_ROOT/.env"
         [ -f "$ENV" ] || touch "$ENV"
@@ -552,7 +673,6 @@ if [ "$DO_FIX" = "true" ] && [ "$SCENARIO" != "OK" ] && [ "$SCENARIO" != "UNKNOW
       ;;
   esac
 
-  # Re-verify the two checks that could change after a fix.
   echo ""
   echo "Re-verifying after fix..."
   sleep 3
@@ -584,6 +704,22 @@ echo "    $REPORT_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo ""
 
-# Only classify completed, not auto-exit (--fix returns success even if fix
-# failed; the verdict and report carry the relevant signals).
+# ═══════════════════════════════════════════════════════════════════════════
+# --watch mode: enter the continuous monitoring loop after baseline diagnostic
+# ═══════════════════════════════════════════════════════════════════════════
+if [ "$DO_WATCH" = "true" ]; then
+  # Build baseline from the full diagnostic just completed
+  BASELINE_WARP="$WARP_STATUS"
+  BASELINE_DEFAULT=$([ "$DEFAULT_VIA_UTUN" = "true" ] && echo "utun" || echo "wifi/other")
+
+  if [ "$SCENARIO" != "OK" ]; then
+    warn "Baseline diagnostic found issues (scenario: $SCENARIO)."
+    line "  Watch loop will still run — alerts fire on any STATE CHANGE from current baseline."
+    line "  Fix the issue first? Re-run with:  bash scripts/diagnose-host-leak.sh --fix"
+    echo ""
+  fi
+
+  run_watch_loop "$BASELINE_WARP" "$BASELINE_DEFAULT" "$IPV6_LEAK" "$WATCH_INTERVAL"
+fi
+
 exit 0
