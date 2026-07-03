@@ -20,7 +20,7 @@
 #   - checks /tmp/nullexit-gateway-active.marker (only act when toggle.sh left
 #     the gateway up)
 #   - debounces (10s default) so multiple events don't pile up
-#   - shells out to `bash <repo>/recover.sh --post-wake`
+#   - shells out to `bash <repo>/recover.sh --post-wake` via osascript GUI prompt
 #
 # See devref.md §10.29 for the full Apple power management primer and the
 # rationale behind using `log stream` + `scutil n.watch` from a shell daemon.
@@ -92,7 +92,7 @@ echo "[$(date -u +%FT%TZ)] watcher.sh start (pid=$$ ppid=$PPID user=$(id -un) lo
 if [ -f "$MARKER" ]; then
   echo "[$(date -u +%FT%TZ)] watcher.sh → triggering initial post-wake (launchd resume = wake signal)"
   echo "$(date +%s)" > "$DEBOUNCE_FILE"
-  bash "$RECOVER" --post-wake || true
+  osascript -e "do shell script \"bash \\\"$RECOVER\\\" --post-wake\" with administrator privileges" || true
   echo "[$(date -u +%FT%TZ)] initial post-wake → exit=$?"
 fi
 
@@ -112,7 +112,7 @@ run_recover() {
   fi
   echo "$now" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] $why → bash $RECOVER --post-wake"
-  bash "$RECOVER" --post-wake || true
+  osascript -e "do shell script \"bash \\\"$RECOVER\\\" --post-wake\" with administrator privileges" || true
   echo "[$(date -u +%FT%TZ)] $why → exit=$? (now=$(date +%s))"
 }
 
