@@ -91,6 +91,7 @@ write_gateway_active_marker() {
 
 clear_gateway_active_marker() {
   rm -f /tmp/nullexit-gateway-active.marker
+  rm -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/TUNNEL_FAILED_CLOSED.marker"
 }
 
 # Defensive: clear any stale marker from a prior crashed/aborted run. If a

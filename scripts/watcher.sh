@@ -180,6 +180,24 @@ run_recover() {
     sleep 5
   done
 ) &
+# ─── Listener 3: TUNNEL_FAILED_CLOSED.marker Watcher ──────────────────────────
+# Polls for the fail-closed marker dropped by the routing-fix container.
+(
+  last_notified=0
+  while :; do
+    if [ -f "$SCRIPT_DIR/../TUNNEL_FAILED_CLOSED.marker" ]; then
+      now=$(date +%s)
+      # Notify once every 5 minutes (300s) if it stays failed
+      if [ "$((now - last_notified))" -ge 300 ]; then
+        osascript -e 'display notification "VPN Tunnel Health Check Failed. Internet traffic is blackholed to prevent IP leak." with title "NullExit Alert"' || true
+        last_notified=$now
+      fi
+    else
+      last_notified=0
+    fi
+    sleep 3
+  done
+) &
 
 # ─── Lifetime ──────────────────────────────────────────────────────────────
 # `wait` blocks until both background pipelines exit (which they normally
