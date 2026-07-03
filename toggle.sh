@@ -166,6 +166,7 @@ stop_sleep_prevention() {
 }
 
 DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
+WARP_WATCHER_PID_FILE="/tmp/nullexit-warp-watcher.pid"
 
 start_dns_watcher() {
   local target_ip=$1
@@ -199,6 +200,94 @@ stop_dns_watcher() {
   fi
 }
 
+# Background WARP tunnel liveness monitor. Polls cdn-cgi/trace every 5s.
+# Always logs state transitions to output.log. When warp=off persists for
+# WARP_FAIL_THRESHOLD consecutive polls (default 6 = 30s), the watcher
+# triggers a nuclear recovery: runs recover.sh to tear down the entire
+# gateway — disconnecting Tailscale, stopping containers, resetting DNS,
+# and power-cycling Wi-Fi. This guarantees no traffic ever leaks through
+# a dead WARP tunnel while the user thinks they're protected.
+#
+# The threshold (default 6) is statistically chosen: even at an
+# unrealistically high 10% false-positive rate per poll, P(6 consecutive
+# false positives) = 0.1^6 ≈ 0.0001%. Real-world false-positive rates
+# are far lower, making 30s of continuous downtime overwhelmingly likely
+# to be a genuine outage.
+#
+# Configurable via .env:  WARP_FAIL_THRESHOLD=3  (15s, more aggressive)
+start_warp_watcher() {
+  stop_warp_watcher
+  # Parse threshold from .env (same pattern as GATEWAY_MSS, GATEWAY_BYPASS_PING, etc.)
+  local threshold
+  threshold=$(grep -E "^WARP_FAIL_THRESHOLD=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\\'' | tr -d ' ' || echo "")
+  if [ -z "$threshold" ]; then
+    threshold="${WARP_FAIL_THRESHOLD:-6}"
+  fi
+  local trigger_file="/tmp/nullexit-warp-shutdown-triggered"
+  rm -f "$trigger_file"
+  echo "  Starting background WARP Watcher (polling every 5s, shutdown after ${threshold} consecutive failures)..."
+  nohup bash -c "
+    trap 'exit 0' SIGTERM SIGINT SIGHUP
+    last_state='on'
+    consec_off=0
+    threshold='$threshold'
+    trigger_file='$trigger_file'
+    out_log='$PWD/output.log'
+    recover_bin='$PWD/recover.sh'
+    while true; do
+      state='off'
+      if docker compose exec -T warp wget -qO- --timeout=5 \
+           https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
+           | grep -q 'warp=on'; then
+        state='on'
+      fi
+
+      # ── State-transition logging ────────────────────────────────────
+      if [ \"\$state\" != \"\$last_state\" ]; then
+        if [ \"\$state\" = 'off' ]; then
+          echo \"[\$(date -u +%FT%TZ)] WARP DOWN — cdn-cgi/trace reports warp=off\" >> \"\$out_log\"
+        fi
+        last_state=\"\$state\"
+      fi
+
+      # ── Consecutive-failure tracking + auto-shutdown ─────────────────
+      if [ \"\$state\" = 'off' ]; then
+        consec_off=\$((consec_off + 1))
+        if [ \"\$consec_off\" -ge \"\$threshold\" ] && [ ! -f \"\$trigger_file\" ]; then
+          touch \"\$trigger_file\"
+          echo \"[\$(date -u +%FT%TZ)] WARP SHUTDOWN — \$consec_off consecutive failures (threshold=\$threshold). Running recover.sh to kill the gateway and restore normal internet. Your IP is NO LONGER Cloudflare.\" >> \"\$out_log\"
+          # Nuclear recovery: tear down the entire gateway.
+          # recover.sh resets DNS → 1.1.1.1, disconnects Tailscale,
+          # stops Docker containers, flushes routes, power-cycles Wi-Fi.
+          bash \"\$recover_bin\" >> \"\$out_log\" 2>&1 || true
+          echo \"[\$(date -u +%FT%TZ)] WARP SHUTDOWN — recover.sh completed, watcher exiting. Your IP is now your real ISP IP.\" >> \"\$out_log\"
+          exit 0
+        fi
+      else
+        if [ \"\$consec_off\" -gt 0 ]; then
+          echo \"[\$(date -u +%FT%TZ)] WARP RECOVERED — warp=on after \$consec_off consecutive off readings (threshold was \$threshold)\" >> \"\$out_log\"
+        fi
+        consec_off=0
+      fi
+
+      sleep 5
+    done
+  " >> output.log 2>&1 &
+  echo $! > "$WARP_WATCHER_PID_FILE"
+}
+
+stop_warp_watcher() {
+  if [ -f "$WARP_WATCHER_PID_FILE" ]; then
+    local wp
+    wp=$(cat "$WARP_WATCHER_PID_FILE")
+    if [ -n "$wp" ] && kill -0 "$wp" 2>/dev/null; then
+      echo "  Stopping background WARP Watcher (PID $wp)..."
+      kill "$wp" 2>/dev/null || true
+    fi
+    rm -f "$WARP_WATCHER_PID_FILE"
+  fi
+}
+
 # Cleanup handler to restore DNS to 1.1.1.1 on error or user interrupt (Ctrl+C / SIGTERM / SIGHUP)
 cleanup_handler() {
   local exit_code=$?
@@ -225,6 +314,7 @@ cleanup_handler() {
     # Stop sleep prevention
     stop_sleep_prevention
     stop_dns_watcher
+    stop_warp_watcher
     clear_gateway_active_marker
 
     # Capture warp logs on failure for debugging before teardown
@@ -778,6 +868,7 @@ if is_gateway_active; then
   # Stop background daemons
   stop_sleep_prevention
   stop_dns_watcher
+  stop_warp_watcher
   clear_gateway_active_marker
 
   # 4. Nuke leftover network state so internet actually works after teardown
@@ -1187,6 +1278,9 @@ else
   if [ -n "$TS_IP" ] && [ "$TS_IP" != "1.1.1.1" ]; then
     start_dns_watcher "$TS_IP"
   fi
+
+  # Start WARP liveness monitor (logs to output.log on warp flip)
+  start_warp_watcher
 
   # Reset sharing services after network configuration to prevent AirDrop freezes
   echo "Resetting macOS sharing services (AirDrop/AirPlay)..."

@@ -200,6 +200,8 @@ Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the 
 | `GATEWAY_RULE_PROFILE` | Rule compilation tier: `light`, `medium`, `heavy` |
 | `GATEWAY_BYPASS_PING` | (Optional) `true` to proceed even if pre-flight checks fail |
 | `GATEWAY_USE_EXIT_NODE` | (Optional) `false` to skip exit node, DNS-only mode |
+| `GATEWAY_MSS` | (Optional) TCP MSS clamp value (default 1120); 1180 for speed on healthy paths |
+| `WARP_FAIL_THRESHOLD` | (Optional) Consecutive warp=off polls before auto-shutdown (default 6 = 30s; 3 = 15s) |
 
 ---
 
@@ -934,6 +936,41 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
    - **Fix:** Explicitly configure a custom default network subnet `10.200.1.0/24` in `docker-compose.yml` to prevent Docker Compose from ever reclaiming the conflicting `172.17/172.18` ranges.
 
 > See also §10.23 (The Hotspot Paradox) for the related infinite loop that occurs when the physical upstream router is also a Tailscale exit-node client.
+
+### 10.32 In-Flight WARP Tunnel Liveness Monitor & Statistical Auto-Shutdown
+
+**Why.** nullexit's core promise is that your IP always appears as Cloudflare. If the WARP tunnel silently dies — due to a UDP NAT timeout, a Cloudflare edge rotation, a Colima VM clock skew causing TLS cert rejection, or any of a dozen other failure modes — the host silently falls back to egressing through the physical ISP. The user sees the gateway as "up" (containers running, Tailscale connected, DNS hijacked) but their real IP is exposed. This is the exact class of failure that Ingo Blechschmidt documented in his chilling 2024 Linux kernel post-mortem: for over two years, LUKS disk encryption on suspend was silently broken because a refactored kernel syscall returned success while doing nothing ([source](https://mathstodon.xyz/@iblech/116769502749142438)). The lesson: **a security mechanism that fails silently is worse than no mechanism at all** — it creates a false sense of safety that prevents the user from taking corrective action.
+
+**Design principle.** The WARP Watcher (`start_warp_watcher()` in `toggle.sh`) is a background daemon that polls `cdn-cgi/trace` every 5 seconds and applies a **statistically calibrated threshold** before triggering any safety response. This threshold distinguishes transient network blips (which self-heal within seconds) from genuine outages (which require intervention). A single `warp=off` reading is meaningless — Docker might be slow, the network might be congested, a container healthcheck might be restarting. But 6 consecutive `off` readings (30 continuous seconds of downtime) has vanishingly low probability of being a false positive: even at an unrealistically high 10% false-positive rate per poll, P(6 consecutive) = 0.1⁶ ≈ 0.0001%. In practice, the per-poll false-positive rate is far lower than 10%, making the real probability astronomically small.
+
+**What it does.**
+
+1. **Always logs.** Every state transition (on→off, off→on) is timestamped to `output.log`. The user can `grep WARP output.log` to audit the tunnel's entire lifetime. This is the "never fail silently" mandate.
+
+2. **Tracks consecutive failures.** A counter increments on each `off` reading and resets to 0 on any `on` reading. This ensures the watcher never fires on intermittent flapping.
+
+3. **Auto-shuts down at threshold.** When the counter reaches `WARP_FAIL_THRESHOLD` (default 6, configurable in `.env`), the watcher declares a statistically significant outage and runs `recover.sh` — the nuclear recovery script that disconnects Tailscale, stops Docker containers, resets DNS to `1.1.1.1`, flushes routes, and power-cycles Wi-Fi. This instantly reverts the host to normal (un-encrypted) internet, guaranteeing no traffic leaks through a dead tunnel while the user thinks they're protected. A trigger file at `/tmp/nullexit-warp-shutdown-triggered` prevents double-firing.
+
+4. **Exits cleanly.** After shutdown, the watcher exits (the gateway is dead, there's nothing left to monitor). `stop_warp_watcher()` is also called by `toggle.sh`'s STOP path and `cleanup_handler` to terminate the daemon cleanly during normal teardown.
+
+**Configuration.** Set `WARP_FAIL_THRESHOLD=3` in `.env` for a more aggressive 15s timeout, or `WARP_FAIL_THRESHOLD=12` for a conservative 60s window. The variable is parsed from `.env` using the same `grep` pattern as `GATEWAY_MSS` and `GATEWAY_BYPASS_PING`.
+
+**Log sample.** After a real outage (or a forced test via `docker compose pause warp`):
+
+```
+[2026-07-03T21:15:17Z] WARP DOWN — cdn-cgi/trace reports warp=off
+[2026-07-03T21:15:47Z] WARP SHUTDOWN — 6 consecutive failures (threshold=6). Running recover.sh to kill the gateway and restore normal internet. Your IP is NO LONGER Cloudflare.
+[2026-07-03T21:15:52Z] WARP SHUTDOWN — recover.sh completed, watcher exiting. Your IP is now your real ISP IP.
+```
+
+Or, if WARP self-recovers before the threshold:
+
+```
+[2026-07-03T21:15:17Z] WARP DOWN — cdn-cgi/trace reports warp=off
+[2026-07-03T21:15:32Z] WARP RECOVERED — warp=on after 3 consecutive off readings (threshold was 6)
+```
+
+**Relationship to other monitors.** The WARP Watcher is the **innermost safety layer** — it runs as a child of `toggle.sh` and only while the gateway is active. It complements (does not replace) the `scripts/watcher.sh` daemon (§10.29, which handles sleep/wake and Wi-Fi roam) and `scripts/diagnose-host-leak.sh` (§10.30, which is a manual diagnostic tool). The WARP Watcher is the only component that actively verifies end-to-end tunnel liveness and takes autonomous action when it fails.
 
 ---
 

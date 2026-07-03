@@ -241,6 +241,7 @@ GATEWAY_RULE_PROFILE=medium
 # Safe MSS for double-tunneled traffic (Tailscale + WARP). Change to 1180 if you experience slow speeds and have a healthy path.
 GATEWAY_USE_EXIT_NODE=true
 GATEWAY_MSS=1120
+WARP_FAIL_THRESHOLD=6
 KILL_SWITCH=false
 EOF
     ok ".env written."
