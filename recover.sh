@@ -416,8 +416,24 @@ if [ "$POST_WAKE" = "false" ]; then
   else
     ok "DNS Watcher was not active"
   fi
+
+  # ─── 6d. Stopping Host Leak Probe — default only ─────────────────────────
+  step "Stopping Host Leak Probe"
+  HOST_LEAK_PROBE_PID_FILE="/tmp/nullexit-host-leak-probe.pid"
+  if [ -f "$HOST_LEAK_PROBE_PID_FILE" ]; then
+    HP=$(cat "$HOST_LEAK_PROBE_PID_FILE")
+    if [ -n "$HP" ] && kill -0 "$HP" 2>/dev/null; then
+      kill "$HP" 2>/dev/null || true
+      ok "Host Leak Probe stopped (PID $HP)"
+    else
+      warn "Host Leak Probe process not running, cleaning up stale PID file"
+    fi
+    rm -f "$HOST_LEAK_PROBE_PID_FILE"
+  else
+    ok "Host Leak Probe was not active"
+  fi
 else
-  step "DNS Watcher: leaving untouched (it keeps re-hijacking DNS on every roam)"
+  step "DNS Watcher / Host Leak Probe: leaving untouched (it keeps re-hijacking DNS on every roam)"
 fi
 
 # ─── 7. Power-cycle Wi-Fi — default only ────────────────────────────────────
