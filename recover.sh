@@ -336,7 +336,6 @@ if [ "$POST_WAKE" = "true" ]; then
   fi
 
   # Also re-apply the default route pointing to the Tailscale interface
-  local ts_iface
   ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)
   if [ -n "$ts_iface" ]; then
     echo "Re-routing default gateway to $ts_iface..."
