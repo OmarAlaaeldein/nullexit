@@ -167,6 +167,7 @@ stop_sleep_prevention() {
 
 DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
 WARP_WATCHER_PID_FILE="/tmp/nullexit-warp-watcher.pid"
+HOST_LEAK_PROBE_PID_FILE="/tmp/nullexit-host-leak-probe.pid"
 
 start_dns_watcher() {
   local target_ip=$1
@@ -288,6 +289,37 @@ stop_warp_watcher() {
   fi
 }
 
+# Background host-egress leak prober. Polls cdn-cgi/trace directly from the
+# HOST (not via docker exec) at 300ms resolution. Logs LEAK / ROTATE / probe
+# failures to output.log on every state change. Enabled via HOST_LEAK_PROBE=true
+# in .env (default true). Safe to leave running for hours; ~1.4 MB RSS.
+start_host_leak_probe() {
+  stop_host_leak_probe
+  local enabled
+  enabled=$(grep -E "^HOST_LEAK_PROBE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\''  ' || echo "")
+  if [ -z "$enabled" ]; then
+    enabled="${HOST_LEAK_PROBE:-true}"
+  fi
+  if [ "$enabled" != "true" ]; then
+    return 0
+  fi
+  echo "  Starting background Host Leak Probe (polling every 300ms from HOST, logging to output.log)..."
+  nohup bash "$PWD/scripts/host-leak-probe.sh" >> "$PWD/output.log" 2>&1 &
+  echo $! > "$HOST_LEAK_PROBE_PID_FILE"
+}
+
+stop_host_leak_probe() {
+  if [ -f "$HOST_LEAK_PROBE_PID_FILE" ]; then
+    local hp
+    hp=$(cat "$HOST_LEAK_PROBE_PID_FILE")
+    if [ -n "$hp" ] && kill -0 "$hp" 2>/dev/null; then
+      echo "  Stopping background Host Leak Probe (PID $hp)..."
+      kill "$hp" 2>/dev/null || true
+    fi
+    rm -f "$HOST_LEAK_PROBE_PID_FILE"
+  fi
+}
+
 # Cleanup handler to restore DNS to 1.1.1.1 on error or user interrupt (Ctrl+C / SIGTERM / SIGHUP)
 cleanup_handler() {
   local exit_code=$?
@@ -315,6 +347,7 @@ cleanup_handler() {
     stop_sleep_prevention
     stop_dns_watcher
     stop_warp_watcher
+    stop_host_leak_probe
     clear_gateway_active_marker
 
     # Capture warp logs on failure for debugging before teardown
@@ -869,6 +902,7 @@ if is_gateway_active; then
   stop_sleep_prevention
   stop_dns_watcher
   stop_warp_watcher
+  stop_host_leak_probe
   clear_gateway_active_marker
 
   # 4. Nuke leftover network state so internet actually works after teardown
@@ -1281,6 +1315,9 @@ else
 
   # Start WARP liveness monitor (logs to output.log on warp flip)
   start_warp_watcher
+
+  # Start host-side egress leak prober (polls from HOST, not docker exec)
+  start_host_leak_probe
 
   # Reset sharing services after network configuration to prevent AirDrop freezes
   echo "Resetting macOS sharing services (AirDrop/AirPlay)..."
