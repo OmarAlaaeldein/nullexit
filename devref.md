@@ -1199,7 +1199,7 @@ On the Windows host, open `services.msc`, locate the **Sunshine Service**, and c
 - **Mesh-Wide Filesystem (SFTP over Tailscale):** Any mesh device passively exposes its filesystem over SFTP. Android via Termux + OpenSSH + wakelock; iOS is client-only due to background process limits.
 - **Post-Quantum Cryptography (PQC):** Tailscale uses Curve25519, theoretically vulnerable to "harvest now, decrypt later" quantum attacks. A future iteration could replace the Tailscale container with raw WireGuard + [Rosenpass](https://rosenpass.eu/) to negotiate post-quantum PSKs.
 
-## 11. Geo-IP Blocking
+## 17. Geo-IP Blocking
 
 To block traffic to and from specific countries, the system dynamically downloads country-specific IP ranges from [ipdeny.com](http://www.ipdeny.com/ipblocks/data/countries/) and drops them via iptables `FORWARD` rules.
 
@@ -1213,7 +1213,7 @@ To add a new country to the blocklist:
 > [!NOTE]
 > **Limitations of Geo-IP Blocking:** IP-based blocking is highly effective at blocking servers, direct apps, and raw infrastructure physically located and registered in a specific country (e.g., `www.gov.il`). However, it will **not** block high-profile websites (e.g., `jpost.com`) that route their traffic through global Content Delivery Networks (CDNs) like Google Cloud, Cloudflare, or Fastly. Because the CDN's IP addresses are registered in the US or globally, the network traffic physically never routes to the blocked country, allowing it to bypass the Geo-IP firewall.
 
-## 12. Incident Post-Mortems
+## 18. Incident Post-Mortems
 
 ### Incident: The Overnight Silent IP Leak (July 2026)
 
@@ -1228,3 +1228,24 @@ To add a new country to the blocklist:
 1. Added `WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s` (the WireGuard standard to beat standard 30s NAT timeouts) to keep the UDP tunnel permanently pinned open through the router.
 2. Injected a **Fail-Closed Kill-Switch** into `routing-fix.sh`: A 5-second loop now actively verifies tunnel health by running `curl` over `tun0` to Cloudflare's trace endpoint. If it fails 3 consecutive times, it immediately rewrites the default route to `blackhole`, severing all traffic instead of letting it leak through `eth0`.
 3. Added a listener in `watcher.sh` that detects this fail-closed event and instantly pushes a native macOS UI notification to the desktop, alerting the user to manually intervene.
+
+> [!NOTE]
+> **Why dual failure systems?** 
+> The system now relies on two independent failure handlers that cover each other's blind spots:
+> 1. **Automated Self-Healing (WARP Watcher + `recover.sh`):** Triggered when the `warp` container logs `warp=off`. This happens when the server actively kicks the client. Because the container *knows* it is disconnected, it triggers `recover.sh` to safely reboot Docker and reconnect.
+> 2. **Fail-Closed Kill-Switch (`routing-fix.sh` + `watcher.sh`):** Triggered when a silent network failure occurs (e.g., NAT timeouts). The container incorrectly believes it is connected (`warp=on`), so auto-recovery never fires. Instead of auto-recovering (which risks falling back to raw Wi-Fi mid-process while the user isn't looking), this kill-switch actively blackholes the internet and forces a manual intervention via a desktop notification.
+
+## 19. Design Decisions: Exit Node IP Rotation
+
+A common question for privacy architectures is whether the system should aggressively rotate its public exit IP (e.g., every 5 minutes, like a Tor circuit or a proxy rotator). 
+
+`nullexit` uses Cloudflare WARP via Gluetun. WARP provides **anonymity in a crowd** rather than aggressive rotation. Thousands of users share the same Cloudflare Edge IP simultaneously, making your traffic indistinguishable from the herd. The IP may occasionally rotate on its own (which `host-leak-probe.sh` logs as a `ROTATE` event), but it remains generally stable.
+
+**Why aggressive IP rotation was intentionally excluded:**
+1. **Broken TCP Connections:** Every rotation instantly drops all long-lived TCP sessions (SSH, large downloads, WebSockets, gaming, Zoom). 
+2. **CAPTCHA & 2FA Hell:** Modern web security (e.g., Cloudflare, Akamai) aggressively flags IP-hopping as bot behavior. Aggressive rotation guarantees the user will be bombarded with "Verify you are human" CAPTCHAs and "New Login Detected" 2FA emails constantly.
+3. **WireGuard Architecture:** WireGuard is stateless and does not natively support IP hopping on the fly. To rotate an IP, the VPN client must actively drop the tunnel, request a new endpoint, and re-handshake. This introduces latency gaps where the kill-switch would repeatedly trigger and blackhole the user's internet.
+
+**Verdict:** For a daily-driver secure gateway, shared-IP crowding (WARP) is superior to aggressive rotation. As an added benefit, Cloudflare WARP IPs are actually highly static (tied to the persistent WireGuard public key generated for your device identity). Because your IP stays static and is part of Cloudflare's own trusted network, it builds a high "trust score," virtually eliminating CAPTCHA loops while still hiding you within the massive crowd of other users in that data center. All mesh devices routing through your gateway will reliably share this exact same trusted IP. 
+
+*(Note: The only exception where aggressive IP rotation is genuinely required is for specialized offensive security tasks—like high-volume web scraping or dark web research—where avoiding IP bans or active tracking overrides the need for TCP stability.)*
