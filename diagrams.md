@@ -33,7 +33,7 @@ graph TB
                 TS["tailscale container\nAdvertises exit node\ntailscale0 interface"]
                 SOCKS["socks-proxy\nPython SOCKS5\nport 1080"]
                 ADGUARD["adguardhome\nDNS sinkhole\nport 5335"]
-                ROUTINGFIX["routing-fix sidecar\niptables + ip rule\nloop every 5s"]
+                ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Kill-Switch\n(curl healthcheck loop)"]
             end
         end
 
@@ -296,7 +296,7 @@ flowchart LR
         E3["DNS drifts from\ngateway IP"]
         E4["toggle.sh crashes /\nCtrl-C / SIGTERM"]
         E5["Host-side flash leak\ndetected (HOST NIC)"]
-        E6["User runs\nrecover.sh manually"]
+        E6["Silent NAT timeout\n(ping stops working)"]
     end
 
     subgraph DETECTORS["Detector"]
@@ -305,6 +305,7 @@ flowchart LR
         D3["DNS Watcher\n(15s poll, networksetup)"]
         D4["cleanup_handler\n(ERR/INT/TERM/HUP trap)"]
         D5["Host Leak Probe\n(300ms poll, HOST curl)"]
+        D6["routing-fix.sh\n(5s curl over tun0)"]
     end
 
     subgraph ACTIONS["Response"]
@@ -312,8 +313,9 @@ flowchart LR
         A2["recover.sh --post-wake\n(gentle refresh)"]
         A3["Re-hijack DNS\n(networksetup setdnsservers)"]
         A4["Stop all daemons\nReset DNS → 1.1.1.1\nTear down Tailscale"]
-        A5["Log LEAK to output.log\n(detection only, no action yet)"]
-        A6["recover.sh (nuclear)"]
+        A5["Log LEAK to output.log"]
+        A6["Blackhole internet traffic\n+ Drop TUNNEL_FAILED_CLOSED.marker"]
+        A7["Push macOS Desktop Notification\n(via watcher.sh listener)"]
     end
 
     E1 --> D1 --> A1
@@ -321,7 +323,9 @@ flowchart LR
     E3 --> D3 --> A3
     E4 --> D4 --> A4
     E5 --> D5 --> A5
-    E6 --> A6
+    E6 --> D6 --> A6
+    A6 -.->|"marker detected"| D2
+    D2 --> A7
 
     style EVENTS fill:#2d1010,color:#ffcccc
     style DETECTORS fill:#0a1a2d,color:#cce0ff
