@@ -227,6 +227,13 @@ cleanup_handler() {
     stop_dns_watcher
     clear_gateway_active_marker
 
+    # Capture warp logs on failure for debugging before teardown
+    if [ "$trigger_type" = "ERR" ]; then
+      echo -e "\n--- WARP FAILURE LOGS ---" >> output.log
+      docker compose logs warp --tail=100 >> output.log 2>&1 || true
+      echo "-------------------------" >> output.log
+    fi
+
     # Best-effort container teardown on failure
     docker compose down --remove-orphans -t 30 2>> output.log || true
 
