@@ -242,6 +242,8 @@ GATEWAY_RULE_PROFILE=medium
 GATEWAY_USE_EXIT_NODE=true
 GATEWAY_MSS=1120
 WARP_FAIL_THRESHOLD=6
+# Set to false to disable the 300ms host-egress leak prober (scripts/host-leak-probe.sh).
+HOST_LEAK_PROBE=true
 KILL_SWITCH=false
 EOF
     ok ".env written."
