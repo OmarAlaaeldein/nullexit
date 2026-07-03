@@ -251,12 +251,9 @@ def fetch_remote_domains(url):
                 raise ValueError(f"Sanity check failed: only found {len(domains)} domains. Possible 404 or bad URL.")
             
             # Save raw content to cache ONLY if sanity check passes.
-            # setup may have written the file with restrictive mode).
             try:
-                tmp_cache = cache_file + ".tmp"
-                with open(tmp_cache, 'w', encoding='utf-8') as f:
+                with open(cache_file, 'w', encoding='utf-8') as f:
                     f.write(content)
-                os.replace(tmp_cache, cache_file)
             except Exception as e:
                 print(f" -> Warning: Failed to save cache file ({e})")
                 
@@ -379,10 +376,8 @@ def fetch_remote_ips(url):
             raise ValueError(f"Sanity check failed: only {len(ips)} IPs found. Possible 404.")
 
         try:
-            tmp_cache = cache_file + ".tmp"
-            with open(tmp_cache, 'w', encoding='utf-8') as f:
+            with open(cache_file, 'w', encoding='utf-8') as f:
                 f.write(content)
-            os.replace(tmp_cache, cache_file)
         except Exception as e:
             print(f" -> Warning: cache write failed ({e})")
 
@@ -556,7 +551,7 @@ def main():
 
     # Generate AdGuard Syntax
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    with open(OUTPUT_PATH, 'w') as f:
+    with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
         f.write("! Custom Compiled Rules (Auto-Generated)\n")
         f.write(f"! Memory Profile: {profile.upper()}\n")
         f.write(f"! Total Block Rules: {len(black_list)}\n")
@@ -590,13 +585,11 @@ def main():
 
     print(f"\nSuccessfully compiled {len(black_list)} block rules and {len(white_list)} allow rules to {OUTPUT_PATH}")
 
-    # Atomically replace AdGuard Home's cached filter file so the next restart
+    # Overwrite AdGuard Home's cached filter file so the next restart
     # loads the new whitelist. We OVERWRITE — not DELETE — because AdGuard Home
     # treats a missing cache file as "filter disabled" rather than "filter
     # needs re-fetch"; deleting silently disables the filter instead of
     # reloading from disk.
-    # NOTE: We do not touch file permissions here. The cache file is written
-    # with whatever mode the caller / umask produces — that's fine.
     cached_filter_path = get_adguard_compiled_rules_cache_path()
     if cached_filter_path:
         try:
