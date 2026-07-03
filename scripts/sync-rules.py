@@ -253,8 +253,10 @@ def fetch_remote_domains(url):
             # Save raw content to cache ONLY if sanity check passes.
             # setup may have written the file with restrictive mode).
             try:
-                with open(cache_file, 'w', encoding='utf-8') as f:
+                tmp_cache = cache_file + ".tmp"
+                with open(tmp_cache, 'w', encoding='utf-8') as f:
                     f.write(content)
+                os.replace(tmp_cache, cache_file)
             except Exception as e:
                 print(f" -> Warning: Failed to save cache file ({e})")
                 
@@ -377,8 +379,10 @@ def fetch_remote_ips(url):
             raise ValueError(f"Sanity check failed: only {len(ips)} IPs found. Possible 404.")
 
         try:
-            with open(cache_file, 'w', encoding='utf-8') as f:
+            tmp_cache = cache_file + ".tmp"
+            with open(tmp_cache, 'w', encoding='utf-8') as f:
                 f.write(content)
+            os.replace(tmp_cache, cache_file)
         except Exception as e:
             print(f" -> Warning: cache write failed ({e})")
 
@@ -646,7 +650,7 @@ def main():
             import urllib.request as _ur, base64 as _b64
             creds = _b64.b64encode(b"admin:nullexit").decode("ascii")
             req = _ur.Request(
-                "http://127.0.0.1:80/control/filtering/refresh",
+                "http://127.0.0.1:3000/control/filtering/refresh",
                 method="POST",
                 headers={"Authorization": f"Basic {creds}", "Content-Type": "application/json"},
                 data=b"{}",

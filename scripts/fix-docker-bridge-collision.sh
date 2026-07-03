@@ -72,11 +72,11 @@ if [ -t 1 ]; then
 else
   RED=''; GREEN=''; YELLOW=''; BOLD=''; NC=''
 fi
-step()  { printf '\n%s▶ %s%s\n' "$BOLD" "$*" "$NC"; }
-ok()    { printf '  %s✓%s %s\n' "$GREEN" "$NC" "$*"; }
-warn()  { printf '  %s⚠%s %s\n' "$YELLOW" "$NC" "$*"; }
-fail()  { printf '  %s✗%s %s\n' "$RED"   "$NC" "$*"; }
-die()   { printf '\n  %s✗%s %s\n\n' "$RED" "$NC" "$*"; exit 1; }
+step()  { printf '\n%b▶ %s%b\n' "$BOLD" "$*" "$NC"; }
+ok()    { printf '  %b✓%b %s\n' "$GREEN" "$NC" "$*"; }
+warn()  { printf '  %b⚠%b %s\n' "$YELLOW" "$NC" "$*"; }
+fail()  { printf '  %b✗%b %s\n' "$RED"   "$NC" "$*"; }
+die()   { printf '\n  %b✗%b %s\n\n' "$RED" "$NC" "$*"; exit 1; }
 
 # Helper: print "[dry-run] $cmd" or actually run $cmd. Wraps the redirect
 # INSIDE the function so outer `>> $FILE` statements never accidentally
@@ -296,7 +296,7 @@ else
 fi
 
 # Always show the final colima.yaml docker section for visibility
-printf '\n%s  colima.yaml `docker:` section now reads:%s\n' "$BOLD" "$NC"
+printf '\n%b  colima.yaml `docker:` section now reads:%b\n' "$BOLD" "$NC"
 awk '
   /^docker:/{p=1}
   p && /^[^ ]/ && !/^docker:/{exit}
@@ -304,7 +304,7 @@ awk '
 ' "$COLIMA_YAML" 2>/dev/null | sed 's/^/    /' || true
 
 if [ "$DRY_RUN" = "true" ]; then
-  printf '\n  %s(dry-run: exiting before colima restart / dhcp rebind / toggle.sh)%s\n' "$YELLOW" "$NC"
+  printf '\n  %b(dry-run: exiting before colima restart / dhcp rebind / toggle.sh)%b\n' "$YELLOW" "$NC"
   exit 0
 fi
 
@@ -395,7 +395,7 @@ else
   warn "diagnostic exited non-zero; verify manually"
 fi
 
-printf '\n%s════════════════════════════════════════════════════════════%s\n' "$BOLD" "$NC"
-printf '%sDone.%s Full transcript at %s\n' "$BOLD" "$NC" "$LOG_FILE"
-printf '%s════════════════════════════════════════════════════════════%s\n' "$BOLD" "$NC"
+printf '\n%b════════════════════════════════════════════════════════════%b\n' "$BOLD" "$NC"
+printf '%bDone.%b Full transcript at %s\n' "$BOLD" "$NC" "$LOG_FILE"
+printf '%b════════════════════════════════════════════════════════════%b\n' "$BOLD" "$NC"
 exit 0

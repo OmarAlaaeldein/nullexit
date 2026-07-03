@@ -786,6 +786,7 @@ if is_gateway_active; then
   ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
   echo -e "\nGateway has been successfully STOPPED in ${ELAPSED} seconds."
 else
+  START_GATEWAY=true
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Action: STARTUP GATEWAY" >> "$LOG_FILE"
   echo -e "\n=============================================="
   echo "Gateway is STOPPED. Starting it now..."
