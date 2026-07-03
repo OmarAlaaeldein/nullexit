@@ -1,6 +1,6 @@
 # nullexit — Development Reference & Resolved Issues
 
-> **Last updated:** July 1, 2026
+> **Last updated:** July 3, 2026
 > **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
 
 ---
@@ -74,6 +74,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `white_list.txt` | 222 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
 | `.env` | ~14 | WARP WireGuard keys, Tailscale auth key, rule profile. **Contains secrets.** |
 | `ADGUARD_IP.txt` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
+| `scripts/unlock-files.sh` | ~20 | **One-shot stale-permission fix.** Uses atomic rename (`cp` + `mv`) to replace locked inodes (mode `000`/`0444` from old `chmod` decisions) with fresh writable ones — no `chmod` called. Run once after setup or after pulling an old repo to fix permission-denied errors in `sync-rules.py`, `toggle.sh`, or `docker compose`. Covers `.env`, `adguard/work/userfilters/*`, `adguard/work/data/filters/*`. See §10.28. |
 
 ---
 
@@ -659,9 +660,13 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 1. The script now automatically runs `sudo -n killall sharingd rapportd` at the end of both the **START** path and the **STOP** path (as well as inside `recover.sh`).
 2. Killing these daemons forces macOS to immediately relaunch them, binding them fresh to the newly initialized network interfaces and routing tables, allowing AirDrop to work seamlessly while the gateway is active.
 
-### 10.28 Unlocking Mode-Locked Output Files Without `chmod`
+### 10.28 Unlocking Mode-Locked Output Files Without `chmod` (→ `unlock-files.sh`)
+
+**The one-command fix:** `bash scripts/unlock-files.sh` — replaces every known locked inode in the project with a fresh writable one. No `chmod`. Covers `.env` (mode `000`), `adguard/work/userfilters/compiled_rules.txt`, `ip_blocklist.ipset`, `cache/*.txt`, `cache/ip/*.txt`, and `adguard/work/data/filters/*.txt` (mode `0444`). Run it once after setup or after pulling an old repo; `toggle.sh` and `sync-rules.py` will then work without permission errors.
 
 **Context:** The nullexit project has a strict project-wide policy of `no chmod from scripts` (see README §6). This rule exists because every prior `chmod 0444` (post-write tamper-proof lock) and `chmod 000` (post-toggle `.env` lock) call from `scripts/sync-rules.py` / `toggle.sh` could leave a file permanently unreadable on disk if the script exited early, was killed mid-flight, or simply set a restrictive mode without ever being re-flipped. We've stripped every `chmod` from the codebase. But files **written by older versions of those scripts** are still on disk in those restrictive modes (`0444` for `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/<id>.txt`; `000` for `.env` after end-of-toggle lock). Re-running `toggle.sh` or `scripts/sync-rules.py` against those leftovers hits `PermissionError: [Errno 13] Permission denied` immediately.
+
+**Why the stale permissions also block `mv`/`rm` of the parent folder:** The restrictive modes (`000` on `.env`, `0444` on output files) don't just block writes — they prevent the kernel from unlinking the file's dentry during a `mv` or `rm` of the **containing directory** (`adguard/work/`). macOS enforces this at the VFS layer: you own the directory, but you can't delete a directory that contains entries you can't write to. This made the entire `adguard/work/` tree unmovable/undeletable until the locked inodes inside it were replaced. `unlock-files.sh` resolves this permanently by swapping each locked inode for a fresh `0644` one via atomic rename (`cp` + `mv`), which operates on the directory entry rather than the file contents — no `chmod` called, no permission bypass needed.
 
 **Problem:** You (the owner) cannot `cat`, `cp`, `rm`, `> redirect`, or any normal POSIX write against a `mode=000` file even though you own it — the basic mode bits block ALL access for owner, group, and other. The script does not call `chmod` and you want a permanent fix that never relies on a chmod from any future run either.
 
@@ -941,13 +946,14 @@ Reflects the current branch's state. Each entry one line + commit hash; read the
 - **July 2, 2026 — `feat: secure execution` (security: script lockdown & auth)** — Fixed a major privilege escalation vulnerability and added native macOS authentication prompts to `Toggle Gateway.app` and `Recover Gateway.app`. Previous setups granted `/usr/bin/python3` blanket `NOPASSWD` sudo access, allowing malware to bypass macOS security. We restricted `NOPASSWD` exclusively to `/usr/bin/python3 /Users/<USER>/Developer/nullexit/scripts/dns-proxy.py`. Additionally, `scripts/dns-proxy.py` was locked down with `chown root:wheel` and `chmod 755` so attackers cannot overwrite the script and exploit the restricted sudo rule. `toggle.sh` was also updated to capture `warp` container logs on failure before tearing down the environment.
 - **July 3, 2026 — `fix: resolve numerous system regressions`** — Addressed several breakages introduced in recent commits: 
   1. Fixed a truncated line syntax error in `/etc/sudoers.d/nullexit` that broke `NOPASSWD` fallback commands.
-  2. Fixed a `[Errno 13] Permission denied` error in `sync-rules.py` cache writes by using a temporary file and atomic `os.replace()` to bypass inherited mode locks (0444/000).
+  2. Fixed a `[Errno 13] Permission denied` error in `sync-rules.py` cache writes by using a temporary file and atomic `os.replace()` to bypass inherited mode locks (0444/000). **(Later reverted — see below.)**
   3. Fixed a quoting bug in `recover.sh` where `ts_args=""` passed literal escaped quotes.
   4. Repaired ANSI color outputs in `diagnose-host-leak.sh` and `fix-docker-bridge-collision.sh` using `%b` instead of `%s` and `-e` flags.
   5. Fixed `toggle-linux.sh` calling a macOS-only `networksetup` command instead of `resolvectl dns`.
   6. Corrected the AdGuard REST API refresh POST in `sync-rules.py` to correctly target port `3000`.
   7. Restored the missing `START_GATEWAY=true` variable in `toggle.sh` and purged a stale port `80` mapping from `docker-compose.yml`.
   8. Verified `output.log` is untracked and safely in `.gitignore`.
+- **July 3, 2026 — `unlock-files.sh` + revert atomic writes in `sync-rules.py`** — The `.tmp` + `os.replace()` atomic-write pattern introduced in the commit above was a workaround for stale restrictive file permissions (mode `0444`/`000`) left on disk by old `chmod` calls that had already been removed from the codebase. Rather than keep the workaround, we created `scripts/unlock-files.sh` — a one-shot script that permanently fixes the stale permissions by replacing each locked inode with a fresh writable one via atomic rename (`cp` + `mv`), operating on the directory entry instead of the file contents. No `chmod` used. All 5 `.tmp` + `os.replace()` sites in `sync-rules.py` were reverted back to direct writes. `scripts/unlock-files.sh` covers: `.env` (mode `000`), `adguard/work/userfilters/compiled_rules.txt`, `ip_blocklist.ipset`, `cache/*.txt`, `cache/ip/*.txt`, and `adguard/work/data/filters/*.txt` (mode `0444`). Run once after setup or pulling an old repo; `toggle.sh` and `sync-rules.py` then work without permission errors. Documented in §10.28 + §3.
 - **July 1, 2026 — `c5b92c0` (refactor: personal-leak cleanup)** — eliminated every residual personal-username leak across source + config files. The launchd `com.nullexit.wake-recovery.plist` now uses `WorkingDirectory` + a relative program arg with the `__NULLEXIT_HOME__` sentinel; the install recipe in §10.29 gains a single `sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|"` step right after the `cp`. 8 `devref.md` prose sites genericized to `~/.colima/...`, `~/Library/LaunchAgents/...`, `$USER` for sample output, `<USER>` for the sudoers example.
 - **July 1, 2026 — `a5e2a5a` (refactor: script-relative paths)** — replaced 6 hardcoded `/Users/<user>/<anywhere>/nullexit/...` source-code sites (former per-user install-location literals) with script-relative resolution. `recover.sh` injects `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` near the top and uses it for the post-wake warn (l.321) and the broken-for-60s hint echo (l.446). `scripts/watcher.sh` uses the same pattern; `RECOVER="$SCRIPT_DIR/../recover.sh"` resolves without launching-path dependency.
 - **June 28, 2026 — `f8f8e4e` (M1: scripts/ move)** — 8 internal-collaborator scripts (routing-fix.sh, socks5-proxy.py, dns-proxy.py, sync-rules.py, logger.py, toggle-linux.sh, recover-linux.sh, setup-linux.sh) consolidated into a `scripts/` subfolder. The 4 user-facing / orchestrator / config files (`toggle.sh`, `recover.sh`, `setup.sh`, `docker-compose.yml`) deliberately stayed at repo root.
