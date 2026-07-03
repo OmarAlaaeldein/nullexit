@@ -948,3 +948,141 @@ Reflects the current branch's state. Each entry one line + commit hash; read the
 Manual START → STOP cycle ran clean on macOS after the path relativization + personal-leak cleanup landed:
 - `bash toggle.sh` START: exit 0, ~135s (cold Colima boot); marker present (`2026-07-02T03:41:41Z`), all 5 containers healthy, host DNS hijacked to `100.100.21.8` (no fallback), exit node selected, Cloudflare trace through WARP succeeds.
 - `bash toggle.sh` STOP: exit 0, ~12s; marker cleared, all nullexit containers gone, host DNS restored to `1.1.1.1`, Tailscale disconnected.
+
+---
+
+## 12. Privacy Architecture, Threat Model & Upgrades
+
+### Layered Defense
+The gateway stacks four layers targeting different attack surfaces:
+
+- **Layer 1 — ISP-Level Surveillance (WARP):** Your ISP sees only an encrypted WireGuard tunnel to a Cloudflare IP. In the US, ISPs can legally sell your browsing metadata and are subject to secret NSLs (National Security Letters). WARP removes their visibility entirely.
+- **Layer 2 — DNS Tracking (AdGuard Home):** DNS is the phone book of the internet. By default, queries go to your ISP's resolver, giving them a complete log of your traffic. AdGuard intercepts all DNS from mesh devices, blocks trackers, and resolves queries through the WARP tunnel.
+- **Layer 3 — Device Identity & IP Exposure (Tailscale):** On untrusted networks (coffee shops, public Wi-Fi), your device's IP is exposed. Tailscale creates an encrypted WireGuard mesh between your devices, routing all traffic to your gateway exit node.
+- **Layer 4 — Kernel-Level IP Blocking (ipset/iptables):** Sophisticated malware bypasses DNS entirely with hardcoded IPs. The `rule-compiler` fetches ~16,700 threat-intelligence IPs/CIDRs (Spamhaus, Feodo Tracker, Emerging Threats, CINS) and enforces them as `DROP` rules in the kernel `FORWARD` chain — blocking both outbound C2 connections and inbound attack traffic.
+
+### The Documented Threat: Why This Matters
+This architecture is calibrated against documented mass-surveillance programs revealed in the Snowden disclosures:
+- **PRISM:** Bulk collection of communication content from major tech providers.
+- **UPSTREAM:** Tapping physical backbone fiber, collecting metadata and content in bulk.
+- **XKeyscore:** Retroactive search of unencrypted traffic.
+- **MUSCULAR:** Infiltration of unencrypted internal datacenter interconnect links.
+
+Passive bulk collection is not paranoia — it is a documented reality. By double-encrypting and routing traffic, nullexit prevents your ISP from harvesting your metadata.
+
+### Trust Assumptions & Shifting
+Every component shifts trust rather than eliminating it:
+1. **Physical Device Integrity:** You trust your physical devices are not compromised.
+2. **Cloudflare Integrity:** You trust Cloudflare not to correlate your WARP tunnel with exit traffic.
+3. **Tailscale Integrity:** You trust Tailscale's coordination server not to MITM WireGuard keys.
+
+The goal: no single provider has a complete picture. Your ISP sees an encrypted tunnel. WARP sees traffic with no account identity. Tailscale sees node topology but not content.
+
+### Recommended Upgrades
+
+| Layer | Default | Upgraded |
+|---|---|---|
+| VPN Exit | Cloudflare WARP (US) | Mullvad (Swedish, proven no-logs, anonymous payment) |
+| DNS Resolver | AdGuard via WARP | AdGuard via Mullvad DoH (Cloudflare-blind) |
+| Coordination | Tailscale (US, OAuth) | Headscale (self-hosted, no third-party) |
+| Auth | OAuth / persistent keys | Ephemeral auth keys (no identity persistence) |
+| Content | WireGuard asymmetric | WireGuard + PSKs (coordination server blind) |
+
+#### Mullvad (Replacing WARP)
+Swedish-based. Police raided their offices in 2023 and left empty-handed — no logs exist to seize. Accounts are random numbers. Payment by cash or Monero. Replace `VPN_SERVICE_PROVIDER=custom` with `VPN_SERVICE_PROVIDER=mullvad` in `docker-compose.yml`.
+
+#### Mullvad DoH Upstreams
+Point AdGuard's upstream resolvers to `https://adblock.dns.mullvad.net/dns-query`. Cloudflare WARP only sees encrypted HTTPS to Mullvad's IPs — completely blind to your DNS queries.
+
+#### Headscale
+Self-hosted Tailscale coordination server. Eliminates Tailscale the company, keeping all node topology under your control.
+
+#### Ephemeral Auth Keys
+Generate in the Tailscale admin panel. Used once to authenticate; node disappears from the admin panel after disconnect. Breaks persistent identity linkage.
+
+#### Pre-Shared Keys (PSKs)
+Add a WireGuard PSK between peer nodes. Adds a symmetric encryption layer that Tailscale's coordination server has no knowledge of, blinding it from reading transit content.
+
+### Honest Remaining Limitations
+- **Traffic Analysis / Metadata:** Passive fiber tapping (UPSTREAM) can observe timestamps, data volumes, and IP ranges without reading content. Defeating traffic analysis requires mixing networks (Tor) or continuous dummy packet padding — both heavily degrade performance.
+- **Targeted State-Level Adversaries:** Consumer-grade VPNs are not a complete shield against a nation-state actively targeting you. This stack is designed to defeat bulk passive surveillance and corporate dragnet collection.
+
+---
+
+## 13. Per-Device Access Control
+
+Because every mesh device routes internet-bound traffic through the `warp` container's `FORWARD` chain, they all appear with their stable `100.x.x.x` Tailscale IP as the `src` address. This gives two powerful enforcement surfaces:
+
+### IP & Port Level (`scripts/routing-fix.sh`)
+Write raw `iptables` rules targeting specific devices. The 5-second idempotent loop auto-survives Gluetun reconnects:
+
+```bash
+# Block a specific device from a target subnet
+iptables -I FORWARD -s 100.x.x.x -d 203.0.113.0/24 -j DROP
+
+# Restrict a device to only HTTP/HTTPS
+iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 80 -j DROP
+iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 443 -j DROP
+
+# Block a device from internet egress entirely (mesh only)
+iptables -I FORWARD -s 100.x.x.x -j DROP
+
+# Time-based (e.g., cut off 10 PM – 7 AM)
+iptables -I FORWARD -s 100.x.x.x -m time --timestart 22:00 --timestop 07:00 -j DROP
+```
+
+### DNS Level (AdGuard REST API)
+AdGuard Home supports per-client rules keyed by Tailscale IP:
+
+```bash
+curl -X POST http://localhost:80/control/clients/add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "kids-ipad",
+    "ids": ["100.x.x.x"],
+    "blocked_services": ["youtube", "tiktok", "instagram"],
+    "safesearch_enabled": true
+  }'
+```
+
+---
+
+## 14. Packaging nullexit as a macOS Application (.dmg)
+
+nullexit can be packaged into a native `.app` bundle, but this introduces nested virtualization requirements.
+
+nullexit uses **Colima** (Apple Virtualization Framework `vz`) to run a Linux VM hosting Docker. Installing the `.app` inside a virtualized macOS environment (Parallels, cloud Mac) means running a Linux VM inside a macOS VM — requiring hardware-level **nested virtualization**.
+
+### Hardware Support
+- **Supported:** Apple Silicon M3/M4 (macOS Sequoia 15+), Intel Macs with VMX passthrough.
+- **Unsupported:** M1, M2, A18 Pro. Colima crashes silently; the terminal (`setup.sh`) surfaces crash logs.
+
+### Build Steps
+```bash
+# 1. Verify nested virtualization support
+sysctl -a | grep hv_nested_virt_supported  # expect: 1
+
+# 2. Compile the AppleScript launcher
+osacompile -o "Nullexit.app" "Toggle Gateway.applescript"
+
+# 3. Embed scripts into app resources
+mkdir -p "Nullexit.app/Contents/Resources/scripts"
+cp toggle.sh setup.sh recover.sh docker-compose.yml "Nullexit.app/Contents/Resources/"
+
+# 4. Package into DMG
+hdiutil create -volname "Nullexit Installer" -srcfolder "./Nullexit.app" -ov -format UDZO Nullexit.dmg
+
+# 5. Bypass Gatekeeper (unsigned app)
+xattr -cr /Applications/Nullexit.app
+```
+
+Without a paid Apple Developer certificate ($99/yr), users see an "App is damaged" Gatekeeper warning and need to run step 5.
+
+---
+
+## 15. Future Work
+
+- **Direct P2P on VM Hosts:** Non-Linux hosts run Docker inside a VM, making true UDP hole-punching impossible. The only working solution is a native Linux host (Raspberry Pi, Intel NUC) where Docker runs without VM hypervisor translation.
+- **Native Linux Deployment:** Benchmark on a Raspberry Pi — native container footprint is ~75MB without macOS hypervisor overhead.
+- **Mesh-Wide Filesystem (SFTP over Tailscale):** Any mesh device passively exposes its filesystem over SFTP. Android via Termux + OpenSSH + wakelock; iOS is client-only due to background process limits.
+- **Post-Quantum Cryptography (PQC):** Tailscale uses Curve25519, theoretically vulnerable to "harvest now, decrypt later" quantum attacks. A future iteration could replace the Tailscale container with raw WireGuard + [Rosenpass](https://rosenpass.eu/) to negotiate post-quantum PSKs.
