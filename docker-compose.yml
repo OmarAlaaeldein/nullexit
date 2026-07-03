@@ -13,6 +13,7 @@ services:
       - "41641:41641/udp"  # Tailscale WireGuard (direct connection to host)
       - "1080:1080/tcp"    # SOCKS5 proxy (routed through WARP tunnel)
     environment:
+      - TZ=America/New_York
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
@@ -20,6 +21,8 @@ services:
       - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
       - WIREGUARD_ENDPOINT_IP=162.159.192.1
       - WIREGUARD_ENDPOINT_PORT=2408
+      # Set to 25s (WireGuard default) to beat standard 30s hardware NAT/firewall UDP timeouts
+      - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
       # MTU Fix (Critical): Prevent packet fragmentation from double-encryption
       - WIREGUARD_MTU=1280
       # Give WARP more time to establish the connection before internal restart (default is 6s which is too short)
@@ -75,6 +78,7 @@ services:
       - net.ipv4.ip_forward=1
       - net.ipv6.conf.all.forwarding=1
     environment:
+      - TZ=America/New_York
       - TS_EXTRA_ARGS=--advertise-exit-node
       - PORT=41641
       - TS_USERSPACE=false
@@ -104,6 +108,8 @@ services:
     depends_on:
       warp:
         condition: service_healthy
+    environment:
+      - TZ=America/New_York
     volumes:
       - ./scripts/socks5-proxy.py:/socks5-proxy.py:ro
     command: python3 /socks5-proxy.py --bind 0.0.0.0 --port 1080
@@ -137,6 +143,7 @@ services:
       rule-compiler:
         condition: service_completed_successfully
     environment:
+      - TZ=America/New_York
       - WARP_ENDPOINT=162.159.192.1
     volumes:
       - ./scripts/routing-fix.sh:/routing-fix.sh:ro
@@ -167,6 +174,8 @@ services:
         condition: service_healthy
       rule-compiler:
         condition: service_completed_successfully
+    environment:
+      - TZ=America/New_York
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 5335 || exit 1"]
       interval: 2s

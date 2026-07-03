@@ -91,27 +91,37 @@ create_log_drop_chain() {
 }
 
 add_country_block() {
-  # Create the ipset if it doesn't exist
-  if ! ipset list block_kp >/dev/null 2>&1; then
-    ipset create block_kp hash:net 2>/dev/null || true
-    echo "routing-fix: Downloading North Korea IPs for blocklist..."
-    curl -sS "http://www.ipdeny.com/ipblocks/data/countries/kp.zone" | grep -v '^#' | while read -r subnet; do
-      [ -n "$subnet" ] && ipset add block_kp "$subnet" 2>/dev/null || true
-    done
-  fi
+  # To add a country to the blocklist, simply append its 2-letter ISO country code to the loop string below.
+  # You can find the country code by looking at the filename on http://www.ipdeny.com/ipblocks/data/countries/
+  # For example, to block China (cn) and Russia (ru), change the line to: `for zone in kp il cn ru; do`
+  for zone in kp il; do
+    set_name="block_${zone}"
+    zone_upper=$(echo "$zone" | tr 'a-z' 'A-Z')
+    chain_name="LOG_DROP_${zone_upper}"
+    log_prefix="IP_BLOCK_${zone_upper}: "
 
-  # Apply LOG_DROP rule to both backends
-  for ipt in iptables iptables-legacy; do
-    command -v "$ipt" >/dev/null 2>&1 || continue
-    
-    create_log_drop_chain "$ipt" LOG_DROP_KP "IP_BLOCK_KP: "
-
-    # Clean up old plain DROP rules to ensure we hit the log-and-drop chains
-    while $ipt -D FORWARD -m set --match-set block_kp dst -j DROP 2>/dev/null; do :; done
-
-    if ! $ipt -C FORWARD -m set --match-set block_kp dst -j LOG_DROP_KP 2>/dev/null; then
-      $ipt -I FORWARD -m set --match-set block_kp dst -j LOG_DROP_KP 2>/dev/null || true
+    # Create the ipset if it doesn't exist
+    if ! ipset list "$set_name" >/dev/null 2>&1; then
+      ipset create "$set_name" hash:net 2>/dev/null || true
+      echo "routing-fix: Downloading ${zone_upper} IPs for blocklist..."
+      curl -sS "http://www.ipdeny.com/ipblocks/data/countries/${zone}.zone" | grep -v '^#' | while read -r subnet; do
+        [ -n "$subnet" ] && ipset add "$set_name" "$subnet" 2>/dev/null || true
+      done
     fi
+
+    # Apply LOG_DROP rule to both backends
+    for ipt in iptables iptables-legacy; do
+      command -v "$ipt" >/dev/null 2>&1 || continue
+      
+      create_log_drop_chain "$ipt" "$chain_name" "$log_prefix"
+
+      # Clean up old plain DROP rules to ensure we hit the log-and-drop chains
+      while $ipt -D FORWARD -m set --match-set "$set_name" dst -j DROP 2>/dev/null; do :; done
+
+      if ! $ipt -C FORWARD -m set --match-set "$set_name" dst -j "$chain_name" 2>/dev/null; then
+        $ipt -I FORWARD -m set --match-set "$set_name" dst -j "$chain_name" 2>/dev/null || true
+      fi
+    done
   done
 }
 
@@ -168,11 +178,31 @@ add_ip_blocklist
 
 echo 'routing-fix: Routes applied.'
 
+UNHEALTHY_COUNT=0
+
 # Re-assert loop (every 5 seconds)
 while true; do
   # Table 200 routes
   ip route replace "${WARP_ENDPOINT}" via "${DOCKER_GW}" dev eth0 table 200 2>/dev/null || true
-  ip route replace default dev tun0 table 200 2>/dev/null || true
+  
+  # Tunnel health check
+  if ! curl -m 3 -sS --interface tun0 https://cloudflare.com/cdn-cgi/trace >/dev/null 2>&1; then
+    UNHEALTHY_COUNT=$((UNHEALTHY_COUNT + 1))
+  else
+    UNHEALTHY_COUNT=0
+    if [ -f "/app/TUNNEL_FAILED_CLOSED.marker" ]; then
+      rm -f "/app/TUNNEL_FAILED_CLOSED.marker"
+    fi
+  fi
+
+  if [ "$UNHEALTHY_COUNT" -ge 3 ]; then
+    echo "routing-fix: Tunnel health check failed $UNHEALTHY_COUNT times. Failing closed."
+    ip route del default dev tun0 table 200 2>/dev/null || true
+    ip route replace blackhole default table 200 2>/dev/null || true
+    touch "/app/TUNNEL_FAILED_CLOSED.marker"
+  else
+    ip route replace default dev tun0 table 200 2>/dev/null || true
+  fi
 
   # Main table: keep Docker subnet route
   ip route replace "${DOCKER_NET}" dev eth0 2>/dev/null || true

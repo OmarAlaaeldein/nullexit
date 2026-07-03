@@ -1198,3 +1198,33 @@ On the Windows host, open `services.msc`, locate the **Sunshine Service**, and c
 - **Native Linux Deployment:** Benchmark on a Raspberry Pi — native container footprint is ~75MB without macOS hypervisor overhead.
 - **Mesh-Wide Filesystem (SFTP over Tailscale):** Any mesh device passively exposes its filesystem over SFTP. Android via Termux + OpenSSH + wakelock; iOS is client-only due to background process limits.
 - **Post-Quantum Cryptography (PQC):** Tailscale uses Curve25519, theoretically vulnerable to "harvest now, decrypt later" quantum attacks. A future iteration could replace the Tailscale container with raw WireGuard + [Rosenpass](https://rosenpass.eu/) to negotiate post-quantum PSKs.
+
+## 11. Geo-IP Blocking
+
+To block traffic to and from specific countries, the system dynamically downloads country-specific IP ranges from [ipdeny.com](http://www.ipdeny.com/ipblocks/data/countries/) and drops them via iptables `FORWARD` rules.
+
+To add a new country to the blocklist:
+1. Find the 2-letter ISO country code (e.g., `cn` for China, `ru` for Russia, `il` for Israel, `kp` for North Korea).
+2. Open `scripts/routing-fix.sh`.
+3. Locate the `add_country_block` function.
+4. Add the 2-letter code to the loop array: `for zone in kp il cn ru; do`.
+5. Run `toggle.sh` to restart the gateway and re-compile the firewall rules.
+
+> [!NOTE]
+> **Limitations of Geo-IP Blocking:** IP-based blocking is highly effective at blocking servers, direct apps, and raw infrastructure physically located and registered in a specific country (e.g., `www.gov.il`). However, it will **not** block high-profile websites (e.g., `jpost.com`) that route their traffic through global Content Delivery Networks (CDNs) like Google Cloud, Cloudflare, or Fastly. Because the CDN's IP addresses are registered in the US or globally, the network traffic physically never routes to the blocked country, allowing it to bypass the Geo-IP firewall.
+
+## 12. Incident Post-Mortems
+
+### Incident: The Overnight Silent IP Leak (July 2026)
+
+**The Problem:** The host leaked traffic over its raw, unencrypted `eth0` IP continuously for roughly 8 hours, completely bypassing the VPN. The `toggle.sh` state and the container liveness checks all reported the gateway as healthy and active.
+
+**The Investigation:**
+1. **Sleep/Wake Checks:** We initially suspected macOS sleep cycles broke the routing table. A check of `pmset -g log` confirmed the laptop literally never slept (0 sleep events recorded since boot), ruling out all sleep/wake code paths.
+2. **Keepalive Expiry:** We discovered `docker-compose.yml` was missing `WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL`. Without a keepalive, standard router NAT tables (which typically garbage collect UDP after 30 to 120 seconds of silence) quietly expired the WireGuard port mapping overnight.
+3. **Container State Masking:** Because WireGuard is stateless, the `warp` container didn't immediately crash. It stayed "Up", which meant Docker's healthchecks and our `toggle.sh` liveness checks never noticed the tunnel inside it was totally dead.
+
+**The Solution:**
+1. Added `WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s` (the WireGuard standard to beat standard 30s NAT timeouts) to keep the UDP tunnel permanently pinned open through the router.
+2. Injected a **Fail-Closed Kill-Switch** into `routing-fix.sh`: A 5-second loop now actively verifies tunnel health by running `curl` over `tun0` to Cloudflare's trace endpoint. If it fails 3 consecutive times, it immediately rewrites the default route to `blackhole`, severing all traffic instead of letting it leak through `eth0`.
+3. Added a listener in `watcher.sh` that detects this fail-closed event and instantly pushes a native macOS UI notification to the desktop, alerting the user to manually intervene.

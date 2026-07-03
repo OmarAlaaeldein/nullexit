@@ -48,6 +48,7 @@ die()   { echo -e "\n  ${RED}✗ $*${NC}\n"; exit 1; }
 # (and reference any other repo-root file) from the same directory no
 # matter where the user invoked recover.sh from.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+rm -f "$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker"
 
 # ─── Pure-bash timeout (no dependency on GNU coreutils' `timeout`) ────────────
 # macOS lacks the `timeout` command by default. This bash-native replacement
