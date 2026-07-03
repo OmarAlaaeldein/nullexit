@@ -30,6 +30,7 @@ GATEWAY_RULE_PROFILE=heavy         # light | medium | heavy
 GATEWAY_BYPASS_PING=false
 GATEWAY_USE_EXIT_NODE=true
 GATEWAY_MSS=1120                   # 1120 for stability, 1180 for speed
+WARP_FAIL_THRESHOLD=6              # consecutive warp=off polls before auto-shutdown (default 6 = 30s)
 ```
 
 ## 3. Deploy the Gateway
