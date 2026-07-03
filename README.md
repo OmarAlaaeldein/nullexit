@@ -31,6 +31,7 @@ GATEWAY_BYPASS_PING=false
 GATEWAY_USE_EXIT_NODE=true
 GATEWAY_MSS=1120                   # 1120 for stability, 1180 for speed
 WARP_FAIL_THRESHOLD=6              # consecutive warp=off polls before auto-shutdown (default 6 = 30s)
+HOST_LEAK_PROBE=true               # 300ms host-egress probe; logs LEAK/ROTATE events to output.log
 ```
 
 ## 3. Deploy the Gateway
@@ -183,8 +184,9 @@ See `devref.md §8` for the full threat model, Snowden programme analysis, and t
 
 ## 9. Debugging
 
-- **`output.log`** — All stderr from `toggle.sh`, `recover.sh`, `setup.sh`, and the rule-compiler is written here. Check this first.
+- **`output.log`** — All stderr from `toggle.sh`, `recover.sh`, `setup.sh`, and the rule-compiler is written here. The WARP Watcher (`WARP_FAIL_THRESHOLD`) and the Host Leak Probe (`HOST_LEAK_PROBE`) also write all their events here — `LEAK`, `ROTATE`, `HOST-PROBE failed`, and WARP shutdown notices. Check this first.
 - **`bash scripts/diagnose-host-leak.sh`** — One-shot host-routing diagnostic. Classifies your state into one of three known leak scenarios (SOCKS5 fallback, IPv6 leak, route-table freeze) or OK, and prints the exact fix command. Pass `--fix` to apply the remediation automatically. Pass `--watch` (or `--watch 30`) to run a full baseline diagnostic then continuously monitor warp/IPv6/default-route for leaks, alerting on any state change.
+- **`bash scripts/host-leak-probe.sh`** — Sub-second host-egress prober (enabled automatically via `HOST_LEAK_PROBE=true` in `.env`). Polls `cdn-cgi/trace` every 300ms directly from the host NIC — not via `docker exec` — so it catches flash-leaks invisible to the in-container WARP Watcher. All state changes, curl errors, and probe timeouts land in `output.log`. Grep with `grep LEAK output.log`.
 - **`devref.md`** — Complete architecture reference, routing deep-dives, and full resolved-issues log. Read this before modifying any routing or firewall logic.
 
 > [!CAUTION]
