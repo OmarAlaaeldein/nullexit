@@ -1,6 +1,6 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
-> **Last updated:** July 2, 2026
+> **Last updated:** July 3, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
 
 **nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel — double-encrypting every packet, hiding your ISP metadata, and providing network-wide DNS ad-blocking (AdGuard Home) and kernel-level IP threat blocking (`ipset`/`iptables`) for every device on your mesh.
 
