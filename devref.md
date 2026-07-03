@@ -64,6 +64,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`scripts/sync-rules.py`. See README §6.** |
 | `recover.sh` | 538 | Nuclear recovery script (gain: use `--post-wake` for non-destructive refresh after sleep/wake or Wi-Fi roam — keeps the gateway live while still re-hijacking DNS + refreshing Tailscale exit-node + force-recreating warp if unhealthy). Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. |
 | `scripts/diagnose-host-leak.sh` | 580+ | **One-shot host-routing diagnostic.** Runs 7 checks (Tailscale, SOCKS5, CDN-cgi/trace, IPv6 leak, default route, output.log hints, gateway IP), classifies into ONE of three known leak scenarios (A=SOCKS5 fallback, B=IPv6 leak, C=route freeze) or OK, writes a timestamped report to `host-leak-diagnostic-<UTC>.txt`, and prints a ready-to-run fix on stdout. Pass `--fix` to apply the matched remediation and re-verify egress. Pass `--watch` (or `--watch 30`) to run a full baseline then continuously monitor warp/IPv6/default-route every N seconds, alerting on any state change. See §10.30. |
+| `scripts/host-leak-probe.sh` | ~110 | **Continuous sub-second host-egress prober.** Launched automatically by `toggle.sh` when `HOST_LEAK_PROBE=true` in `.env` (default). Polls `cdn-cgi/trace` every 300ms directly from the host NIC via `curl` — not via `docker compose exec` — so it detects flash-leaks invisible to the in-container WARP Watcher. Logs only on state change (`LEAK`, `ROTATE`, `HOST-PROBE failed/timeout`) to `output.log`. curl errors (`2>>output.log`) also land there. Stopped gracefully (SIGTERM) by `toggle.sh` STOP path, `cleanup_handler`, and `recover.sh`. See §10.30.1. |
 | `scripts/fix-docker-bridge-collision.sh` | ~290 | **One-shot fix for §9.13.** Detects Docker's `172.17.0.0/16` bridge colliding with the host Wi-Fi subnet (the symptom that produces `default 172.17.0.1 UGScg en0` in `netstat -rn`), picks a non-colliding `docker.bip` from a small candidate set, idempotently edits `~/.colima/default/colima.yaml` with a timestamped backup, restarts Colima, rebinds Wi-Fi DHCP, verifies the new default route is no longer Docker's bridge, and re-runs `toggle.sh` + `scripts/diagnose-host-leak.sh`. Supports `--dry` and `--skip-toggle`. |
 | `scripts/watcher.sh` | 194 | **Long-running post-wake + post-roam daemon.** Launched by launchd LaunchAgent; subscribes to `com.apple.powermanagement` events via `log stream` and to network-state changes via `scutil n.watch`. Both fire `recover.sh --post-wake`. Single-instance lock + SCRIPT_DIR-relative resolve of `RECOVER`. See §10.29. |
 | `scripts/toggle-linux.sh` | 930 | **Linux sibling of `toggle.sh`.** Native Linux equivalents for every macOS-specific primitive — `nmcli radio wifi off/on` instead of `networksetup -setairportpower`, `ip link set ... down/up` fallback, distro-detection for the gateway install, systemd-resolved wiring. Paired with the `.desktop` shortcuts `setup.sh` builds. |
@@ -830,6 +831,46 @@ bash scripts/diagnose-host-leak.sh --fix
 * **`warp=on` but whatismyip.com still says "udem".** `whatismyip.com`'s ISP-detection database is unreliable on academic networks. Trust `cdn-cgi/trace`'s `warp=on` over `whatismyip.com`'s ISP string. Use `https://api.ipify.org` (returns just the IP, no ISP DB lookup) as a third confirmatory check.
 * **`tailscale status` shows the host online but exit node preference is missing.** `tailscale up --reset --exit-node=` (empty value) clears any stale preference; `tailscale up --reset --exit-node=<100.x.x.x>` re-establishes it. The diagnostic prints the exact command with the resolved TS_IP filled in.
 * **Both IPv6 leak AND route-freeze flags set simultaneously.** Scenario B outranks Scenario C — fixing IPv6 makes IPv4 the only viable egress, after which the route-freeze usually self-resolves within ~30s (or one more `toggle.sh` cycle).
+
+#### §10.30.1 Host Leak Probe — Continuous Sub-Second Egress Monitor
+
+**What it is.** `scripts/host-leak-probe.sh` is a lightweight background daemon (~1.4 MB RSS, ~0–1% CPU) that polls `https://www.cloudflare.com/cdn-cgi/trace` every 300ms directly from the host via `curl` — not via `docker compose exec`. This is a fundamentally different vantage point from the WARP Watcher (§10.32): the WARP Watcher asks the WARP *container* whether it sees `warp=on`; the Host Leak Probe asks what a real browser request leaving the host's physical NIC looks like. The two blind spots it covers that the WARP Watcher cannot:
+
+1. **Host-side flash-leaks** — a Cloudflare anycast edge re-route, a browser reusing a stale pooled connection across a tunnel state change, or a split-second routing gap during a Gluetun healthcheck restart (see §10.18 — acknowledged 1–4s window).
+2. **Host egress while container is healthy** — the container can report `warp=on` while the host's own traffic exits direct (the three-scenario leak class documented in §10.30).
+
+**Lifecycle.** Started by `toggle.sh`'s START path (`start_host_leak_probe`) immediately after `start_warp_watcher`. Controlled by:
+
+| Signal path | What happens |
+|---|---|
+| `toggle.sh` STOP | `stop_host_leak_probe()` — SIGTERM + PID file cleanup |
+| `toggle.sh` `cleanup_handler` (error/INT/TERM/HUP) | Same |
+| `recover.sh` (default, non `--post-wake`) | §6d block — kill by PID file |
+| `recover.sh --post-wake` | Left running — the gateway is still live |
+
+PID file: `/tmp/nullexit-host-leak-probe.pid`. Toggle with `HOST_LEAK_PROBE=false` in `.env` to disable at next gateway start.
+
+**Output format.** All events are written to `output.log` (repo root) with UTC timestamps. Only state *changes* are logged — the probe is silent during normal healthy operation.
+
+```
+[09:10:26] LEAK warp=off ip=45.23.1.1 prev_warp=on prev_ip=104.28.246.50
+[09:10:26] ROTATE warp=on ip=104.28.248.11 prev_ip=104.28.246.50
+[09:10:26] HOST-PROBE failed/timeout (count=1)
+```
+
+curl transport errors (`TLS handshake failed`, `Connection refused`, etc.) are also appended to `output.log` via `2>>output.log` — nothing is silenced to `/dev/null`.
+
+**Grep cheatsheet.**
+
+```bash
+grep LEAK output.log            # real warp=off events from the host
+grep ROTATE output.log          # Cloudflare anycast edge rotations (harmless)
+grep 'HOST-PROBE' output.log    # curl failures / timeouts
+```
+
+**Resource budget.** ~1.4 MB RSS, ~0% CPU at rest, ~3 HTTPS requests/second to Cloudflare. Safe to leave running for hours. Back off the polling interval (`bash scripts/host-leak-probe.sh 1.0`) if you observe probe-failure pile-ups indicating Cloudflare rate-limiting.
+
+**Detection vs prevention.** This script detects leaks; it does not prevent them. A sub-300ms flash-leak can still slip between two polls undetected. If `grep LEAK output.log` shows confirmed leak events, the next step is a kill-switch (prevention) — an `iptables` rule on the host's `en0` that drops non-Tailscale, non-local egress whenever the gateway is active. That is a separate engineering task not yet implemented.
   * `ProcessType: Background` — hint to App Nap not to suspend us.
   * `StandardOutPath/StandardErrorPath: /tmp/nullexit-watcher.{out,err}.log` — separates launchd-level diagnostics from the script's own `/tmp/nullexit-watcher.log` (which `exec >>` redirects).
 
