@@ -1081,7 +1081,24 @@ Without a paid Apple Developer certificate ($99/yr), users see an "App is damage
 
 ---
 
-## 15. Future Work
+## 15. Moonlight/Sunshine + Tailscale Race Condition
+
+When streaming from a remote Windows host running Sunshine over a Tailscale mesh (e.g., while the client is on a cellular hotspot), a race condition can occur on boot:
+
+1. Both Tailscale and Sunshine are set to start automatically on boot.
+2. Tailscale takes a few seconds to fully initialize its `100.x.x.x` virtual adapter and establish a connection.
+3. **Sunshine starts too fast.** It launches before Tailscale is fully ready. Since Sunshine only binds to network interfaces that are active at the exact moment of startup, it misses the Tailscale adapter entirely.
+4. Moonlight clients (even when configured with the correct Tailscale IP) will fail to connect because Sunshine isn't listening on that interface.
+
+**The "Magic Toggle" Symptom:** 
+If the user manually enables or disables Wi-Fi on the host PC, it triggers a global Windows network change event. Sunshine listens for these events, re-enumerates all network adapters, and says, "Oh, there's a Tailscale adapter here!" and finally binds to it. Suddenly, Moonlight can connect.
+
+**The Permanent Fix:**
+On the Windows host, open `services.msc`, locate the **Sunshine Service**, and change its Startup type from **Automatic** to **Automatic (Delayed Start)**. This forces Windows to wait a minute or two after booting before launching Sunshine, ensuring Tailscale's virtual adapter is fully initialized first.
+
+---
+
+## 16. Future Work
 
 - **Direct P2P on VM Hosts:** Non-Linux hosts run Docker inside a VM, making true UDP hole-punching impossible. The only working solution is a native Linux host (Raspberry Pi, Intel NUC) where Docker runs without VM hypervisor translation.
 - **Native Linux Deployment:** Benchmark on a Raspberry Pi — native container footprint is ~75MB without macOS hypervisor overhead.
