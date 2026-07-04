@@ -4,6 +4,13 @@
 
 set -e
 
+# Enforce Cryptographic Script Integrity
+if [ -x "scripts/verify.sh" ]; then
+  if ! ./scripts/verify.sh; then
+    exit 1
+  fi
+fi
+
 # Define log file
 LOG_FILE="$PWD/output.log"
 
