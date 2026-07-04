@@ -84,12 +84,11 @@ services:
       - TS_USERSPACE=false
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
-      # Intentional for stability: prevents the container from re-authenticating 
-      # on every boot. Trade-off: if the auth key expires and the container is 
-      # recreated, it may silently fail to authenticate without a new key.
       # (Note: For headless/cloud deployments, you can bypass this footgun by
       # using Tailscale Ephemeral Keys which auto-clean themselves).
       - TS_AUTH_ONCE=true
+      # Enable Tailscale's built-in SOCKS5 proxy to route out of the WARP tunnel
+      - TS_SOCKS5_SERVER=:1080
     devices:
       - /dev/net/tun:/dev/net/tun
     volumes:
@@ -100,25 +99,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  socks-proxy:
-    image: serjs/go-socks5-proxy:v0.0.4
-    container_name: socks-proxy
-    network_mode: service:warp
-    depends_on:
-      warp:
-        condition: service_healthy
-    environment:
-      - TZ=America/New_York
-      - PROXY_USER=
-      - PROXY_PASSWORD=
-      - REQUIRE_AUTH=false
-    restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "1"
 
   routing-fix:
     build:
