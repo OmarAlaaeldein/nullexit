@@ -101,6 +101,7 @@ services:
         max-file: "3"
 
   routing-fix:
+    image: nullexit-routing-fix:v1.0.0
     build:
       context: ./scripts
       dockerfile: Dockerfile.routing-fix
@@ -168,6 +169,7 @@ services:
     restart: unless-stopped
 
   rule-compiler:
+    image: nullexit-rule-compiler:v1.0.0
     build:
       context: ./scripts
       dockerfile: Dockerfile.rule-compiler

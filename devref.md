@@ -30,9 +30,9 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | Container | Image | Role |
 |-----------|-------|------|
 | `warp` | `qmcgaw/gluetun:v3.41.1` | Gluetun WireGuard client → Cloudflare WARP. Owns the network namespace. Strict firewall. |
-| `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
-| `tailscale` | `tailscale/tailscale` | The mesh VPN exit node. Also provides the built-in SOCKS5 proxy fallback via `TS_SOCKS5_SERVER=:1080` |
+| `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the mesh. Also provides the built-in SOCKS5 proxy fallback via `TS_SOCKS5_SERVER=:1080`. |
 | `routing-fix` | `alpine:3.20` | Sidecar that maintains routing tables + iptables rules every 30 seconds. |
+| `rule-compiler`| `golang:1.22-alpine` / `alpine:3.20` | One-shot startup container that compiles 500k+ DNS block rules in <2s and immediately exits. |
 | `adguardhome` | `adguard/adguardhome:v0.107.77` | DNS sinkhole for ads/trackers. Listens on port 5335. Upstream DNS: `127.0.0.1:53` (through WARP). |
 
 ### Port Mappings (on host via Colima)
