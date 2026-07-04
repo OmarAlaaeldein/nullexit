@@ -31,7 +31,7 @@ graph TB
             subgraph NETNS["warp container network namespace (shared by ALL containers)"]
                 GLUETUN["warp / Gluetun\nWireGuard → tun0\n(owns the namespace)"]
                 TS["tailscale container\nAdvertises exit node\ntailscale0 interface"]
-                SOCKS["socks-proxy\nPython SOCKS5\nport 1080"]
+                SOCKS["socks-proxy\nGo SOCKS5\nport 1080"]
                 ADGUARD["adguardhome\nDNS sinkhole\nport 5335"]
                 ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Kill-Switch\n(curl healthcheck loop)"]
             end
