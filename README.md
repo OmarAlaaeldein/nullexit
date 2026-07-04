@@ -219,5 +219,5 @@ nullexit uses a built-in cryptographic integrity checker to prevent malware or t
 
 If any script is modified without authorization, the gateway will loudly fail to boot. If you make intentional edits to the bash scripts, you must re-sign them by running:
 ```bash
-./scripts/signer.sh
+./scripts/crypto.sh --sign
 ```

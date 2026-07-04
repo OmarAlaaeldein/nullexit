@@ -82,7 +82,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `.env` | ~14 | WARP WireGuard keys, Tailscale auth key, rule profile. **Contains secrets & NULLEXIT_SEED.** |
 | `ADGUARD_IP.txt` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
 | `scripts/unlock-files.sh` | ~20 | **One-shot stale-permission fix.** Uses atomic rename (`cp` + `mv`) to replace locked inodes (mode `000`/`0444` from old `chmod` decisions) with fresh writable ones — no `chmod` called. |
-| `scripts/signer.sh` & `scripts/verify.sh` | ~50 | **Cryptographic integrity enforcement.** Uses `NULLEXIT_SEED` from `.env` to sign core bash scripts (HMAC-SHA256) and strictly verify them on start to prevent manipulation. |
+| `scripts/crypto.sh` | ~50 | **Cryptographic integrity enforcement.** Uses `NULLEXIT_SEED` from `.env` to sign core bash scripts (HMAC-SHA256) and strictly verify them on start to prevent manipulation. Pass `--sign` or `--verify`. |
 
 ---
 
@@ -1329,4 +1329,4 @@ Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs
 - Implemented **Multi-stage Docker builds** (using `golang:1.22-alpine` as builder) to compile the static binaries inside Docker. The final containers are raw Alpine with zero dependencies.
 - Added `--build` to `docker compose up -d` in `toggle.sh` to ensure updates are consistently applied on boot.
 - Added `stop_grace_period: 1s` to `routing-fix` in `docker-compose.yml` which eliminates the 30-second teardown hang instantly.
-- Implemented a cryptographic integrity checker (`scripts/signer.sh` & `scripts/verify.sh`) using HMAC-SHA256 and `NULLEXIT_SEED` in `.env` to prevent tampering of bash scripts.
+- Implemented a cryptographic integrity checker (`scripts/crypto.sh`) using HMAC-SHA256 and `NULLEXIT_SEED` in `.env` to prevent tampering of bash scripts.

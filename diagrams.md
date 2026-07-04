@@ -91,10 +91,10 @@ flowchart TD
 
     S1["1. Reset DNS → 1.1.1.1\n(prevent deadlocks)"]
     S2["2. tailscale down\n(prevent exit-node routing during boot)"]
-    S3["3. Compile threat rules\nscripts/sync-rules.py\n(DNS blocklist + IP blocklist)"]
-    S4["4. colima start --memory 0.6\n(start Linux VM if needed)"]
-    S5["5. Configure VM swap\n(400MB, prevent OOM)"]
-    S6["6. docker compose up -d\n(boot all 5 containers)"]
+    S3["3. Check Colima VM\n(colima start --memory 0.6)"]
+    S4["4. Configure VM swap\n(400MB, prevent OOM)"]
+    S5["5. Clean corrupted AdGuard config\n(prevent container crash loop)"]
+    S6["6. docker compose up -d --build\n(compile Go threat rules & boot containers)"]
     S7["7. Poll tailscale status\n(wait for 'offers exit node'\nup to 60s)"]
     TSREADY{"container\nTailscale ready?"}
     ABORT(["❌ ABORT\n→ cleanup_handler"])
@@ -346,7 +346,7 @@ All events converge into a single `output.log` at the repo root.
 | **Host Leak Probe** | `LEAK`, `ROTATE`, `HOST-PROBE failed/timeout` | `[HH:MM:SS.mmm]` prefix |
 | **DNS Watcher** | DNS re-hijack events | Appended inline |
 | `docker compose` | Container logs on failure (last 100 lines of warp) | Dumped on ERR path |
-| `routing-fix.sh` | (via `logger.py` inside container) | Structured |
+| `routing-fix.sh` | (via `nullexit-logger` inside container) | Structured |
 
 **Grep cheatsheet:**
 ```bash
