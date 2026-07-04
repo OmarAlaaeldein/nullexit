@@ -474,9 +474,13 @@ setup_exit_node_routing() {
   fi
   
   if [ -n "$ts_iface" ]; then
-    echo "Manually configuring host routing table for exit node via $ts_iface..."
-    sudo -n route delete default 2>> output.log || true
-    sudo -n route add default -interface "$ts_iface" >> output.log 2>&1 || true
+    echo "Re-routing default gateway to $ts_iface using 0.0.0.0/1 split..."
+    # DO NOT delete the physical default route! It crashes Colima.
+    # Use the /1 trick to mathematically override the default route.
+    sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
+    sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
+    sudo -n route add -net 0.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
+    sudo -n route add -net 128.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
   else
     echo "[Warning] Could not detect Tailscale utun interface for host routing."
   fi
@@ -521,7 +525,8 @@ cleanup_network_state() {
 
   # 3. Flush stale routing table entries
   if command -v route >> output.log 2>&1; then
-    sudo -n route -n flush >> output.log 2>&1 || true
+    sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
+    sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
   fi
   remove_warp_bypass_routes
   echo "  Routing table flushed."
