@@ -127,7 +127,7 @@ add_country_block() {
 
 add_ip_blocklist() {
   # Only reload when the compiled file has actually changed (mtime check).
-  # This prevents a pointless ipset restore on every 5-second loop tick.
+  # This prevents a pointless ipset restore on every 30-second loop tick.
   if [ ! -f "$IP_BLOCKLIST_FILE" ]; then
     return 0
   fi
@@ -180,7 +180,7 @@ echo 'routing-fix: Routes applied.'
 
 UNHEALTHY_COUNT=0
 
-# Re-assert loop (every 5 seconds)
+# Re-assert loop (every 30 seconds)
 while true; do
   # Table 200 routes
   ip route replace "${WARP_ENDPOINT}" via "${DOCKER_GW}" dev eth0 table 200 2>/dev/null || true

@@ -21,7 +21,7 @@ graph TB
         HOSTSOCKS["Host SOCKS5\n127.0.0.1:1080\n(fallback only)"]
 
         subgraph MONITORS["🔍 Background Daemons (toggle.sh children)"]
-            WARPWATCH["WARP Watcher\n(every 5s, via docker exec)\n→ output.log"]
+            WARPWATCH["WARP Watcher\n(every 30s, via docker exec)\n→ output.log"]
             LEAKPROBE["Host Leak Probe\n(every 300ms, via curl from HOST)\n→ output.log"]
             DNSWATCHER["DNS Watcher\n(re-hijacks if drift detected)\n→ output.log"]
             CAFFEINATE["caffeinate -i\n(sleep prevention)"]
@@ -181,7 +181,7 @@ graph LR
         end
 
         subgraph D3["🔭 WARP Watcher"]
-            WARPW["Polls every 5s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nCounts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
+            WARPW["Polls every 30s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nCounts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
         end
 
         subgraph D4["🩺 Host Leak Probe"]
@@ -300,12 +300,12 @@ flowchart LR
     end
 
     subgraph DETECTORS["Detector"]
-        D1["WARP Watcher\n(5s poll, docker exec)"]
+        D1["WARP Watcher\n(30s poll, docker exec)"]
         D2["scripts/watcher.sh\n(launchd, always on)"]
         D3["DNS Watcher\n(15s poll, networksetup)"]
         D4["cleanup_handler\n(ERR/INT/TERM/HUP trap)"]
         D5["Host Leak Probe\n(300ms poll, HOST curl)"]
-        D6["routing-fix.sh\n(5s curl over tun0)"]
+        D6["routing-fix.sh\n(30s curl over tun0)"]
     end
 
     subgraph ACTIONS["Response"]

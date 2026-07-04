@@ -1,10 +1,10 @@
 #!/bin/bash
 # scripts/host-leak-probe.sh — nullexit sub-second host-egress leak prober
 #
-# WHY THIS EXISTS: toggle.sh's WARP Watcher polls warp=on/off every 5s via
+# WHY THIS EXISTS: toggle.sh's WARP Watcher polls warp=on/off every 30s via
 # `docker compose exec -T warp wget ...` — that asks the WARP CONTAINER
 # about its own tunnel state, not what actually leaves the HOST's physical
-# interface. A host-side flash-leak (Cloudflare edge reroute, the up-to-5s
+# interface. A host-side flash-leak (Cloudflare edge reroute, the up-to-30s
 # routing-fix re-assertion gap after a Gluetun healthcheck restart — see
 # devref.md §10.18 — or a browser reusing a stale pooled connection across
 # a state change) is invisible to it. This script probes from the HOST

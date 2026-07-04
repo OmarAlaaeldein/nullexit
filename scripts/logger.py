@@ -117,7 +117,7 @@ def monitor_ips():
                         out_interface = out_if.group(1) if out_if else ""
                         
                         direction = "outbound" if prefix.endswith("DST") else "inbound"
-                        list_type = "MALICIOUS" if "MALICIOUS" in prefix else "COUNTRY_KP"
+                        list_type = "MALICIOUS" if "MALICIOUS" in prefix else f"GEO_{prefix.split('_')[2]}"
                         
                         port_str = f":{dst_port}" if dst_port else ""
                         src_port_str = f":{src_port}" if src_port else ""

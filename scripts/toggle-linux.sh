@@ -242,20 +242,33 @@ if [ -n "$TS_BIN" ]; then
 fi
 
 # Disconnect host Tailscale from the mesh. With the standalone daemon, this is the
-# *entire* teardown — no scutil tunnel stop, no Tailscale.app GUI quit, no pkill.
-# tailscaled keeps running (as a LaunchAgent / LaunchDaemon), which is intentional:
+# *entire* teardown — no need to mess with system network managers.
+# tailscaled keeps running (as a systemd service), which is intentional:
 # the next `tailscale up` then reconnects in seconds rather than waiting for a
-# slow .app launch + Network Extension activation. The `tailscale down` call also
-# retains the user's auth state, so we don't force a browser re-login every cycle.
+# slow daemon launch. The `tailscale down` call also retains the user's
+# auth state, so we don't force a browser re-login every cycle.
 #
 # Defined early (before the if/else branches and referenced by cleanup_handler's
 # ERR trap) so that any failure before the main logic can still tear down Tailscale.
+restart_tailscaled_daemon() {
+  echo "  [Tailscale Recovery] tailscaled daemon appears to be wedged/unresponsive."
+  echo "  [Tailscale Recovery] Attempting to restart tailscaled service via systemctl..."
+  if run_with_timeout 15 sudo -n systemctl restart tailscaled >> output.log 2>&1; then
+    echo "  [Tailscale Recovery] Successfully restarted tailscaled service."
+  else
+    echo "  [Tailscale Recovery] WARNING: Failed to restart tailscaled. Manual intervention may be needed."
+  fi
+  sleep 3
+}
 disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
     local ts_args=""
     if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
-    run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1 || true
+    if ! run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1; then
+      restart_tailscaled_daemon
+      run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1 || true
+    fi
   fi
 }
 

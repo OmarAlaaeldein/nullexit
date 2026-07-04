@@ -23,7 +23,7 @@ echo "========================================================" >> "$LOG_FILE"
 
 # (Previously this script chmod 600'd .env at start to "unlock" it for docker compose,
 # and chmod 000'd it on exit. That pattern broke docker compose on macOS/Colima when
-# the umask produced 0600 — the script removed its own ability to read .env before
+# the umask produced 0600 — the script removed its own ability to read .env before it could even proceed.)
 
 # Start execution timer
 TOGGLE_START_TIME=$SECONDS
@@ -191,9 +191,10 @@ stop_dns_watcher() {
   fi
 }
 
-# Background WARP tunnel liveness monitor. Polls cdn-cgi/trace every 5s.
+# Background WARP tunnel liveness monitor. Polls cdn-cgi/trace every 30s
+# while healthy, but accelerates to polling every 5s if a failure is detected.
 # Always logs state transitions to output.log. When warp=off persists for
-# WARP_FAIL_THRESHOLD consecutive polls (default 6 = 30s), the watcher
+# WARP_FAIL_THRESHOLD consecutive polls (default 6 = 30s of downtime), the watcher
 # triggers a nuclear recovery: runs recover.sh to tear down the entire
 # gateway — disconnecting Tailscale, stopping containers, resetting DNS,
 # and power-cycling Wi-Fi. This guarantees no traffic ever leaks through
@@ -216,7 +217,7 @@ start_warp_watcher() {
   fi
   local trigger_file="/tmp/nullexit-warp-shutdown-triggered"
   rm -f "$trigger_file"
-  echo "  Starting background WARP Watcher (polling every 5s, shutdown after ${threshold} consecutive failures)..."
+  echo "  Starting background WARP Watcher (polling every 30s [accelerating to 5s on failure], shutdown after ${threshold} consecutive failures)..."
   nohup bash -c "
     trap 'exit 0' SIGTERM SIGINT SIGHUP
     last_state='on'
@@ -261,7 +262,11 @@ start_warp_watcher() {
         consec_off=0
       fi
 
-      sleep 30
+      if [ "\$state" = "off" ]; then
+        sleep 5
+      else
+        sleep 30
+      fi
     done
   " >> output.log 2>&1 &
   echo $! > "$WARP_WATCHER_PID_FILE"
