@@ -307,7 +307,7 @@ This section documents issues encountered during development, their status, and 
 ### 9.9 Native SSH & SFTP Security (Zero Local Attack Surface)
 **Context:** macOS "Remote Login" (`sshd`) and "File Sharing" (`smbd`) open ports on the local network (e.g. `172.x.x.x`), exposing the host to brute-force attacks on public Wi-Fi.
 
-**Implementation:** The script strictly enforces `tailscale up --ssh=true` whenever the mesh state is reset. This empowers the user to completely disable native macOS Remote Login and File Sharing. This provides an incredible zero-trust security advantage: even if an attacker steals your Mac username and password, they **cannot** access your files remotely. Disabling the native services completely closes the listening ports on the local Wi-Fi interface (`172.x.x.x`), rendering the Mac impenetrable to local network logins. Meanwhile, Tailscale intercepts port 22 traffic exclusively over the encrypted mesh and authenticates cryptographically based on your Tailscale SSO identity. Stolen Mac passwords are mathematically useless without first bypassing your Tailscale Two-Factor Authentication and registering a device onto the mesh.
+**Implementation:** The script strictly enforces `tailscale up --ssh=true` whenever the mesh state is reset. This empowers the user to completely disable native macOS Remote Login and File Sharing. This provides an incredible zero-trust security advantage: even if an attacker steals your Mac username and password, they **cannot** access your files remotely. Disabling the native services completely closes the listening ports on the local Wi-Fi interface (`172.x.x.x`), rendering the Mac inaccessible to local network logins. Meanwhile, Tailscale intercepts port 22 traffic exclusively over the encrypted mesh and authenticates cryptographically based on your Tailscale SSO identity. Stolen Mac passwords are mathematically useless without first bypassing your Tailscale Two-Factor Authentication and registering a device onto the mesh.
 
 **Cross-Platform File Exchange:** To easily browse and exchange files securely, simply use an SFTP client and connect to your Mac's MagicDNS name on port 22. Recommended clients: **WinSCP** or **FileZilla** (Windows), **Cyberduck** (macOS), and **FE File Explorer** or **Solid Explorer** (iOS/Android).
 
@@ -1117,7 +1117,22 @@ Generate in the Tailscale admin panel. Used once to authenticate; node disappear
 #### Pre-Shared Keys (PSKs)
 Add a WireGuard PSK between peer nodes. Adds a symmetric encryption layer that Tailscale's coordination server has no knowledge of, blinding it from reading transit content.
 
-### Honest Remaining Limitations
+### Censorship-Resistant Transport (Shadowsocks / Obfuscation)
+
+WARP can be blocked from deployment countries with strict internet controls. The most likely cause isn't that "encrypted traffic is blocked" in general — it's that WireGuard has a recognizable handshake signature, and `WIREGUARD_ENDPOINT_IP=162.159.192.1` on `WIREGUARD_ENDPOINT_PORT=2408` is a fixed, easily-enumerable target (Cloudflare's known WARP range). That combination is exactly what IP/ASN-based and DPI-based blocking is good at catching.
+
+**Important distinction regarding Gluetun:**
+Gluetun's built-in Shadowsocks option runs a Shadowsocks **server** inside the already-connected VPN tunnel. It is not a way to make Gluetun itself connect **outbound** through a Shadowsocks server — Gluetun only speaks OpenVPN or WireGuard as its actual transport. 
+
+**Diagnosis & Mitigation Paths:**
+If WireGuard is blocked, the right fix depends entirely on what's actually being blocked:
+
+- **Path A (Swap Provider):** Point Gluetun at a different provider/IP/ASN. If that gets through, the block is Cloudflare/WARP-specific, not a general WireGuard block. Just swap `VPN_SERVICE_PROVIDER` and the endpoint.
+- **Path B (Wrap with Sidecar):** If WireGuard itself is being fingerprinted/blocked, run a Shadowsocks (or obfs4/v2ray) client as a new sidecar container. Point Gluetun's `WIREGUARD_ENDPOINT_IP` at `127.0.0.1:<local-port>` instead of Cloudflare directly; the sidecar relays that traffic to a Shadowsocks server you run yourself abroad. This keeps Gluetun's kill-switch, healthchecks, and the entire rest of the stack untouched.
+
+Plain Shadowsocks can still be caught by active-probing DPI in more aggressive censorship environments. If plain SS gets blocked too, the next step up is an obfuscation plugin (`v2ray-plugin`, `Cloak`) or a newer protocol designed against active probing (VLESS+Reality, Hysteria2).
+
+### Structural Limitations
 - **Traffic Analysis / Metadata:** Passive fiber tapping (UPSTREAM) can observe timestamps, data volumes, and IP ranges without reading content. Defeating traffic analysis requires mixing networks (Tor) or continuous dummy packet padding — both heavily degrade performance.
 - **Targeted State-Level Adversaries:** Consumer-grade VPNs are not a complete shield against a nation-state actively targeting you. This stack is designed to defeat bulk passive surveillance and corporate dragnet collection.
 
@@ -1347,3 +1362,40 @@ Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs
 - Specifically, the `stop_sleep_prevention`, `stop_dns_watcher`, `stop_host_leak_probe`, and `stop_warp_watcher` functions were collapsed into a single `stop_pidfile_daemon()` abstraction.
 - Proxy disable loops were abstracted to `disable_all_proxies()`.
 - The `162.159.192.1/.193.1` WARP edge IPs are now dynamically resolved from `.env` instead of hardcoded.
+
+---
+
+## 15. Censorship-Resistant Transport (Shadowsocks / Obfuscation)
+
+### 15.1 Why this is needed
+
+WARP can be blocked from deployment countries with strict internet controls. The most likely cause isn't that "encrypted traffic is blocked" in general — it's that WireGuard has a recognizable handshake signature, and `WIREGUARD_ENDPOINT_IP=162.159.192.1` on `WIREGUARD_ENDPOINT_PORT=2408` is a fixed, easily-enumerable target (Cloudflare's known WARP range). That combination is exactly what IP/ASN-based and DPI-based blocking is good at catching.
+
+### 15.2 Important correction: Gluetun's `SHADOWSOCKS=on` is the wrong direction
+
+Gluetun's built-in Shadowsocks option runs a Shadowsocks **server** inside the already-connected VPN tunnel, so other LAN devices can reach out through Gluetun's *existing* connection via the SS protocol. It is not a way to make Gluetun itself connect **outbound** through a Shadowsocks server — Gluetun only speaks OpenVPN or WireGuard as its actual transport. There is no `VPN_TYPE=shadowsocks`. Confirmed against Gluetun's own maintainer/community discussion: people have asked for a "Shadowsocks-client" mode specifically to chain through Gluetun, and the standing answer is "run a separate Shadowsocks client container."
+
+### 15.3 Diagnose before building anything
+
+The right fix depends entirely on what's actually being blocked:
+
+- Point Gluetun at a **different provider/IP/ASN** (any other Gluetun-supported WireGuard/OpenVPN provider, or a self-hosted WireGuard server) and test. If that gets through, the block is Cloudflare/WARP-specific, not a general WireGuard block — **no new component needed**, just swap `VPN_SERVICE_PROVIDER` / the endpoint.
+- If WireGuard fails regardless of endpoint, the block is protocol-level (DPI fingerprinting the handshake) — go to 15.5.
+
+### 15.4 Path A: Swap WARP for a different Gluetun-native transport
+
+Simplest fix, only applies if 15.3 shows the block is Cloudflare-specific. Change `VPN_SERVICE_PROVIDER` / `VPN_TYPE` / endpoint in `docker-compose.yml` and in the now-centralized `WARP_ENDPOINT_*` values in `.env`. Nothing else in the stack needs to change.
+
+### 15.5 Path B: Add an obfuscation hop
+
+Needed if WireGuard itself is being fingerprinted/blocked. Two ways to slot it in:
+
+**B1 — Wrap (recommended):** Run a Shadowsocks (or obfs4/v2ray) client as a new sidecar container. Point Gluetun's `WIREGUARD_ENDPOINT_IP` at `127.0.0.1:<local-port>` instead of Cloudflare directly; the sidecar relays that traffic to a Shadowsocks server you run yourself abroad. Keeps Gluetun's kill-switch, healthchecks, and the entire rest of the stack (Tailscale, AdGuard, ipset, `routing-fix.sh`) untouched, since none of them know the transport changed underneath `warp`.
+
+**B2 — Replace:** Swap the `warp` service entirely for a Shadowsocks-client + `tun2socks` container that owns the network namespace instead of Gluetun. More invasive — loses Gluetun's built-in kill-switch/healthcheck, which would need to be rebuilt by hand.
+
+**Recommendation: B1.** Smaller surface area, preserves the self-healing architecture already built and documented.
+
+### 15.6 Fingerprinting caveat
+
+Plain Shadowsocks can still be caught by active-probing DPI in more aggressive censorship environments. If plain SS gets blocked too, the next step up is an obfuscation plugin (`v2ray-plugin`, `Cloak`) or a newer protocol designed against active probing (VLESS+Reality, Hysteria2). Test plain SS first — don't over-build before confirming it's needed.
