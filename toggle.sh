@@ -35,7 +35,7 @@ echo "========================================================" >> "$LOG_FILE"
 # Start execution timer
 TOGGLE_START_TIME=$SECONDS
 
-if [[ "$1" == "restart" ]] || [[ "$1" == "--restart" ]]; then
+if [[ "$1" == "--restart" ]]; then
   echo "Executing Gateway Restart Sequence..."
   # We must source common.sh here temporarily to check is_gateway_active before we proceed
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
@@ -463,15 +463,7 @@ EN0_SERVICE=$(get_en0_service)
 # automatically when --exit-node is used.
 setup_exit_node_routing() {
   local ts_iface
-  ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)
-  if [ -z "$ts_iface" ]; then
-    for i in $(ifconfig 2>> output.log | grep -E '^utun[0-9]+' | cut -d: -f1); do
-      if ifconfig "$i" 2>> output.log | grep -q "inet 100."; then
-        ts_iface="$i"
-        break
-      fi
-    done
-  fi
+  ts_iface=$(ifconfig | awk '/^[a-z0-9]+:/{iface=$1} /inet 100\./{print iface; exit}' | tr -d ':')
   
   if [ -n "$ts_iface" ]; then
     echo "Re-routing default gateway to $ts_iface using 0.0.0.0/1 split..."
