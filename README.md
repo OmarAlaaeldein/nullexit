@@ -212,3 +212,12 @@ GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 - **July 1, 2026** — `recover.sh --post-wake` ships; wired to watcher daemon. Triggered on every sleep/wake or network-state change.
 - **June 28, 2026** — 8 internal scripts moved to `scripts/`. User-facing files (`toggle.sh`, `recover.sh`, `setup.sh`, `docker-compose.yml`) stay at repo root.
 - **June 28, 2026** — All hardcoded install paths removed. `SCRIPT_DIR`-relative resolution and `__NULLEXIT_HOME__` placeholder used throughout.
+
+### Cryptographic Integrity Verification
+
+nullexit uses a built-in cryptographic integrity checker to prevent malware or tampering. During setup, a 256-bit `NULLEXIT_SEED` is injected into your `.env` file. The core entrypoint scripts (`toggle.sh`, `recover.sh`, etc.) are hashed using HMAC-SHA256, and their signatures are stored in `.signatures`. 
+
+If any script is modified without authorization, the gateway will loudly fail to boot. If you make intentional edits to the bash scripts, you must re-sign them by running:
+```bash
+./scripts/signer.sh
+```
