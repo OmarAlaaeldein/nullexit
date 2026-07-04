@@ -19,8 +19,8 @@
 set -e
 
 # Enforce Cryptographic Script Integrity
-if [ -x "scripts/verify.sh" ]; then
-  if ! ./scripts/verify.sh; then
+if [ -x "scripts/crypto.sh" ]; then
+  if ! ./scripts/crypto.sh --verify; then
     exit 1
   fi
 fi
