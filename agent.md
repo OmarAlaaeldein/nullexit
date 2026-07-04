@@ -11,7 +11,7 @@
 
 ## Part 1: macOS Main Scripts
 
-### toggle.sh (1351 lines, 59KB)
+### toggle.sh (1249 lines, 54KB)
 
 **Functions (27 total):**
 
@@ -64,7 +64,7 @@
 
 ---
 
-### recover.sh (595 lines, 25KB)
+### recover.sh (484 lines, 20KB)
 
 **Functions (7 total):**
 
@@ -92,6 +92,7 @@
 | TUNNEL_FAILED_CLOSED marker | `$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker` | L51 |
 
 **Duplicated logic from toggle.sh:**
+*(Note: As of July 2026, **ALL** of the below duplicated logic has been successfully extracted to `scripts/common.sh`!)*
 - `run_with_timeout()` — simpler subshell version vs toggle's PID-tracking version
 - `restart_tailscaled_daemon()` — near-identical (uses warn()/ok() vs echo)
 - Active network service detection — inline at L217-233 (toggle has `get_active_service()` function)
@@ -348,7 +349,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 
 | Value | Files |
 |-------|-------|
-| `162.159.192.1` (WARP endpoint) | docker-compose.yml, routing-fix.sh, toggle.sh, recover.sh |
+| `162.159.192.1` (WARP endpoint) | docker-compose.yml, routing-fix.sh (now dynamically loaded via .env/common.sh!) |
 | `5335` (AdGuard DNS port) | docker-compose.yml, AdGuardHome.yaml, post-rules.txt |
 | `5354` (mapped DNS port) | docker-compose.yml, dns-proxy.py |
 | `41641` (Tailscale WireGuard) | docker-compose.yml, routing-fix.sh, post-rules.txt |
@@ -369,10 +370,14 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 **Decision: "Scripts-only" architecture**
 Instead of introducing a new `lib/` directory, all shared code was moved into the existing `scripts/` directory to keep the project hierarchy flat and simple.
 
-### 1. `scripts/common.sh` (~55 lines)
-Extracts the fundamental primitives used across all orchestrator scripts:
+### 1. `scripts/common.sh` (288 lines, 10KB)
+Extracts the fundamental primitives and networking logic used across orchestrator scripts:
 - **Formatters:** `step()`, `ok()`, `warn()`, `fail()`, `die()`
 - **Timeout Wrapper:** `run_with_timeout()` (Canonical version with PID tracking, graceful SIGTERM, and SIGKILL fallback)
+- **Daemon Lifecycle:** `restart_tailscaled_daemon()`, `stop_pidfile_daemon()` (collapsed caffeinate, DNS watcher, WARP watcher, and host leak prober teardown logic)
+- **Network Interface/Routing:** `get_active_service()`, `get_en0_service()`, `bounce_wifi_interfaces()`, `add_warp_bypass_routes()`, `remove_warp_bypass_routes()`
+- **Proxy/DNS Cleanup:** `disable_all_proxies()`, `flush_dns_cache()`, `reset_sharing_services()`
+- **Configuration Helpers:** `read_adguard_ip()`, `is_kill_switch_enabled()`, `get_warp_endpoint_1()`, `get_warp_endpoint_2()` (which centralizes the hardcoded 162.159.192.1 / .193.1 into .env logic)
 
 ### 2. `scripts/setup-common.sh` (~350 lines)
 Extracts the heavy, duplicated installation logic shared between `setup.sh` (macOS) and `scripts/setup-linux.sh`:
