@@ -82,7 +82,7 @@ func getProfiles() map[string][]string {
 }
 
 func loadEnvProfile() string {
-	profile := "heavy"
+	profile := "medium"
 
 	if bytesData, err := os.ReadFile(".env"); err == nil {
 		scanner := bufio.NewScanner(strings.NewReader(string(bytesData)))
@@ -110,8 +110,8 @@ func loadEnvProfile() string {
 
 	profiles := getProfiles()
 	if _, exists := profiles[profile]; !exists {
-		fmt.Printf("Warning: Profile '%s' is invalid. Falling back to 'heavy'.\n", profile)
-		profile = "heavy"
+		fmt.Printf("Warning: Profile '%s' is invalid. Falling back to 'medium'.\n", profile)
+		profile = "medium"
 	}
 	return profile
 }
