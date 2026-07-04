@@ -376,7 +376,7 @@ These bugs and edge cases were discovered and resolved during development.
 
 *Architectural Note: Why is the DNS proxy in Python while the SOCKS5 proxy was moved to a compiled Go Docker container?*
 The SOCKS5 proxy handles heavy data streaming (e.g., video, downloads). Python introduces massive CPU/battery overhead for raw socket streaming, making a compiled Go image (`serjs/go-socks5-proxy`) the only performant choice. 
-Conversely, the DNS proxy only handles intermittent UDP queries (a few bytes per minute). The Python overhead for this is effectively 0.001 Watts. We deliberately kept `dns-proxy.py` in Python because it runs natively on the macOS/Linux host—rewriting it in Go would force users to install a Go compiler (`brew install go`) on their host machine for zero noticeable battery gain.
+Conversely, the DNS proxy only handles intermittent UDP queries (a few bytes per minute) generated solely by the local host machine. The Python overhead for this is effectively 0.001 Watts. We deliberately kept `dns-proxy.py` in Python because it runs natively on the macOS/Linux host—rewriting it in Go would force users to install a Go compiler (`brew install go`) on their host machine for zero noticeable battery gain. (Note: If this architecture is ever adapted to serve as a public DNS resolver for thousands of users or for massive automated web-scraping clusters, `dns-proxy.py` must be rewritten in Go to survive the concurrent packet flood).
 
 ### 10.2 Exit Node Routing Conflict & The SOCKS5 Failover
 
