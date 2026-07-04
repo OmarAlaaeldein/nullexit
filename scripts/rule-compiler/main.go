@@ -101,7 +101,7 @@ func loadEnvProfile() string {
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		fmt.Printf("Warning: Failed to read .env file for profile configuration (%%v). Using default.\n", err)
+		fmt.Printf("Warning: Failed to read .env file for profile configuration (%v). Using default.\n", err)
 	}
 
 	if envVal := os.Getenv("GATEWAY_RULE_PROFILE"); envVal != "" {
@@ -110,7 +110,7 @@ func loadEnvProfile() string {
 
 	profiles := getProfiles()
 	if _, exists := profiles[profile]; !exists {
-		fmt.Printf("Warning: Profile '%%s' is invalid. Falling back to 'heavy'.\n", profile)
+		fmt.Printf("Warning: Profile '%s' is invalid. Falling back to 'heavy'.\n", profile)
 		profile = "heavy"
 	}
 	return profile
@@ -187,7 +187,7 @@ func getAdguardNativeLists() []string {
 
 	contentBytes, err := os.ReadFile(yamlPath)
 	if err != nil {
-		fmt.Printf("Warning: Failed to parse AdGuardHome.yaml for native lists (%%v)\n", err)
+		fmt.Printf("Warning: Failed to parse AdGuardHome.yaml for native lists (%v)\n", err)
 		return enabledUrls
 	}
 	content := string(contentBytes)
@@ -225,7 +225,7 @@ func getAdguardCompiledRulesCachePath() string {
 
 	contentBytes, err := os.ReadFile(yamlPath)
 	if err != nil {
-		fmt.Printf("Warning: Failed to resolve compiled_rules.txt cache path (%%v)\n", err)
+		fmt.Printf("Warning: Failed to resolve compiled_rules.txt cache path (%v)\n", err)
 		return ""
 	}
 	content := string(contentBytes)
@@ -241,7 +241,7 @@ func getAdguardCompiledRulesCachePath() string {
 			}
 			idMatch := idRegex.FindStringSubmatch(block)
 			if len(idMatch) > 1 {
-				return fmt.Sprintf("adguard/work/data/filters/%%s.txt", idMatch[1])
+				return fmt.Sprintf("adguard/work/data/filters/%s.txt", idMatch[1])
 			}
 		}
 	}
@@ -250,16 +250,16 @@ func getAdguardCompiledRulesCachePath() string {
 
 func handleFetchError(urlStr string, cacheFile string, err error) map[string]bool {
 	if _, statErr := os.Stat(cacheFile); statErr == nil {
-		fmt.Printf(" -> Warning: Failed to fetch %%s (%%v). Falling back to expired local cache.\n", urlStr, err)
+		fmt.Printf(" -> Warning: Failed to fetch %s (%v). Falling back to expired local cache.\n", urlStr, err)
 		content, readErr := os.ReadFile(cacheFile)
 		if readErr == nil {
 			domains := parseDomainsFromContent(string(content))
-			fmt.Printf(" -> Loaded from expired cache (%%d domains).\n", len(domains))
+			fmt.Printf(" -> Loaded from expired cache (%d domains).\n", len(domains))
 			return domains
 		}
-		fmt.Printf(" -> Warning: Failed to read expired cache (%%v). Using local lists only.\n", readErr)
+		fmt.Printf(" -> Warning: Failed to read expired cache (%v). Using local lists only.\n", readErr)
 	} else {
-		fmt.Printf(" -> Warning: Failed to fetch %%s (%%v). Using local lists only for this source.\n", urlStr, err)
+		fmt.Printf(" -> Warning: Failed to fetch %s (%v). Using local lists only for this source.\n", urlStr, err)
 	}
 	return make(map[string]bool)
 }
@@ -269,23 +269,23 @@ func fetchRemoteDomains(urlStr string) map[string]bool {
 
 	hash := md5.Sum([]byte(urlStr))
 	urlHash := hex.EncodeToString(hash[:])
-	cacheFile := filepath.Join(CacheDir, fmt.Sprintf("%%s.txt", urlHash))
+	cacheFile := filepath.Join(CacheDir, fmt.Sprintf("%s.txt", urlHash))
 
 	if stat, err := os.Stat(cacheFile); err == nil {
 		fileAge := time.Since(stat.ModTime()).Seconds()
 		if fileAge < 86400 {
-			fmt.Printf("Loading remote blacklist from cache: %%s\n", urlStr)
+			fmt.Printf("Loading remote blacklist from cache: %s\n", urlStr)
 			content, err := os.ReadFile(cacheFile)
 			if err == nil {
 				domains := parseDomainsFromContent(string(content))
-				fmt.Printf(" -> Loaded from cache (copy is %%.1f hours old, %%d domains).\n", fileAge/3600.0, len(domains))
+				fmt.Printf(" -> Loaded from cache (copy is %.1f hours old, %d domains).\n", fileAge/3600.0, len(domains))
 				return domains
 			}
-			fmt.Printf(" -> Warning: Failed to read cache file %%s (%%v). Re-fetching...\n", cacheFile, err)
+			fmt.Printf(" -> Warning: Failed to read cache file %s (%v). Re-fetching...\n", cacheFile, err)
 		}
 	}
 
-	fmt.Printf("Fetching remote blacklist from: %%s ...\n", urlStr)
+	fmt.Printf("Fetching remote blacklist from: %s ...\n", urlStr)
 
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
@@ -301,7 +301,7 @@ func fetchRemoteDomains(urlStr string) map[string]bool {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return handleFetchError(urlStr, cacheFile, fmt.Errorf("HTTP %%d", resp.StatusCode))
+		return handleFetchError(urlStr, cacheFile, fmt.Errorf("HTTP %d", resp.StatusCode))
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -313,20 +313,20 @@ func fetchRemoteDomains(urlStr string) map[string]bool {
 	domains := parseDomainsFromContent(content)
 
 	if len(domains) < 10 {
-		return handleFetchError(urlStr, cacheFile, fmt.Errorf("Sanity check failed: only found %%d domains. Possible 404 or bad URL", len(domains)))
+		return handleFetchError(urlStr, cacheFile, fmt.Errorf("Sanity check failed: only found %d domains. Possible 404 or bad URL", len(domains)))
 	}
 
 	err = os.WriteFile(cacheFile, bodyBytes, 0644)
 	if err != nil {
-		fmt.Printf(" -> Warning: Failed to save cache file (%%v)\n", err)
+		fmt.Printf(" -> Warning: Failed to save cache file (%v)\n", err)
 	}
 
-	fmt.Printf(" -> Successfully fetched and cached %%d domains.\n", len(domains))
+	fmt.Printf(" -> Successfully fetched and cached %d domains.\n", len(domains))
 	return domains
 }
 
 func optimizeSubdomains(domains map[string]bool, listName string) map[string]bool {
-	fmt.Printf("Optimizing %%s by removing redundant subdomains...\n", listName)
+	fmt.Printf("Optimizing %s by removing redundant subdomains...\n", listName)
 	rawCount := len(domains)
 	if rawCount == 0 {
 		return make(map[string]bool)
@@ -360,7 +360,7 @@ func optimizeSubdomains(domains map[string]bool, listName string) map[string]boo
 	if rawCount > 0 {
 		reduction = (float64(saved) / float64(rawCount)) * 100
 	}
-	fmt.Printf(" -> Reduced %%s from %%d to %%d domains (-%%d / %%.1f%%%% reduction).\n", listName, rawCount, len(optimized), saved, reduction)
+	fmt.Printf(" -> Reduced %s from %d to %d domains (-%d / %.1f%% reduction).\n", listName, rawCount, len(optimized), saved, reduction)
 	return optimized
 }
 
@@ -389,16 +389,16 @@ func parseIpsFromContent(content string) map[string]bool {
 
 func handleIpFetchError(urlStr string, cacheFile string, err error) map[string]bool {
 	if _, statErr := os.Stat(cacheFile); statErr == nil {
-		fmt.Printf(" -> Warning: fetch failed (%%v). Falling back to stale cache.\n", err)
+		fmt.Printf(" -> Warning: fetch failed (%v). Falling back to stale cache.\n", err)
 		content, readErr := os.ReadFile(cacheFile)
 		if readErr == nil {
 			ips := parseIpsFromContent(string(content))
-			fmt.Printf(" -> %%d IPs loaded from stale cache.\n", len(ips))
+			fmt.Printf(" -> %d IPs loaded from stale cache.\n", len(ips))
 			return ips
 		}
-		fmt.Printf(" -> Warning: stale cache also failed (%%v).\n", readErr)
+		fmt.Printf(" -> Warning: stale cache also failed (%v).\n", readErr)
 	} else {
-		fmt.Printf(" -> Warning: %%s failed (%%v). No cache available. Skipping.\n", urlStr, err)
+		fmt.Printf(" -> Warning: %s failed (%v). No cache available. Skipping.\n", urlStr, err)
 	}
 	return make(map[string]bool)
 }
@@ -408,23 +408,23 @@ func fetchRemoteIps(urlStr string) map[string]bool {
 
 	hash := md5.Sum([]byte(urlStr))
 	urlHash := hex.EncodeToString(hash[:])
-	cacheFile := filepath.Join(IpCacheDir, fmt.Sprintf("%%s.txt", urlHash))
+	cacheFile := filepath.Join(IpCacheDir, fmt.Sprintf("%s.txt", urlHash))
 
 	if stat, err := os.Stat(cacheFile); err == nil {
 		fileAge := time.Since(stat.ModTime()).Seconds()
 		if fileAge < 86400 {
-			fmt.Printf("Loading IP feed from cache: %%s\n", urlStr)
+			fmt.Printf("Loading IP feed from cache: %s\n", urlStr)
 			content, err := os.ReadFile(cacheFile)
 			if err == nil {
 				ips := parseIpsFromContent(string(content))
-				fmt.Printf(" -> %%d IPs (cache is %%.1fh old).\n", len(ips), fileAge/3600.0)
+				fmt.Printf(" -> %d IPs (cache is %.1fh old).\n", len(ips), fileAge/3600.0)
 				return ips
 			}
-			fmt.Printf(" -> Warning: cache read failed (%%v). Re-fetching...\n", err)
+			fmt.Printf(" -> Warning: cache read failed (%v). Re-fetching...\n", err)
 		}
 	}
 
-	fmt.Printf("Fetching IP feed: %%s ...\n", urlStr)
+	fmt.Printf("Fetching IP feed: %s ...\n", urlStr)
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return handleIpFetchError(urlStr, cacheFile, err)
@@ -439,7 +439,7 @@ func fetchRemoteIps(urlStr string) map[string]bool {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return handleIpFetchError(urlStr, cacheFile, fmt.Errorf("HTTP %%d", resp.StatusCode))
+		return handleIpFetchError(urlStr, cacheFile, fmt.Errorf("HTTP %d", resp.StatusCode))
 	}
 
 	bodyBytes, err := io.ReadAll(resp.Body)
@@ -450,15 +450,15 @@ func fetchRemoteIps(urlStr string) map[string]bool {
 	content := string(bodyBytes)
 	ips := parseIpsFromContent(content)
 	if len(ips) < 1 {
-		return handleIpFetchError(urlStr, cacheFile, fmt.Errorf("Sanity check failed: only %%d IPs found. Possible 404", len(ips)))
+		return handleIpFetchError(urlStr, cacheFile, fmt.Errorf("Sanity check failed: only %d IPs found. Possible 404", len(ips)))
 	}
 
 	err = os.WriteFile(cacheFile, bodyBytes, 0644)
 	if err != nil {
-		fmt.Printf(" -> Warning: cache write failed (%%v)\n", err)
+		fmt.Printf(" -> Warning: cache write failed (%v)\n", err)
 	}
 
-	fmt.Printf(" -> %%d IPs fetched and cached.\n", len(ips))
+	fmt.Printf(" -> %d IPs fetched and cached.\n", len(ips))
 	return ips
 }
 
@@ -492,7 +492,7 @@ func compileIpBlocklist() int {
 	}
 	wg.Wait()
 
-	fmt.Printf("Total unique entries before filtering: %%d\n", len(allIps))
+	fmt.Printf("Total unique entries before filtering: %d\n", len(allIps))
 
 	reservedStr := []string{
 		"10.0.0.0/8",
@@ -537,22 +537,22 @@ func compileIpBlocklist() int {
 
 	removed := len(allIps) - len(cleanIps)
 	if removed > 0 {
-		fmt.Printf(" -> Removed %%d private/reserved entries.\n", removed)
+		fmt.Printf(" -> Removed %d private/reserved entries.\n", removed)
 	}
-	fmt.Printf(" -> Final IP blocklist: %%d entries.\n", len(cleanIps))
+	fmt.Printf(" -> Final IP blocklist: %d entries.\n", len(cleanIps))
 
 	os.MkdirAll(filepath.Dir(IpOutputPath), 0755)
 
 	f, err := os.Create(IpOutputPath)
 	if err != nil {
-		fmt.Printf("Error writing IP output file: %%v\n", err)
+		fmt.Printf("Error writing IP output file: %v\n", err)
 		return len(cleanIps)
 	}
 	defer f.Close()
 
 	f.WriteString("# nullexit Compiled IP Blocklist\n")
 	f.WriteString("# Sources: Feodo Tracker, Spamhaus DROP/EDROP, Emerging Threats, CINS\n")
-	f.WriteString(fmt.Sprintf("# Entries: %%d\n\n", len(cleanIps)))
+	f.WriteString(fmt.Sprintf("# Entries: %d\n\n", len(cleanIps)))
 
 	f.WriteString("create block_malicious_new hash:net maxelem 200000 -exist\n")
 
@@ -563,20 +563,20 @@ func compileIpBlocklist() int {
 	sort.Strings(sortedIps)
 
 	for _, ip := range sortedIps {
-		f.WriteString(fmt.Sprintf("add block_malicious_new %%s -exist\n", ip))
+		f.WriteString(fmt.Sprintf("add block_malicious_new %s -exist\n", ip))
 	}
 
 	f.WriteString("create block_malicious hash:net maxelem 200000 -exist\n")
 	f.WriteString("swap block_malicious block_malicious_new\n")
 	f.WriteString("destroy block_malicious_new\n")
 
-	fmt.Printf("IP blocklist written to %%s\n", IpOutputPath)
+	fmt.Printf("IP blocklist written to %s\n", IpOutputPath)
 	return len(cleanIps)
 }
 
 func main() {
 	profile := loadEnvProfile()
-	fmt.Printf("Active memory profile: '%%s'\n", strings.ToUpper(profile))
+	fmt.Printf("Active memory profile: '%s'\n", strings.ToUpper(profile))
 
 	localBlackList := loadDomains(BlackListPath)
 	whiteList := loadDomains(WhiteListPath)
@@ -589,7 +589,7 @@ func main() {
 	profiles := getProfiles()
 	urlsToFetch := profiles[profile]
 
-	fmt.Printf("\nStarting concurrent downloads for %%d lists...\n", len(urlsToFetch))
+	fmt.Printf("\nStarting concurrent downloads for %d lists...\n", len(urlsToFetch))
 	startTime := time.Now()
 
 	var mu sync.Mutex
@@ -618,12 +618,12 @@ func main() {
 	}
 	wg.Wait()
 
-	fmt.Printf("Finished concurrent downloads in %%.2f seconds using %%d threads.\n", time.Since(startTime).Seconds(), maxThreads)
+	fmt.Printf("Finished concurrent downloads in %.2f seconds using %d threads.\n", time.Since(startTime).Seconds(), maxThreads)
 
 	adguardNativeUrls := getAdguardNativeLists()
 	var adguardNativeDomains map[string]bool
 	if len(adguardNativeUrls) > 0 {
-		fmt.Printf("\nFetching %%d AdGuard native list(s) for deduplication...\n", len(adguardNativeUrls))
+		fmt.Printf("\nFetching %d AdGuard native list(s) for deduplication...\n", len(adguardNativeUrls))
 		adguardNativeDomains = make(map[string]bool)
 
 		maxNativeThreads := 4
@@ -655,7 +655,7 @@ func main() {
 			for d := range adguardNativeDomains {
 				delete(blackList, d)
 			}
-			fmt.Printf(" -> Removed %%d redundant rules already covered by AdGuard.\n", originalSize-len(blackList))
+			fmt.Printf(" -> Removed %d redundant rules already covered by AdGuard.\n", originalSize-len(blackList))
 		}
 	}
 
@@ -667,11 +667,11 @@ func main() {
 	}
 
 	if len(contradictions) > 0 {
-		fmt.Printf("Detected %%d contradictions. Whitelist taking priority.\n", len(contradictions))
+		fmt.Printf("Detected %d contradictions. Whitelist taking priority.\n", len(contradictions))
 		sort.Strings(contradictions)
 		for _, domain := range contradictions {
 			if localBlackList[domain] {
-				fmt.Printf(" -> Removed local blacklist domain: %%s\n", domain)
+				fmt.Printf(" -> Removed local blacklist domain: %s\n", domain)
 			}
 			delete(blackList, domain)
 		}
@@ -683,16 +683,16 @@ func main() {
 	os.MkdirAll(filepath.Dir(OutputPath), 0755)
 	outFile, err := os.Create(OutputPath)
 	if err != nil {
-		fmt.Printf("Error creating output file: %%v\n", err)
+		fmt.Printf("Error creating output file: %v\n", err)
 		return
 	}
 	defer outFile.Close()
 
 	outFile.WriteString("! Custom Compiled Rules (Auto-Generated)\n")
-	outFile.WriteString(fmt.Sprintf("! Memory Profile: %%s\n", strings.ToUpper(profile)))
-	outFile.WriteString(fmt.Sprintf("! Total Block Rules: %%d\n", len(blackList)))
-	outFile.WriteString(fmt.Sprintf("! Native AdGuard Rules: %%d\n", len(adguardNativeDomains)))
-	outFile.WriteString(fmt.Sprintf("! Total Whitelist Rules: %%d\n\n", len(whiteList)))
+	outFile.WriteString(fmt.Sprintf("! Memory Profile: %s\n", strings.ToUpper(profile)))
+	outFile.WriteString(fmt.Sprintf("! Total Block Rules: %d\n", len(blackList)))
+	outFile.WriteString(fmt.Sprintf("! Native AdGuard Rules: %d\n", len(adguardNativeDomains)))
+	outFile.WriteString(fmt.Sprintf("! Total Whitelist Rules: %d\n\n", len(whiteList)))
 
 	outFile.WriteString("! --- Blacklist Rules ---\n")
 
@@ -708,17 +708,17 @@ func main() {
 			dom, mod := parts[0], parts[1]
 			if strings.HasPrefix(dom, "||") {
 				if strings.HasSuffix(dom, "^") {
-					outFile.WriteString(fmt.Sprintf("%%s$%%s\n", dom, mod))
+					outFile.WriteString(fmt.Sprintf("%s$%s\n", dom, mod))
 				} else {
-					outFile.WriteString(fmt.Sprintf("%%s^$%%s\n", dom, mod))
+					outFile.WriteString(fmt.Sprintf("%s^$%s\n", dom, mod))
 				}
 			} else {
-				outFile.WriteString(fmt.Sprintf("||%%s^$%%s\n", dom, mod))
+				outFile.WriteString(fmt.Sprintf("||%s^$%s\n", dom, mod))
 			}
 		} else if strings.HasPrefix(domain, "/") || strings.HasPrefix(domain, "|") || strings.HasSuffix(domain, "|") || strings.HasSuffix(domain, "^") {
-			outFile.WriteString(fmt.Sprintf("%%s\n", domain))
+			outFile.WriteString(fmt.Sprintf("%s\n", domain))
 		} else {
-			outFile.WriteString(fmt.Sprintf("||%%s^\n", domain))
+			outFile.WriteString(fmt.Sprintf("||%s^\n", domain))
 		}
 	}
 
@@ -735,13 +735,13 @@ func main() {
 			if !strings.HasPrefix(domain, "@@") {
 				rule = "@@" + domain
 			}
-			outFile.WriteString(fmt.Sprintf("%%s\n", rule))
+			outFile.WriteString(fmt.Sprintf("%s\n", rule))
 		} else {
-			outFile.WriteString(fmt.Sprintf("@@||%%s^\n", domain))
+			outFile.WriteString(fmt.Sprintf("@@||%s^\n", domain))
 		}
 	}
 
-	fmt.Printf("\nSuccessfully compiled %%d block rules and %%d allow rules to %%s\n", len(blackList), len(whiteList), OutputPath)
+	fmt.Printf("\nSuccessfully compiled %d block rules and %d allow rules to %s\n", len(blackList), len(whiteList), OutputPath)
 
 	cachedFilterPath := getAdguardCompiledRulesCachePath()
 	if cachedFilterPath != "" {
@@ -749,12 +749,12 @@ func main() {
 		if err == nil {
 			err = os.WriteFile(cachedFilterPath, input, 0644)
 			if err == nil {
-				fmt.Printf("Updated AdGuard filter cache: %%s\n", cachedFilterPath)
+				fmt.Printf("Updated AdGuard filter cache: %s\n", cachedFilterPath)
 			} else {
-				fmt.Printf("Warning: Could not update AdGuard filter cache %%s (%%v)\n", cachedFilterPath, err)
+				fmt.Printf("Warning: Could not update AdGuard filter cache %s (%v)\n", cachedFilterPath, err)
 			}
 		} else {
-			fmt.Printf("Warning: Could not read OutputPath to copy to cache (%%v)\n", err)
+			fmt.Printf("Warning: Could not read OutputPath to copy to cache (%v)\n", err)
 		}
 	} else {
 		fmt.Println("Warning: Could not determine compiled_rules.txt cache path from AdGuardHome.yaml; skipping cache update.")
@@ -800,18 +800,18 @@ func main() {
 			}
 		}
 
-		creds := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("admin:%%s", agPass)))
+		creds := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("admin:%s", agPass)))
 		req, err := http.NewRequest("POST", "http://127.0.0.1:3000/control/filtering/refresh", bytes.NewBuffer([]byte("{}")))
 		if err == nil {
-			req.Header.Set("Authorization", fmt.Sprintf("Basic %%s", creds))
+			req.Header.Set("Authorization", fmt.Sprintf("Basic %s", creds))
 			req.Header.Set("Content-Type", "application/json")
 			client := &http.Client{Timeout: 15 * time.Second}
 			resp, err := client.Do(req)
 			if err == nil {
-				fmt.Printf("Triggered AdGuard filter refresh via REST API (HTTP=%%d).\n", resp.StatusCode)
+				fmt.Printf("Triggered AdGuard filter refresh via REST API (HTTP=%d).\n", resp.StatusCode)
 				resp.Body.Close()
 			} else {
-				fmt.Printf("Warning: AdGuard filter refresh API call failed (%%v). New whitelist will not load until next refresh tick (~24h) or manual refresh.\n", err)
+				fmt.Printf("Warning: AdGuard filter refresh API call failed (%v). New whitelist will not load until next refresh tick (~24h) or manual refresh.\n", err)
 			}
 		}
 	}
