@@ -31,7 +31,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 |-----------|-------|------|
 | `warp` | `qmcgaw/gluetun:v3.41.1` | Gluetun WireGuard client → Cloudflare WARP. Owns the network namespace. Strict firewall. |
 | `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
-| `socks-proxy` | `serjs/go-socks5-proxy:v0.0.4` | RFC 1928 SOCKS5 proxy. Outbound connections go through kernel routing → tun0 → WARP. |
+| `tailscale` | `tailscale/tailscale` | The mesh VPN exit node. Also provides the built-in SOCKS5 proxy fallback via `TS_SOCKS5_SERVER=:1080` |
 | `routing-fix` | `alpine:3.20` | Sidecar that maintains routing tables + iptables rules every 30 seconds. |
 | `adguardhome` | `adguard/adguardhome:v0.107.77` | DNS sinkhole for ads/trackers. Listens on port 5335. Upstream DNS: `127.0.0.1:53` (through WARP). |
 
@@ -95,7 +95,8 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 1. **Reset DNS to 1.1.1.1** — Prevents deadlocks during startup
 2. **Disconnect host Tailscale** — `tailscale down` (prevents exit-node routing during container boot)
 3. **Compile DNS rules** — `python3 scripts/sync-rules.py`
-4. **Boot Colima VM** — `colima start --memory 0.6` if not running
+4. **Boot Colima VM** — `colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged` if not running
+   - **Why Bridged Networking?** The `--network-mode bridged` and `--network-address` flags are critical. By default, Colima creates an isolated network. Bridged mode forces the VM to receive its own IP address directly from your local router's DHCP server, placing it on the same physical subnet as your host machine. This bypasses macOS network isolation and is absolutely required for peer-to-peer (P2P) connections, mDNS, and local LAN service discovery to function properly across the container boundary.
 5. **Configure VM swap** — 400MB swap file inside the VM to prevent OOM
 6. **Clean corrupted AdGuard config** — Remove empty `AdGuardHome.yaml`
 7. **Start containers** — `docker compose up -d`
@@ -321,7 +322,7 @@ For debugging, logs are strictly segmented based on the component's lifecycle:
 - **`output.log` (Host-side):** Contains all standard error (`stderr`) and verbose output from the host scripts (`toggle.sh`, `recover.sh`, `setup.sh`). Since the `rule-compiler` container is ephemeral and deleted after running, its logs (and any Python errors from `scripts/sync-rules.py`) are extracted and appended to this file before deletion.
   - **Log Rotation Policy:** On startup, `toggle.sh` checks if `output.log` exceeds **50MB** (`52,428,800` bytes). If it does, it performs a metadata-only rename (`mv output.log output.log.old`), preserving history while resetting the active log to 0 bytes. This rename-based rotation avoids the heavy disk I/O and CPU overhead of rewriting a massive file line-by-line.
   - **Egress Probe Logging:** The background host-egress leak prober checks if stdout is a TTY (`[ -t 1 ]`) and will only print live status updates (using carriage return `\r`) or duplicate console warnings in interactive mode. It automatically detects macOS/BSD vs. Linux environments to dynamically construct timestamps with date and time (omitting milliseconds on macOS to prevent high CPU utilization from spawning sub-second processes).
-- **`docker logs <container>` (Guest-side):** The persistent containers (`warp`, `tailscale`, `routing-fix`, `adguardhome`, `socks-proxy`) use the Docker `json-file` logging driver with a strict `max-size` (1m-10m) to prevent VM disk exhaustion. Use standard `docker logs` to view them.
+- **`docker logs <container>` (Guest-side):** The persistent containers (`warp`, `tailscale`, `routing-fix`, `adguardhome`) use the Docker `json-file` logging driver with a strict `max-size` (1m-10m) to prevent VM disk exhaustion. Use standard `docker logs` to view them.
 
 ### 9.12 Chrome Remote Desktop Connection Failures
 **Context:** When attempting to access a remote machine via Chrome Remote Desktop (CRD), the connection fails or hangs if Tailscale is active **on the remote device**. The connection works fine even if Tailscale (and the exit node) is active **on the local client/viewer device**, but only if Tailscale is disabled on the remote machine.
@@ -378,7 +379,7 @@ These bugs and edge cases were discovered and resolved during development.
 **Solution:** Replaced both with a **Python DNS proxy** (`scripts/dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
 
 *Architectural Note: Why is the DNS proxy in Python while the SOCKS5 proxy was moved to a compiled Go Docker container?*
-The SOCKS5 proxy handles heavy data streaming (e.g., video, downloads). Python introduces massive CPU/battery overhead for raw socket streaming, making a compiled Go image (`serjs/go-socks5-proxy`) the only performant choice. 
+The SOCKS5 proxy handles heavy data streaming (e.g., video, downloads). Python introduces massive CPU/battery overhead for raw socket streaming, which is why we rely on the compiled Go implementation built directly into the `tailscaled` daemon via `TS_SOCKS5_SERVER=:1080`. 
 Conversely, the DNS proxy only handles intermittent UDP queries (a few bytes per minute) generated solely by the local host machine. The Python overhead for this is effectively 0.001 Watts. We deliberately kept `dns-proxy.py` in Python because it runs natively on the macOS/Linux host—rewriting it in Go would force users to install a Go compiler (`brew install go`) on their host machine for zero noticeable battery gain. (Note: If this architecture is ever adapted to serve as a public DNS resolver for thousands of users or for massive automated web-scraping clusters, `dns-proxy.py` must be rewritten in Go to survive the concurrent packet flood).
 
 ### 10.2 Exit Node Routing Conflict & The SOCKS5 Failover
@@ -718,7 +719,7 @@ Or apply Flavor A if you'd prefer to preserve the contents while resetting the m
   - `docker compose config` immediately picked up `TS_AUTHKEY` + `WIREGUARD_PRIVATE_KEY` substitution.
 - `compiled_rules.txt`, `ip_blocklist.ipset`, `data/filters/1782645604.txt` were `mode=0444`: Flavor B (`mv`-aside) unblocked all three.
   - scripts/sync-rules.py then ran clean: 279587 block rules + 171 allow rules + 16710 IP entries compiled; new files came out at `0644`.
-- `toggle.sh` then went end-to-end in 48s (warp / routing-fix / adguardhome / socks-proxy / tailscale all healthy, gateway mesh-joined, DNS hijack verified single-server).
+- `toggle.sh` then went end-to-end in 48s (warp / routing-fix / adguardhome / tailscale all healthy, gateway mesh-joined, DNS hijack verified single-server).
 
 **When this trick is appropriate vs. inappropriate:**
 - ✓ You own the parent directory and the file (typical desktop scenario).

@@ -31,7 +31,7 @@ graph TB
             subgraph NETNS["warp container network namespace (shared by ALL containers)"]
                 GLUETUN["warp / Gluetun\nWireGuard → tun0\n(owns the namespace)"]
                 TS["tailscale container\nAdvertises exit node\ntailscale0 interface"]
-                SOCKS["socks-proxy\nGo SOCKS5\nport 1080"]
+                SOCKS["tailscale\nSOCKS5\nport 1080"]
                 ADGUARD["adguardhome\nDNS sinkhole\nport 5335"]
                 ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Kill-Switch\n(curl healthcheck loop)"]
             end
@@ -91,7 +91,7 @@ flowchart TD
 
     S1["1. Reset DNS → 1.1.1.1\n(prevent deadlocks)"]
     S2["2. tailscale down\n(prevent exit-node routing during boot)"]
-    S3["3. Check Colima VM\n(colima start --memory 0.6)"]
+    S3["3. Check Colima VM\n(colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged)"]
     S4["4. Configure VM swap\n(400MB, prevent OOM)"]
     S5["5. Clean corrupted AdGuard config\n(prevent container crash loop)"]
     S6["6. docker compose up -d --build\n(compile Go threat rules & boot containers)"]

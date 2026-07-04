@@ -13,11 +13,11 @@ if ! command -v docker >> output.log 2>&1; then
             step "Installing Colima and Docker..."
             brew install colima docker docker-compose
             step "Starting Colima VM..."
-            colima start --memory 0.6
+            colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged
         else
             echo ""
             echo "  Please install Docker manually. Two options:"
-            echo "  A) Colima (Recommended): brew install colima docker docker-compose && colima start --memory 0.6"
+            echo "  A) Colima (Recommended): brew install colima docker docker-compose && colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged"
             echo "  B) Docker Desktop: https://www.docker.com/products/docker-desktop/"
             die "Install Docker, then re-run this script."
         fi
@@ -46,7 +46,7 @@ if ! docker info >> output.log 2>&1; then
     echo ""
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "  Docker is installed but not running."
-        echo "  If using Colima:        colima start --memory 0.6"
+        echo "  If using Colima:        colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged"
         echo "  If using Docker Desktop: open the app."
     else
         echo "  Docker is installed but not running."

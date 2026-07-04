@@ -16,7 +16,10 @@
 
 set -e
 
-sleep 15
+trap 'echo "routing-fix: Caught signal, exiting..."; exit 0' TERM INT QUIT
+
+sleep 15 &
+wait $! || true
 
 echo "routing-fix: Setting up routing for SOCKS5 proxy through WARP (tun0)..."
 
@@ -227,5 +230,6 @@ while true; do
   # Enforce IP blocklist (reloads automatically when file changes)
   add_ip_blocklist
 
-  sleep 30
+  sleep 30 &
+  wait $! || true
 done
