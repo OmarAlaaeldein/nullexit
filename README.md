@@ -1,6 +1,6 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
-> **Last updated:** July 3, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
+> **Last updated:** July 4, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
 
 **nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel — double-encrypting every packet, hiding your ISP metadata, and providing network-wide DNS ad-blocking (AdGuard Home) and kernel-level IP threat blocking (`ipset`/`iptables`) for every device on your mesh.
 
@@ -206,6 +206,8 @@ GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 
 ## 12. Changelog
 
+- **July 4, 2026** — Colima bridged networking, SOCKS5 proxy migrated natively to Tailscale, headless prompt crashes fixed, proxy bypass domains added to fix LAN P2P. Python dependencies completely eliminated: `logger` and `rule-compiler` ported to blazing-fast Go multi-stage Docker builds. Added `crypto.sh` to enforce cryptographic signature validation on all core bash scripts.
+- **July 3, 2026** — **Critical Security Updates:** Addressed the overnight silent IP leak and improved geo-blocking. Introduced `scripts/host-leak-probe.sh` (a sub-second host-egress leak detector) and a statistical threshold auto-shutdown watcher. Added `unlock-files.sh` to safely reset file permissions. Resolved numerous startup regressions and system bugs.
 - **July 2, 2026** — Two infinite routing loops resolved (`devref.md §10.31`): host-VM tunnel loop (WARP bypass routes now via gateway IP + manual `utun*` redirection) and Docker Compose subnet takeover (`10.200.1.0/24` lock). `--accept-routes=true` now explicit on all `tailscale up --reset` calls.
 - **July 2, 2026** — Auto-recovery daemon documented in §6 above (`scripts/watcher.sh` + launchd plist). See `devref.md §10.29`.
 - **July 2, 2026** — Linux scripts (`scripts/toggle-linux.sh`, `recover-linux.sh`, `setup-linux.sh`) documented in §6.
