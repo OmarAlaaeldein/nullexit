@@ -37,7 +37,7 @@ LOG_FILE="$PROJECT_ROOT/output.log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 
-if date +%N | grep -qv '%N' 2>/dev/null; then
+if date +%3N | grep -qv '3N' 2>/dev/null; then
   DATE_FORMAT="+%Y-%m-%d %H:%M:%S.%3N"
 else
   DATE_FORMAT="+%Y-%m-%d %H:%M:%S"

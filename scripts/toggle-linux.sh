@@ -14,43 +14,8 @@ SUCCESS_RUN=false
 # Global variable to track the currently running background command PID
 CURRENT_BG_PID=""
 
-# Helper function to run a command with a timeout (in seconds)
-# Returns the command's exit code, or 143 if timed out.
-run_with_timeout() {
-  local timeout_sec="$1"
-  shift
-  
-  # Run the command in the background
-  "$@" &
-  local cmd_pid=$!
-  CURRENT_BG_PID="$cmd_pid"
-  
-  # Run a watchdog sleep in the background
-  (
-    sleep "$timeout_sec"
-    if kill -0 "$cmd_pid" 2>> output.log; then
-      echo -e "\n[Timeout] Command '$*' exceeded $timeout_sec seconds. Terminating..." >&2
-      kill -15 "$cmd_pid" 2>> output.log || true
-      sleep 2
-      if kill -0 "$cmd_pid" 2>> output.log; then
-        kill -9 "$cmd_pid" 2>> output.log || true
-      fi
-    fi
-  ) &
-  local watcher_pid=$!
-  
-  # Disable set -e temporarily to capture exit status of wait
-  set +e
-  wait "$cmd_pid"
-  local exit_status=$?
-  set -e
-  
-  # Kill the watcher since the command finished
-  kill "$watcher_pid" 2>> output.log && wait "$watcher_pid" 2>> output.log || true
-  
-  CURRENT_BG_PID=""
-  return "$exit_status"
-}
+# Source common bash functions
+source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # Helper function to run a GUI command as the logged-in console user
 # (Prevents permission failures if the script is run with sudo)
