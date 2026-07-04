@@ -7,6 +7,15 @@ set -e
 # Define log file
 LOG_FILE="$PWD/output.log"
 
+# Rotate log file if it exceeds 50MB (52428800 bytes)
+if [ -f "$LOG_FILE" ]; then
+  log_size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
+  if [ "$log_size" -gt 52428800 ]; then
+    mv "$LOG_FILE" "${LOG_FILE}.old" 2>/dev/null || rm -f "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log file exceeded 50MB; rotated to output.log.old" > "$LOG_FILE"
+  fi
+fi
+
 # --- MAIN EXECUTION LOGGING ---
 echo -e "\n========================================================" >> "$LOG_FILE"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] toggle.sh invoked" >> "$LOG_FILE"
