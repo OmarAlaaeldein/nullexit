@@ -28,6 +28,21 @@ echo "========================================================" >> "$LOG_FILE"
 # Start execution timer
 TOGGLE_START_TIME=$SECONDS
 
+if [[ "$1" == "restart" ]] || [[ "$1" == "--restart" ]]; then
+  echo "Executing Gateway Restart Sequence..."
+  # We must source common.sh here temporarily to check is_gateway_active before we proceed
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
+  if is_gateway_active; then
+    echo "Gateway is currently running. Stopping it first..."
+    bash "$0"
+    echo "Gateway stopped. Now starting it..."
+  else
+    echo "Gateway is already stopped. Starting it..."
+  fi
+  bash "$0"
+  exit 0
+fi
+
 # Global flag to track if the script completed successfully
 SUCCESS_RUN=false
 
@@ -1333,5 +1348,11 @@ if [ "$START_GATEWAY" = "true" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
+echo -e "\n──────────────────────────────────────────────"
+read -rp "Press [r] and Enter to instantly reverse state, or just press Enter to exit: " USER_CHOICE
+if [[ "${USER_CHOICE}" == "r" || "${USER_CHOICE}" == "R" ]]; then
+  echo "Reversing gateway state..."
+  exec bash "$0"
+fi
 
 echo -e "\nYou can close this terminal window now."
