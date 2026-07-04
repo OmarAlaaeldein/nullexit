@@ -183,24 +183,9 @@ if [ "$POST_WAKE" = "true" ]; then
   done
 
   if [ -n "$TS_IP" ]; then
-    # Detect the active network service (same heuristic as toggle.sh).
-    ACTIVE_IF=$(route get default 2>> output.log | awk '/interface:/{print $2; exit}')
-    if [ -z "$ACTIVE_IF" ] || [[ "$ACTIVE_IF" =~ ^utun ]] || [[ "$ACTIVE_IF" =~ ^tun ]]; then
-      for i in en0 en1 en2 en3; do
-        if ifconfig "$i" 2>> output.log | grep -q 'status: active'; then
-          ACTIVE_IF="$i"; break
-        fi
-      done
-    fi
-    [ -z "$ACTIVE_IF" ] && ACTIVE_IF="en0"
-    ACTIVE_SVC=$(networksetup -listnetworkserviceorder 2>> output.log \
-                  | grep -B1 "Device: $ACTIVE_IF" | head -1 \
-                  | sed -E 's/^\([0-9\*]+\) //' || true)
-    [ -z "$ACTIVE_SVC" ] && ACTIVE_SVC="Wi-Fi"
-    EN0_SVC=$(networksetup -listnetworkserviceorder 2>> output.log \
-                | grep -B1 "Device: en0" | head -1 \
-                | sed -E 's/^\([0-9\*]+\) //' || true)
-    [ -z "$EN0_SVC" ] && EN0_SVC="Wi-Fi"
+    # Detect the active network service (using helper in common.sh)
+    ACTIVE_SVC=$(get_active_service)
+    EN0_SVC=$(get_en0_service)
 
     networksetup -setsearchdomains "$ACTIVE_SVC" "ts.net" 2>> output.log || true
     networksetup -setdnsservers "$ACTIVE_SVC" "$TS_IP" 2>> output.log || true

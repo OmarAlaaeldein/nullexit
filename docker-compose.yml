@@ -102,7 +102,7 @@ services:
         max-file: "3"
 
   socks-proxy:
-    image: serjs/go-socks5-proxy:latest
+    image: serjs/go-socks5-proxy:v0.0.4
     container_name: socks-proxy
     network_mode: service:warp
     depends_on:
@@ -139,6 +139,7 @@ services:
     environment:
       - TZ=America/New_York
       - WARP_ENDPOINT=162.159.192.1
+      - BLOCKED_COUNTRIES=${BLOCKED_COUNTRIES}
     volumes:
       - ./scripts/routing-fix.sh:/routing-fix.sh:ro
       # SECURITY: ./adguard/work/ is bind-mounted into this container.

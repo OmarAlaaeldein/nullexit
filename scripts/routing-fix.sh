@@ -91,10 +91,10 @@ create_log_drop_chain() {
 }
 
 add_country_block() {
-  # To add a country to the blocklist, simply append its 2-letter ISO country code to the loop string below.
+  # To add a country to the blocklist, simply define the 'BLOCKED_COUNTRIES' variable in .env with 2-letter ISO country codes.
   # You can find the country code by looking at the filename on http://www.ipdeny.com/ipblocks/data/countries/
-  # For example, to block China (cn) and Russia (ru), change the line to: `for zone in kp il cn ru; do`
-  for zone in kp il; do
+  # For example, to block China (cn) and Russia (ru), set: BLOCKED_COUNTRIES="cn ru" in your .env file
+  for zone in $BLOCKED_COUNTRIES; do
     set_name="block_${zone}"
     zone_upper=$(echo "$zone" | tr 'a-z' 'A-Z')
     chain_name="LOG_DROP_${zone_upper}"

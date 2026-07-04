@@ -641,7 +641,16 @@ def main():
     if adguard_reachable:
         try:
             import urllib.request as _ur, base64 as _b64
-            creds = _b64.b64encode(b"admin:nullexit").decode("ascii")
+            ag_pass = "nullexit"
+            try:
+                with open(".env", "r") as f:
+                    for line in f:
+                        if line.startswith("ADGUARD_PASSWORD="):
+                            ag_pass = line.strip().split("=", 1)[1].strip("\"'")
+                            break
+            except Exception:
+                pass
+            creds = _b64.b64encode(f"admin:{ag_pass}".encode("ascii")).decode("ascii")
             req = _ur.Request(
                 "http://127.0.0.1:3000/control/filtering/refresh",
                 method="POST",

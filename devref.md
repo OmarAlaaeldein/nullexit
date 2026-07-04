@@ -31,8 +31,8 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 |-----------|-------|------|
 | `warp` | `qmcgaw/gluetun:v3.41.1` | Gluetun WireGuard client → Cloudflare WARP. Owns the network namespace. Strict firewall. |
 | `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
-| `socks-proxy` | `python:3.13-alpine` | RFC 1928 SOCKS5 proxy. Outbound connections go through kernel routing → tun0 → WARP. |
-| `routing-fix` | `alpine:3.24` | Sidecar that maintains routing tables + iptables rules every 5 seconds. |
+| `socks-proxy` | `serjs/go-socks5-proxy:v0.0.4` | RFC 1928 SOCKS5 proxy. Outbound connections go through kernel routing → tun0 → WARP. |
+| `routing-fix` | `alpine:3.20` | Sidecar that maintains routing tables + iptables rules every 5 seconds. |
 | `adguardhome` | `adguard/adguardhome:v0.107.77` | DNS sinkhole for ads/trackers. Listens on port 5335. Upstream DNS: `127.0.0.1:53` (through WARP). |
 
 ### Port Mappings (on host via Colima)
@@ -74,6 +74,8 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `scripts/recover-linux.sh` | ~250 | **Linux sibling of `recover.sh`.** Sources `common.sh`. Same nuclear semantics (flush, restart, verify) — but using `nmcli` / `ip link` instead of macOS `networksetup`. |
 | `scripts/setup-linux.sh` | ~80 | **Linux sibling of `setup.sh`.** Sources `setup-common.sh`. Distro detection (apt/dnf/pacman), installs Linux-specific dependencies, creates `.desktop` shortcuts. |
 | `scripts/Toggle-Gateway.bat` | ~300 | **Windows Toggle helper.** Moved from root to `scripts/`. Helps invoke the framework on Windows if applicable. |
+| `scripts/reinstall-host-tailscale.sh` | ~740 | **Nuke-and-reinstall tool for host Tailscale.** Completely purges Tailscale, its settings, macOS Background Items (`.btm` database), and stale System Extensions. Wipes ALL Login Items via `sfltool reset-login-items` (requires sudo). Useful for crisis recovery but destructive to other login items. |
+| `scripts/fix-ssh-delay.sh` | ~100 | **Fixes SSH connection delays.** One-shot script to address SSH delays caused by DNS or routing issues, useful in crisis situations. |
 | `logger.py` | 60 | **Internal logger piped from `scripts/routing-fix.sh`** inside the `warp` container. Not invoked from the host; emits the routing-fix loop's structured output. |
 | `black_list.txt` | 71 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
 | `white_list.txt` | 222 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
@@ -808,13 +810,13 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
 
 ### 10.30 Host-Side Traffic Leaking Past the Exit Node (with Remote Clients Routing Correctly)
 
-**Symptom.** `toggle.sh` reports success. Remote tailnet clients (e.g. an S24 phone) correctly egress through Cloudflare WARP and see a Cloudflare IP on `whatismyip.com`. But on the **HOST Mac running the gateway**, `whatismyip.com` reports the underlying physical ISP's ASN (e.g. `udem` for Université de Montréal campus Wi-Fi). The gateway container itself is healthy; the leak is specifically on the host.
+**Symptom.** `toggle.sh` reports success. Remote tailnet clients (e.g. an S24 phone) correctly egress through Cloudflare WARP and see a Cloudflare IP on `whatismyip.com`. But on the **HOST Mac running the gateway**, `whatismyip.com` reports the underlying physical ISP's ASN (e.g. `campus_isp` for a university campus Wi-Fi). The gateway container itself is healthy; the leak is specifically on the host.
 
 **Root causes.** Three distinct mechanisms can each produce this exact symptom on the host alone, while leaving remote clients unaffected. They are mutually rankable so the diagnostic picks the active one deterministically.
 
 * **(A) SOCKS5 fallback lane active.** `toggle.sh`'s three Phase-B pre-flight checks (`tailscale ping` → AdGuard via `dig +tcp` → WARP internet, toggle.sh ~lines 750-820) sometimes flake during the first minute. When ANY of the three fails, the script sets `SKIP_EXIT_NODE=true` (toggle.sh:849) and instead activates the SOCKS5 fallback path (toggle.sh:894). The SOCKS5 fallback hijacks DNS to `127.0.0.1` (so AdGuard filtering still works) but **modern browsers on macOS do NOT honor the system SOCKS5 proxy** — they ignore `networksetup -setsocksfirewallproxy`. Result: DNS gets ad-filtered but actual HTTP/S traffic exits direct through the campus ISP. This branch is invisible from a remote tailnet client because the client's tunnel is unaffected.
 
-* **(B) IPv6 leak over campus Wi-Fi.** The Tailscale exit node and WARP tunnel are both IPv4-only (gluetun + `post-rules.txt` drop all IPv6 forwarded traffic; devref §10.6). But UdeM (and most modern campus APs) are dual-stack — the host happily accepts AAAA DNS responses and sends IPv6 traffic straight out `en0`. macOS happily encrypts that traffic through Tailscale ONLY if Tailscale has IPv6 advertised; with an IPv4-only exit node, IPv6 traffic skips Tailscale entirely. This branch is invisible from a phone because iOS/Android Tailscale apps actively sinkhole IPv6 in their VPN profile, but the macOS host's `tailscaled` does not.
+* **(B) IPv6 leak over campus Wi-Fi.** The Tailscale exit node and WARP tunnel are both IPv4-only (gluetun + `post-rules.txt` drop all IPv6 forwarded traffic; devref §10.6). But many university and enterprise APs are dual-stack — the host happily accepts AAAA DNS responses and sends IPv6 traffic straight out `en0`. macOS happily encrypts that traffic through Tailscale ONLY if Tailscale has IPv6 advertised; with an IPv4-only exit node, IPv6 traffic skips Tailscale entirely. This branch is invisible from a phone because iOS/Android Tailscale apps actively sinkhole IPv6 in their VPN profile, but the macOS host's `tailscaled` does not.
 
 * **(C) Route-table freeze and `--accept-routes` reset after `tailscaled` wake/toggle.** Running `tailscale up --reset` clears the exit-node preference and reverts `--accept-routes` back to its default (`false`). Without explicitly passing `--accept-routes=true`, `tailscaled` will not attempt to install the default route through the `utun*` tunnel interface even if the exit node preference is reconciled. Additionally, macOS occasionally freezes and fails to apply route-table changes (devref §10.26). In both cases, `netstat -rn` shows the default route still pointing to the physical Wi-Fi gateway (e.g. `172.17.0.1`) instead of the Tailscale `utun*` interface, causing host traffic to exit direct while remote clients route correctly.
 
@@ -834,11 +836,11 @@ bash scripts/diagnose-host-leak.sh --fix
 
 **What it does NOT do.** It does not touch `toggle.sh` or `toggle.sh`'s pre-flight logic, does not modify `.env` (except `--fix` mode appends `GATEWAY_BYPASS_PING=true` when fixing Scenario A), and does not restart Docker. It is a read-only diagnostic with an opt-in remediation flag. Safe to run on a healthy gateway — the worst case is a 30-line report that says "OK".
 
-**Why cdn-cgi/trace over whatismyip.com for the verdict.** `whatismyip.com`'s ISP database routinely mislabels campus IPv6 ranges as residential ISPs (that's why "udem" appears even when you're routing through Cloudflare). `cdn-cgi/trace` is hosted by Cloudflare ITSELF and reports `warp=on|off` plus the exact edge colo serving the request. It is the only public endpoint that can truthfully confirm whether the WARP tunnel is in use.
+**Why cdn-cgi/trace over whatismyip.com for the verdict.** `whatismyip.com`'s ISP database routinely mislabels campus IPv6 ranges as residential ISPs (that's why the local ISP's ASN appears even when you're routing through Cloudflare). `cdn-cgi/trace` is hosted by Cloudflare ITSELF and reports `warp=on|off` plus the exact edge colo serving the request. It is the only public endpoint that can truthfully confirm whether the WARP tunnel is in use.
 
 **Common false alarms.**
 
-* **`warp=on` but whatismyip.com still says "udem".** `whatismyip.com`'s ISP-detection database is unreliable on academic networks. Trust `cdn-cgi/trace`'s `warp=on` over `whatismyip.com`'s ISP string. Use `https://api.ipify.org` (returns just the IP, no ISP DB lookup) as a third confirmatory check.
+* **`warp=on` but whatismyip.com still shows the local ISP.** `whatismyip.com`'s ISP-detection database is unreliable on academic networks. Trust `cdn-cgi/trace`'s `warp=on` over `whatismyip.com`'s ISP string. Use `https://api.ipify.org` (returns just the IP, no ISP DB lookup) as a third confirmatory check.
 * **`tailscale status` shows the host online but exit node preference is missing.** `tailscale up --reset --exit-node=` (empty value) clears any stale preference; `tailscale up --reset --exit-node=<100.x.x.x>` re-establishes it. The diagnostic prints the exact command with the resolved TS_IP filled in.
 * **Both IPv6 leak AND route-freeze flags set simultaneously.** Scenario B outranks Scenario C — fixing IPv6 makes IPv4 the only viable egress, after which the route-freeze usually self-resolves within ~30s (or one more `toggle.sh` cycle).
 
@@ -1214,10 +1216,9 @@ To block traffic to and from specific countries, the system dynamically download
 
 To add a new country to the blocklist:
 1. Find the 2-letter ISO country code (e.g., `cn` for China, `ru` for Russia, `il` for Israel, `kp` for North Korea).
-2. Open `scripts/routing-fix.sh`.
-3. Locate the `add_country_block` function.
-4. Add the 2-letter code to the loop array: `for zone in kp il cn ru; do`.
-5. Run `toggle.sh` to restart the gateway and re-compile the firewall rules.
+2. Open your `.env` file.
+3. Update the `BLOCKED_COUNTRIES` variable: e.g., `BLOCKED_COUNTRIES="kp il cn ru"`.
+4. Run `toggle.sh` to restart the gateway and apply the new environment variables to the routing-fix container.
 
 > [!NOTE]
 > **Limitations of Geo-IP Blocking:** IP-based blocking is highly effective at blocking servers, direct apps, and raw infrastructure physically located and registered in a specific country (e.g., `www.gov.il`). However, it will **not** block high-profile websites (e.g., `jpost.com`) that route their traffic through global Content Delivery Networks (CDNs) like Google Cloud, Cloudflare, or Fastly. Because the CDN's IP addresses are registered in the US or globally, the network traffic physically never routes to the blocked country, allowing it to bypass the Geo-IP firewall.

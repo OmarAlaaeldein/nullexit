@@ -9,7 +9,7 @@
 #
 # Root cause: Docker's default bridge claims 172.17.0.0/16 by default. When the
 # host's physical Wi-Fi also lands in the same /16 — extremely common on
-# university networks like UdeM, which hand out 172.16.0.0/12 — the kernel
+# university networks which hand out 172.16.0.0/12 — the kernel
 # installs Docker's bridge as the default route, and every packet bound for
 # the internet is silently absorbed by docker0 instead of egressing.
 #
@@ -326,10 +326,7 @@ step "6/9  Rebinding DHCP on $ACTIVE_IFACE so host re-learns its real gateway"
 # Same logic as the diagnostic + toggle.sh.
 ACTIVE_SVC=""
 if [ "$PLATFORM" = "Darwin" ]; then
-  ACTIVE_SVC=$(networksetup -listnetworkserviceorder 2>> "$LOG_FILE" \
-                | grep -B 1 "Device: $ACTIVE_IFACE" | head -1 \
-                | sed -E 's/^\([0-9\*]+\) //' || true)
-  [ -z "$ACTIVE_SVC" ] && ACTIVE_SVC="Wi-Fi"
+  ACTIVE_SVC=$(get_active_service)
 fi
 
 case "$PLATFORM" in
