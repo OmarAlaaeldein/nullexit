@@ -365,6 +365,12 @@ This forces Docker to use `172.26.x.x` for its default bridge, freeing the physi
 
 ---
 
+
+### 9.14 Cloudflare WARP 24-Second Startup Delay (UDP Session Rate-Limiting)
+**Context:** When running `toggle.sh` to turn the gateway ON, `docker compose up -d` often hangs for exactly 24-25 seconds waiting for the `warp` container to become `healthy`. Users might mistakenly blame the Go `rule-compiler` processing 400k+ rules for this delay, as Docker prints `rule-compiler Exited 24.3s` at the end of the wait.
+**Root Cause:** The `rule-compiler` actually finishes its work in <2 seconds. The 24-second blockage is entirely due to Cloudflare WARP's edge server rate-limiting. WireGuard is a stateless protocol with no "disconnect" packet. When the toggle is turned OFF, the old UDP session state remains active on Cloudflare's backend for 20-30 seconds. When the toggle is instantly turned back ON, Docker starts a new WireGuard connection from a new ephemeral UDP source port but uses the **same static cryptographic key** (from `.env`). Cloudflare detects this as a potential replay attack or key-sharing abuse, and intentionally drops all packets (rate-limits) for the new connection until the old session's ghost state fully expires (~20-25 seconds).
+**Result:** Gluetun's healthcheck fails repeatedly every 2 seconds until Cloudflare lifts the penalty box, at which point traffic flows and Docker unblocks the rest of the startup sequence. This is a known, expected behavior of reusing static keys rapidly on Cloudflare's network and cannot be bypassed.
+
 ## 10. Resolved Issues (from README)
 
 These bugs and edge cases were discovered and resolved during development.
