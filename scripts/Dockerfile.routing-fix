@@ -1,0 +1,10 @@
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY logger/ ./logger/
+RUN cd logger && go build -o logger main.go
+
+FROM alpine:3.20
+RUN apk add --no-cache iptables iproute2 curl ipset
+COPY --from=builder /app/logger/logger /usr/local/bin/nullexit-logger
+COPY routing-fix.sh /routing-fix.sh
+CMD ["sh", "/routing-fix.sh"]

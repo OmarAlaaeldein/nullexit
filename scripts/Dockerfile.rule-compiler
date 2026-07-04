@@ -1,0 +1,9 @@
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY rule-compiler/ ./rule-compiler/
+RUN cd rule-compiler && go build -o sync-rules main.go
+
+FROM alpine:3.20
+COPY --from=builder /app/rule-compiler/sync-rules /usr/local/bin/sync-rules
+WORKDIR /app
+CMD ["sync-rules"]
