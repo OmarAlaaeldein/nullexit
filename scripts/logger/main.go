@@ -46,10 +46,14 @@ func tailFile(filepath string, out chan<- string) {
 		log.Printf("Error opening file %s: %v\n", filepath, err)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
 
 	// Seek to end
-	f.Seek(0, os.SEEK_END)
+	f.Seek(0, io.SeekEnd)
 	reader := bufio.NewReader(f)
 
 	for {
@@ -58,7 +62,7 @@ func tailFile(filepath string, out chan<- string) {
 			if err == io.EOF {
 				stat, err := os.Stat(filepath)
 				if err == nil {
-					currentOffset, _ := f.Seek(0, os.SEEK_CUR)
+					currentOffset, _ := f.Seek(0, io.SeekCurrent)
 					if stat.Size() < currentOffset {
 						// File truncated or rotated
 						f.Close()

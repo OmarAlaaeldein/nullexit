@@ -274,11 +274,7 @@ if [ "$POST_WAKE" = "true" ]; then
   
   echo "Re-adding host bypass routes for Cloudflare WARP endpoints..."
   remove_warp_bypass_routes
-  if [ -n "${PHYSICAL_GW:-}" ]; then
-    add_warp_bypass_routes
-  else
-    add_warp_bypass_routes
-  fi
+  add_warp_bypass_routes
 
   # Also re-apply the default route pointing to the Tailscale interface
   ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)

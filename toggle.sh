@@ -248,7 +248,7 @@ start_warp_watcher() {
         consec_off=0
       fi
 
-      if [ "\$state" = "off" ]; then
+      if [ \"\$state\" = \"off\" ]; then
         sleep 5
       else
         sleep 30
