@@ -5,20 +5,37 @@ step "Checking Docker"
 if ! command -v docker >> output.log 2>&1; then
     echo ""
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "  Docker is not installed. Two options:"
-        echo ""
-        echo "  A) Colima — lighter, recommended for this project (low memory):"
-        echo "       brew install colima docker docker-compose"
-        echo "       colima start --memory 0.6"
-        echo ""
-        echo "  B) Docker Desktop — easier GUI, higher memory overhead:"
-        echo "       https://www.docker.com/products/docker-desktop/"
+        echo "  Docker is not installed."
+        read -rp "  Would you like to automatically install Colima & Docker via Homebrew? [y/N]: " INSTALL_DOCKER
+        if [[ "$INSTALL_DOCKER" == "y" || "$INSTALL_DOCKER" == "Y" ]]; then
+            step "Installing Colima and Docker..."
+            brew install colima docker docker-compose
+            step "Starting Colima VM..."
+            colima start --memory 0.6
+        else
+            echo ""
+            echo "  Please install Docker manually. Two options:"
+            echo "  A) Colima (Recommended): brew install colima docker docker-compose && colima start --memory 0.6"
+            echo "  B) Docker Desktop: https://www.docker.com/products/docker-desktop/"
+            die "Install Docker, then re-run this script."
+        fi
     else
-        echo "  Docker is not installed. Run:"
-        echo "       curl -fsSL https://get.docker.com | sh"
-        echo "       sudo usermod -aG docker \$USER && newgrp docker"
+        echo "  Docker is not installed."
+        read -rp "  Would you like to automatically install Docker? (Requires sudo) [y/N]: " INSTALL_DOCKER
+        if [[ "$INSTALL_DOCKER" == "y" || "$INSTALL_DOCKER" == "Y" ]]; then
+            step "Installing Docker..."
+            curl -fsSL https://get.docker.com | sh
+            sudo usermod -aG docker "$USER"
+            echo -e "\n\033[0;32m[OK] Docker installed successfully!\033[0m"
+            echo -e "\033[0;33m[!] CRITICAL: You must log out of your SSH session and log back in for Docker permissions to apply.\033[0m"
+            die "Please log out, log back in, and re-run setup.sh."
+        else
+            echo "  Please install Docker manually:"
+            echo "       curl -fsSL https://get.docker.com | sh"
+            echo "       sudo usermod -aG docker \$USER && newgrp docker"
+            die "Install Docker, then re-run this script."
+        fi
     fi
-    die "Install Docker, then re-run this script."
 fi
 
 if ! docker info >> output.log 2>&1; then
