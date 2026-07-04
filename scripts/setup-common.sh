@@ -229,6 +229,7 @@ ok "WARP keys extracted."
 # ─── 5. Tailscale auth key ───────────────────────────────────────────────────
 step "Tailscale authentication"
 
+TS_AUTHKEY=""
 if [[ -f ".env" ]]; then
     EXISTING_TS_KEY=$(read_env_var TS_AUTHKEY)
     if [[ -n "$EXISTING_TS_KEY" ]]; then
