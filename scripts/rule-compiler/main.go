@@ -379,7 +379,7 @@ func parseIpsFromContent(content string) map[string]bool {
 			token := strings.TrimRight(fields[0], ";,")
 			if _, err := netip.ParsePrefix(token); err == nil {
 				ips[token] = true
-			} else if addr, err := netip.ParseAddr(token); err == nil {
+			} else if _, err := netip.ParseAddr(token); err == nil {
 				ips[token] = true
 			}
 		}
