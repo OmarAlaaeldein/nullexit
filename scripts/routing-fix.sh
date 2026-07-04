@@ -16,7 +16,7 @@
 
 set -e
 
-sleep 5
+sleep 15
 
 echo "routing-fix: Setting up routing for SOCKS5 proxy through WARP (tun0)..."
 
@@ -227,5 +227,5 @@ while true; do
   # Enforce IP blocklist (reloads automatically when file changes)
   add_ip_blocklist
 
-  sleep 5
+  sleep 30
 done

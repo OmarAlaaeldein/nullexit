@@ -1273,3 +1273,29 @@ Because `nullexit` uses Cloudflare WARP (via Gluetun) as its upstream exit node,
 
 **Privacy Verdict:**
 Cloudflare WARP provides excellent **historical privacy**. Because they do not log your destinations, they cannot comply with historical subpoenas asking what websites you visited yesterday. However, it is **not absolute anonymity**. They still know your real ISP IP address while you are actively connected. For daily-driver privacy against ISPs, hackers, and corporate trackers, it is top-tier. For nation-state evasion, use Tor.
+
+---
+
+## 13. Battery & Power Measurement Quirks
+
+When trying to optimize this framework (or any daemon) for battery life, developers often look for a way to programmatically measure the exact Wattage consumed by a specific process (e.g., "How many Watts is `toggle.sh` using?"). 
+
+**This is a hardware impossibility on macOS and Linux.**
+
+### 13.1 Why Activity Monitor is Lying to You
+Your machine's logic board only has physical power sensors for the *entire* CPU package, the GPU, and the RAM. It knows the CPU is pulling 5W total, but it has no physical hardware capability to know whether Docker is using 3W and Chrome is using 2W. 
+
+The "Energy Impact" score you see in macOS Activity Monitor is a **synthetic, heuristic score** calculated by `powerd`. It penalizes apps for waking up the CPU (idle wakes), doing disk I/O, or keeping the screen awake. It is a relative score, not actual Wattage.
+
+### 13.2 The Proper A/B Testing Methodology
+If you want to truly know how many Watt-hours or mAh your background daemons (`routing-fix.sh`, `host-leak-probe.sh`, etc.) are costing you, you must perform a hardware-level A/B drain test:
+
+1. Unplug the laptop, run the gateway, and note your exact battery mAh using:
+   ```bash
+   ioreg -l | grep "AppleRawCurrentCapacity"
+   ```
+2. Leave the laptop idle for exactly 1 hour.
+3. Run the command again to see exactly how many mAh were drained.
+4. Turn the gateway off and repeat the test for another hour.
+
+The delta in mAh drained between the two tests is the true, exact cost of running the software. When optimizing polling loops (e.g., changing `sleep 5` to `sleep 30`), this is the only reliable way to measure the actual battery life returned to the user.

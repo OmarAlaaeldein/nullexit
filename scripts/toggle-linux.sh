@@ -105,7 +105,7 @@ start_dns_watcher() {
           resolvectl dns \"\$ACTIVE_SERVICE\" \"$target_ip\" >/dev/null 2>&1 || true
         fi
       fi
-      sleep 5
+      sleep 30
     done
   " >> output.log 2>&1 &
   echo $! > "$DNS_WATCHER_PID_FILE"

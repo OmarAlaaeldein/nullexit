@@ -158,7 +158,7 @@ start_dns_watcher() {
           networksetup -setdnsservers \"\$ACTIVE_IF\" \"$target_ip\" >/dev/null 2>&1
         fi
       fi
-      sleep 5
+      sleep 30
     done
   " >> output.log 2>&1 &
   echo $! > "$DNS_WATCHER_PID_FILE"
@@ -246,7 +246,7 @@ start_warp_watcher() {
         consec_off=0
       fi
 
-      sleep 5
+      sleep 30
     done
   " >> output.log 2>&1 &
   echo $! > "$WARP_WATCHER_PID_FILE"
