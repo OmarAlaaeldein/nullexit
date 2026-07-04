@@ -262,7 +262,7 @@
 - Marker file pattern (`/tmp/nullexit-gateway-active.marker`)
 
 ### scripts/dns-proxy.py (92 lines, 2.9KB) — ✅ Clean, standalone
-### scripts/socks5-proxy.py (199 lines, 6KB) — ✅ Clean, standalone
+
 ### scripts/logger.py (144 lines, 5.9KB) — ✅ Clean, standalone
 
 ### scripts/sync-rules.py (666 lines, 29KB)
@@ -348,7 +348,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 | `5335` (AdGuard DNS port) | docker-compose.yml, AdGuardHome.yaml, post-rules.txt |
 | `5354` (mapped DNS port) | docker-compose.yml, dns-proxy.py |
 | `41641` (Tailscale WireGuard) | docker-compose.yml, routing-fix.sh, post-rules.txt |
-| `1080` (SOCKS5 port) | docker-compose.yml, socks5-proxy.py, toggle.sh |
+| `1080` (SOCKS5 port) | docker-compose.yml, toggle.sh |
 | `1120` (MSS clamp) | post-rules.txt, .env |
 | `admin:nullexit` (AdGuard creds) | AdGuardHome.yaml (bcrypt), sync-rules.py (plaintext) |
 | `10.200.1.0/24` (Docker subnet) | toggle.sh, recover.sh, toggle-linux.sh, recover-linux.sh, fix-docker-bridge-collision.sh, docker-compose.yml |
