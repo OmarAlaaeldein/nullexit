@@ -89,7 +89,7 @@ create_log_drop_chain() {
   if ! $ipt -N "$chain" 2>/dev/null; then
     $ipt -F "$chain" 2>/dev/null || true
   fi
-  $ipt -A "$chain" -j LOG --log-prefix "$prefix" 2>/dev/null || true
+  $ipt -A "$chain" -j LOG --log-prefix "$prefix"
   $ipt -A "$chain" -j DROP 2>/dev/null || true
 }
 
