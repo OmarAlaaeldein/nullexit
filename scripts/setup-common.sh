@@ -6,6 +6,8 @@ if ! command -v docker >> output.log 2>&1; then
     echo ""
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "  Docker is not installed."
+        # Note: Homebrew aggressively rolls forward and discourages version pinning.
+        # This setup is confirmed stable on Colima v0.10.3 and Docker v29.6.1.
         read -rp "  Would you like to automatically install Colima & Docker via Homebrew? [y/N]: " INSTALL_DOCKER
         if [[ "$INSTALL_DOCKER" == "y" || "$INSTALL_DOCKER" == "Y" ]]; then
             step "Installing Colima and Docker..."
@@ -21,6 +23,8 @@ if ! command -v docker >> output.log 2>&1; then
         fi
     else
         echo "  Docker is not installed."
+        # Note: The Docker convenience script always fetches the latest stable release.
+        # This setup is confirmed stable on Docker Engine v29.6.1.
         read -rp "  Would you like to automatically install Docker? (Requires sudo) [y/N]: " INSTALL_DOCKER
         if [[ "$INSTALL_DOCKER" == "y" || "$INSTALL_DOCKER" == "Y" ]]; then
             step "Installing Docker..."
@@ -56,6 +60,30 @@ if ! docker compose version >> output.log 2>&1; then
 fi
 
 ok "Docker $(docker --version | grep -oP '[\d.]+' | head -1) is running."
+
+# ─── 1.5 Python 3 ─────────────────────────────────────────────────────────────
+step "Checking Python 3"
+
+if ! command -v python3 >> output.log 2>&1; then
+    echo ""
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "  Python 3 is not installed."
+        echo "  macOS includes it via Xcode Command Line Tools, or you can install it via Homebrew:"
+        echo "       brew install python3"
+        die "Install Python 3, then re-run this script."
+    else
+        echo "  Python 3 is not installed."
+        echo "  Please install it using your system's package manager. For example:"
+        echo "       Debian/Ubuntu:  sudo apt install python3"
+        echo "       Fedora:         sudo dnf install python3"
+        echo "       Arch:           sudo pacman -S python"
+        die "Install Python 3, then re-run this script."
+    fi
+fi
+
+# Note: This setup is confirmed stable on Python 3.9.6 (macOS default).
+PYTHON_VER=$(python3 --version 2>&1 | head -n 1)
+ok "$PYTHON_VER is installed."
 
 # ─── 2. Tailscale (host) ──────────────────────────────────────────────────────
 step "Checking Tailscale (host)"
