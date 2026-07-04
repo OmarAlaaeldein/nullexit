@@ -911,7 +911,7 @@ else
 
   # 5. Start compose services
   echo -e "\nStarting Docker containers..."
-  docker compose up -d
+  docker compose up -d --build
   
   # Log the output of the rule compiler for debugging before removing it
   docker compose logs rule-compiler >> output.log 2>&1
