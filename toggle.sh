@@ -1315,10 +1315,12 @@ if [ "$START_GATEWAY" = "true" ] && command -v docker >/dev/null 2>&1; then
 fi
 
 echo -e "\n──────────────────────────────────────────────"
-read -rp "Press [r] and Enter to instantly reverse state, or just press Enter to exit: " USER_CHOICE
-if [[ "${USER_CHOICE}" == "r" || "${USER_CHOICE}" == "R" ]]; then
-  echo "Reversing gateway state..."
-  exec bash "$0"
+if [ -t 0 ]; then
+  read -rp "Press [r] and Enter to instantly reverse state, or just press Enter to exit: " USER_CHOICE
+  if [[ "${USER_CHOICE}" == "r" || "${USER_CHOICE}" == "R" ]]; then
+    echo "Reversing gateway state..."
+    exec bash "$0"
+  fi
 fi
 
 echo -e "\nYou can close this terminal window now."
