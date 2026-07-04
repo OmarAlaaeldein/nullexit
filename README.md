@@ -118,6 +118,10 @@ Customize blocking via `black_list.txt` and `white_list.txt`. Rule profiles (`li
 ### Layer 2 — Kernel IP Firewall (`ipset`/`iptables`)
 On every startup, the `rule-compiler` fetches threat-intelligence feeds (Spamhaus DROP, Feodo Tracker, Emerging Threats, CINS) and compiles **~16,700 unique malicious IPs/CIDRs** into the kernel `FORWARD` chain — blocking both outbound C2 connections and inbound attack traffic. Zero configuration required.
 
+### Layer 3 — Geo-IP Blocking
+Dynamically blocks all traffic to and from specific countries using live IP ranges from `ipdeny.com`. 
+To add countries to your blocklist, open your `.env` file and set the `BLOCKED_COUNTRIES` variable with 2-letter ISO country codes (e.g. `BLOCKED_COUNTRIES="kp il cn ru"`), then restart the gateway.
+
 ---
 
 ## 6. Toggle Scripts

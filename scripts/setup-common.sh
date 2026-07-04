@@ -229,7 +229,7 @@ ok "WARP keys extracted."
 step "Tailscale authentication"
 
 if [[ -f ".env" ]]; then
-    EXISTING_TS_KEY=$(grep -E "^TS_AUTHKEY=" .env | cut -d'=' -f2- | tr -d '"'\')
+    EXISTING_TS_KEY=$(read_env_var TS_AUTHKEY)
     if [[ -n "$EXISTING_TS_KEY" ]]; then
         TS_AUTHKEY="$EXISTING_TS_KEY"
         warn "Found existing TS_AUTHKEY in .env. Skipping prompt."
@@ -255,9 +255,22 @@ step "AdGuard Home admin account"
 # Hardcoded default credentials to prevent lockout
 # Username: admin
 # Password: nullexit
-ADGUARD_PASSWORD="nullexit"
-ADGUARD_PWD_ESC="nullexit"
-ok "Default password set to 'nullexit'."
+if [[ -f ".env" ]]; then
+    EXISTING_AG_PASS=$(read_env_var ADGUARD_PASSWORD)
+    if [[ -n "$EXISTING_AG_PASS" ]]; then
+        ADGUARD_PASSWORD="$EXISTING_AG_PASS"
+        ADGUARD_PWD_ESC="$EXISTING_AG_PASS"
+        ok "Found existing ADGUARD_PASSWORD in .env."
+    else
+        ADGUARD_PASSWORD="nullexit"
+        ADGUARD_PWD_ESC="nullexit"
+        ok "Default password set to 'nullexit'."
+    fi
+else
+    ADGUARD_PASSWORD="nullexit"
+    ADGUARD_PWD_ESC="nullexit"
+    ok "Default password set to 'nullexit'."
+fi
 
 
 # ─── 7. Write .env ───────────────────────────────────────────────────────────
@@ -283,15 +296,17 @@ if [[ "${WRITE_ENV:-0}" == "1" ]]; then
     EXISTING_THRESH="6"
     EXISTING_PROBE="true"
     EXISTING_KILL="false"
+    EXISTING_BLOCKED="kp il"
     
     if [[ -f ".env" ]]; then
-        [[ -n "$(grep -E "^GATEWAY_RULE_PROFILE=" .env)" ]] && EXISTING_PROFILE=$(grep -E "^GATEWAY_RULE_PROFILE=" .env | cut -d'=' -f2-)
-        [[ -n "$(grep -E "^GATEWAY_MSS=" .env)" ]] && EXISTING_MSS=$(grep -E "^GATEWAY_MSS=" .env | cut -d'=' -f2-)
-        [[ -n "$(grep -E "^GATEWAY_HIJACK_HOST=" .env)" ]] && EXISTING_HIJACK=$(grep -E "^GATEWAY_HIJACK_HOST=" .env | cut -d'=' -f2-)
-        [[ -n "$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env)" ]] && EXISTING_EXIT=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env | cut -d'=' -f2-)
-        [[ -n "$(grep -E "^WARP_FAIL_THRESHOLD=" .env)" ]] && EXISTING_THRESH=$(grep -E "^WARP_FAIL_THRESHOLD=" .env | cut -d'=' -f2-)
-        [[ -n "$(grep -E "^HOST_LEAK_PROBE=" .env)" ]] && EXISTING_PROBE=$(grep -E "^HOST_LEAK_PROBE=" .env | cut -d'=' -f2-)
-        [[ -n "$(grep -E "^KILL_SWITCH=" .env)" ]] && EXISTING_KILL=$(grep -E "^KILL_SWITCH=" .env | cut -d'=' -f2-)
+        [[ -n "$(read_env_var GATEWAY_RULE_PROFILE)" ]] && EXISTING_PROFILE=$(read_env_var GATEWAY_RULE_PROFILE)
+        [[ -n "$(read_env_var GATEWAY_MSS)" ]] && EXISTING_MSS=$(read_env_var GATEWAY_MSS)
+        [[ -n "$(read_env_var GATEWAY_HIJACK_HOST)" ]] && EXISTING_HIJACK=$(read_env_var GATEWAY_HIJACK_HOST)
+        [[ -n "$(read_env_var GATEWAY_USE_EXIT_NODE)" ]] && EXISTING_EXIT=$(read_env_var GATEWAY_USE_EXIT_NODE)
+        [[ -n "$(read_env_var WARP_FAIL_THRESHOLD)" ]] && EXISTING_THRESH=$(read_env_var WARP_FAIL_THRESHOLD)
+        [[ -n "$(read_env_var HOST_LEAK_PROBE)" ]] && EXISTING_PROBE=$(read_env_var HOST_LEAK_PROBE)
+        [[ -n "$(read_env_var KILL_SWITCH)" ]] && EXISTING_KILL=$(read_env_var KILL_SWITCH)
+        [[ -n "$(read_env_var BLOCKED_COUNTRIES)" ]] && EXISTING_BLOCKED=$(read_env_var BLOCKED_COUNTRIES)
     fi
 
     cat > .env <<EOF
@@ -309,6 +324,8 @@ WARP_FAIL_THRESHOLD=${EXISTING_THRESH}
 # Set to false to disable the 300ms host-egress leak prober (scripts/host-leak-probe.sh).
 HOST_LEAK_PROBE=${EXISTING_PROBE}
 KILL_SWITCH=${EXISTING_KILL}
+ADGUARD_PASSWORD=${ADGUARD_PASSWORD}
+BLOCKED_COUNTRIES="${EXISTING_BLOCKED}"
 EOF
     ok ".env written."
 fi

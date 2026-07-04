@@ -210,7 +210,7 @@ start_warp_watcher() {
   stop_warp_watcher
   # Parse threshold from .env (same pattern as GATEWAY_MSS, GATEWAY_BYPASS_PING, etc.)
   local threshold
-  threshold=$(grep -E "^WARP_FAIL_THRESHOLD=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\\'' | tr -d ' ' || echo "")
+  threshold=$(read_env_var WARP_FAIL_THRESHOLD)
   if [ -z "$threshold" ]; then
     threshold="${WARP_FAIL_THRESHOLD:-6}"
   fi
@@ -286,7 +286,7 @@ stop_warp_watcher() {
 start_host_leak_probe() {
   stop_host_leak_probe
   local enabled
-  enabled=$(grep -E "^HOST_LEAK_PROBE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"'\''  ' || echo "")
+  enabled=$(read_env_var HOST_LEAK_PROBE)
   if [ -z "$enabled" ]; then
     enabled="${HOST_LEAK_PROBE:-true}"
   fi
@@ -465,44 +465,13 @@ disconnect_tailscale_host() {
   fi
 }
 
-# Function to get the active network service name (e.g., "Wi-Fi" or "USB 10/100 LAN")
-get_active_service() {
-  local iface
-  iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
-  
-  # If the default interface is empty or a VPN tunnel (like utunX), fallback to the active physical interface
-  if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
-    for i in en0 en1 en2 en3; do
-      if ifconfig "$i" 2>> output.log | grep -q "status: active" && ifconfig "$i" 2>> output.log | grep -q "inet "; then
-        iface="$i"
-        break
-      fi
-    done
-  fi
-
-  # Default fallback if still empty or not enX
-  if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
-    iface="en0"
-  fi
-
-  # Map interface (e.g., en0) to service name (e.g., Wi-Fi)
-  local service
-  service=$(networksetup -listnetworkserviceorder | grep -B 1 "Device: $iface" | head -n 1 | sed -E 's/^\([0-9\*]+\) //')
-  
-  if [ -n "$service" ]; then
-    echo "$service"
-  else
-    echo "Wi-Fi"
-  fi
-}
 
 ACTIVE_SERVICE=$(get_active_service)
 
 # Resolve the service name for en0 (usually "Wi-Fi") — macOS scutil DNS resolver
 # is commonly scoped to en0, so per-service DNS changes on other interfaces are
 # ignored unless en0's service is also updated.
-EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>> output.log | grep -B1 "Device: en0" | head -1 | sed -E 's/^\([0-9\*]+\) //' || true)
-[ -z "$EN0_SERVICE" ] && EN0_SERVICE="Wi-Fi"
+EN0_SERVICE=$(get_en0_service)
 
 # Helper to add host-side bypass routes for the WARP WireGuard endpoints.
 # This prevents an infinite recursive routing loop (tunnel loop) where
@@ -818,29 +787,7 @@ INITIAL_DNS=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log || tr
 echo "Initializing DNS to 1.1.1.1 to ensure reliable internet access..."
 reset_dns
 
-# Check if the gateway is active (either containers are running, or host DNS is hijacked)
-is_gateway_active() {
-  # 1. Check if containers are running (suppress stderr to avoid errors if docker is down)
-  if run_with_timeout 15 docker compose ps --status running 2>/dev/null | grep -q 'warp'; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: TRUE (warp container is running)" >> "$LOG_FILE"
-    return 0
-  fi
-  # 2. Check if host DNS was hijacked (not 1.1.1.1 and not default/empty)
-  if [[ -n "$INITIAL_DNS" && "$INITIAL_DNS" != "1.1.1.1" && ! "$INITIAL_DNS" =~ "There aren't any DNS Servers" ]]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: TRUE (DNS was hijacked: $INITIAL_DNS)" >> "$LOG_FILE"
-    return 0
-  fi
-  # 3. Check if SOCKS proxy is enabled
-  local socks_proxy
-  socks_proxy=$(networksetup -getsocksfirewallproxy "$ACTIVE_SERVICE" 2>> output.log || true)
-  if echo "$socks_proxy" | grep -q "Enabled: Yes"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: TRUE (SOCKS proxy enabled)" >> "$LOG_FILE"
-    return 0
-  fi
-  
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] is_gateway_active: FALSE (Containers down, DNS clean, SOCKS disabled)" >> "$LOG_FILE"
-  return 1
-}
+
 
   # ── Local Network Surveillance Check ──────────────────────────────────────
   echo -e "\n──────────────────────────────────────────────"
@@ -858,7 +805,7 @@ is_gateway_active() {
   fi
 
 echo "Checking Gateway Status..."
-HIJACK_HOST=$(grep -E "^GATEWAY_HIJACK_HOST=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+HIJACK_HOST=$(read_env_var GATEWAY_HIJACK_HOST | tr '[:upper:]' '[:lower:]')
 
 if is_gateway_active; then
   echo -e "\n=============================================="
@@ -875,7 +822,7 @@ if is_gateway_active; then
   docker compose down --remove-orphans -t 30
   
   # Only stop Colima if the user explicitly opted in (false by default) to prevent breaking their other Docker dev projects
-  STOP_COLIMA=$(grep -E "^STOP_COLIMA_ON_EXIT=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+  STOP_COLIMA=$(read_env_var STOP_COLIMA_ON_EXIT | tr '[:upper:]' '[:lower:]')
   if [[ "$STOP_COLIMA" == "true" ]]; then
     echo -e "\nStopping Colima VM to free up host RAM and battery..."
     run_with_timeout 30 colima stop >> output.log 2>&1 || echo "Warning: Failed to stop Colima gracefully."
@@ -948,7 +895,7 @@ else
 
   # 4c. Inject TCP MSS clamp from .env into post-rules.txt before starting
   if [ -f .env ] && grep -q "^GATEWAY_MSS=" .env; then
-    GATEWAY_MSS=$(grep -E "^GATEWAY_MSS=" .env | cut -d'=' -f2- | tr -d '"'\' | tr -d ' ')
+    GATEWAY_MSS=$(read_env_var GATEWAY_MSS)
     if [[ "$GATEWAY_MSS" =~ ^[0-9]+$ ]]; then
       # macOS sed syntax
       sed -i '' "s/--set-mss [0-9]*/--set-mss ${GATEWAY_MSS}/g" post-rules.txt 2>/dev/null || \
@@ -997,8 +944,8 @@ else
   fi
 
   # 6. Wait for the gateway container's Tailscale connection to be ready
-  BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
-  USE_EXIT_NODE=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+  BYPASS_PING=$(read_env_var GATEWAY_BYPASS_PING | tr '[:upper:]' '[:lower:]')
+  USE_EXIT_NODE=$(read_env_var GATEWAY_USE_EXIT_NODE | tr '[:upper:]' '[:lower:]')
 
   echo "Waiting for gateway container's Tailscale to connect to the tailnet..."
   echo "  (This can take 30-60s — Tailscale goes through: NoState → Starting → Running → Online)"

@@ -2,8 +2,8 @@
 # scripts/diagnose-host-leak.sh — nullexit host-routing diagnostic
 #
 # Symptom this addresses: tests like https://www.whatismyip.com on the
-# *HOST MAC* return the underlying physical ISP/ASN (e.g. "Université de
-# Montréal / UdeM") even though the nullexit gateway is active and remote
+# *HOST MAC* return the underlying physical ISP/ASN
+# local ISP / campus network") even though the nullexit gateway is active and remote
 # tailnet clients correctly egress via Cloudflare WARP. The container and
 # the gateway itself are healthy — only the host's own routing is leaking.
 #
@@ -141,23 +141,7 @@ run_with_timeout() {
 
 # ─── Resolve the active network service (same heuristic as toggle.sh) ──────
 resolve_active_service() {
-  local iface
-  iface=$(route get default 2>> "$LOG_FILE" | awk '/interface:/{print $2; exit}')
-  if [ -z "$iface" ] || [ "${iface#utun}" != "$iface" ] || [ "${iface#tun}" != "$iface" ]; then
-    for i in en0 en1 en2 en3 en4 en5; do
-      if ifconfig "$i" 2>> "$LOG_FILE" | grep -q "status: active" \
-         && ifconfig "$i" 2>> "$LOG_FILE" | grep -q "inet "; then
-        iface="$i"; break
-      fi
-    done
-  fi
-  [ -z "$iface" ] && iface="en0"
-  local svc
-  svc=$(networksetup -listnetworkserviceorder 2>> "$LOG_FILE" \
-        | grep -B 1 "Device: $iface" | head -n 1 \
-        | sed -E 's/^\([0-9\*]+\) //' || true)
-  [ -z "$svc" ] && svc="Wi-Fi"
-  printf '%s\n' "$svc"
+  get_active_service
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -395,7 +379,7 @@ if [ "$CDN_WARP" = "on" ]; then
   ok "warp=on — tunnel is hot, host traffic IS going through Cloudflare WARP"
   line "  Public IP:   $CDN_IP"
   line "  Cloudflare:   ${CDN_COLO:-unknown colo}"
-  line "  → whatismyip.com's 'udem' result is its ISP-database error, not yours."
+  line "  → whatismyip.com's 'local ISP' result is its ISP-database error, not yours."
 elif [ "$CDN_WARP" = "off" ]; then
   fail "warp=off — host traffic is NOT going through WARP"
   line "  Public IP:   $CDN_IP  (NOT Cloudflare)"
@@ -524,7 +508,7 @@ case "$SCENARIO" in
     echo "  toggle.sh's pre-flight checks failed last run. The script activated"
     echo "  SOCKS5 + local DNS proxy as a fallback. DNS gets hijacked but"
     echo "  browsers on macOS ignore the system SOCKS5 → traffic egresses"
-    echo "  direct through UdeM."
+    echo "  direct through the local network."
     echo ""
     echo "  ${BOLD}Recommended fix:${NC}"
     echo "    echo 'GATEWAY_BYPASS_PING=true' >> $PROJECT_ROOT/.env"
@@ -539,9 +523,9 @@ case "$SCENARIO" in
     ;;
   B)
     echo ""
-    echo -e "  ${RED}${BOLD}VERDICT:  Scenario B — IPv6 leak over UdeM campus IPv6${NC}"
+    echo -e "  ${RED}${BOLD}VERDICT:  Scenario B — IPv6 leak over dual-stack campus/local IPv6${NC}"
     echo "  Tailscale exit-node advertises only IPv4. macOS sends AAAA queries"
-    echo "  straight out en0, which is dual-stack on UdeM campus APs — IPv6"
+    echo "  straight out en0, which is dual-stack on most campus APs — IPv6"
     echo "  traffic bypasses the WARP tunnel entirely."
     echo ""
     echo "  ${BOLD}Recommended fix:${NC}"
@@ -571,7 +555,7 @@ case "$SCENARIO" in
   OK)
     echo ""
     echo -e "  ${GREEN}${BOLD}VERDICT:  No host leak detected — tunnel is working${NC}"
-    echo "  The 'udem' ISP string from whatismyip.com is its IP-database"
+    echo "  The local ISP string from whatismyip.com is its IP-database"
     echo "  misclassifying the Cloudflare egress IP.  CDN-CGI's trace endpoint"
     echo "  (which is what we use here) reports warp=on because that endpoint"
     echo "  is hosted by Cloudflare itself and can see its own edge."

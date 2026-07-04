@@ -471,18 +471,6 @@ INITIAL_DNS=$(resolvectl dns "$ACTIVE_SERVICE" 2>/dev/null | grep -oE '[0-9]+\.[
 echo "Initializing DNS to 1.1.1.1 to ensure reliable internet access..."
 reset_dns
 
-# Check if the gateway is active (either containers are running, or host DNS is hijacked)
-is_gateway_active() {
-  # 1. Check if containers are running (suppress stderr to avoid errors if docker is down)
-  if run_with_timeout 15 docker compose ps --status running 2>/dev/null | grep -q 'warp'; then
-    return 0
-  fi
-  # 2. Check if host DNS was hijacked (not 1.1.1.1 and not default/empty)
-  if [[ -n "$INITIAL_DNS" && "$INITIAL_DNS" != "1.1.1.1" && ! "$INITIAL_DNS" =~ "There aren't any DNS Servers" ]]; then
-    return 0
-  fi
-  return 1
-}
 
   # ── Local Network Surveillance Check ──────────────────────────────────────
   echo -e "\n──────────────────────────────────────────────"
@@ -517,7 +505,7 @@ if is_gateway_active; then
   docker compose down -t 5
   
   # Only stop Colima if the user explicitly opted in (false by default) to prevent breaking their other Docker dev projects
-  STOP_COLIMA=$(grep -E "^STOP_COLIMA_ON_EXIT=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+  STOP_COLIMA=$(read_env_var STOP_COLIMA_ON_EXIT | tr '[:upper:]' '[:lower:]')
   if [[ "$STOP_COLIMA" == "true" ]]; then
     echo -e "\nStopping Colima VM to free up host RAM and battery..."
     echo "Native Docker does not require VM shutdown."
@@ -583,8 +571,8 @@ else
   docker compose rm -s -f rule-compiler >> output.log 2>&1
 
   # 6. Wait for the gateway container's Tailscale connection to be ready
-  BYPASS_PING=$(grep -E "^GATEWAY_BYPASS_PING=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
-  USE_EXIT_NODE=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+  BYPASS_PING=$(read_env_var GATEWAY_BYPASS_PING | tr '[:upper:]' '[:lower:]')
+  USE_EXIT_NODE=$(read_env_var GATEWAY_USE_EXIT_NODE | tr '[:upper:]' '[:lower:]')
 
   echo "Waiting for gateway container's Tailscale to connect to the tailnet..."
   echo "  (This can take 30-60s — Tailscale goes through: NoState → Starting → Running → Online)"
