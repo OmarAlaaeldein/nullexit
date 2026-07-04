@@ -59,7 +59,7 @@ if ! docker compose version >> output.log 2>&1; then
     die "Docker Compose v2 not found. Update Docker or install the compose plugin:\n  https://docs.docker.com/compose/install/"
 fi
 
-ok "Docker $(docker --version | grep -oP '[\d.]+' | head -1) is running."
+ok "Docker $(docker --version | grep -oE '[0-9.]+' | head -1) is running."
 
 # ─── 1.5 Python 3 ─────────────────────────────────────────────────────────────
 step "Checking Python 3"
@@ -193,9 +193,10 @@ if ! command -v wgcf >> output.log 2>&1; then
             | grep '"tag_name"' | cut -d'"' -f4)
         [[ -z "$WGCF_VERSION" ]] && die "Could not fetch wgcf version. Check your internet connection."
 
-        curl -sfL \
+        sudo curl -sfL \
             "https://github.com/ViRb3/wgcf/releases/download/${WGCF_VERSION}/wgcf_${WGCF_VERSION#v}_linux_${WGCF_ARCH}" \
             -o /usr/local/bin/wgcf
+        sudo chmod +x /usr/local/bin/wgcf
     else
         die "Unsupported OS. Install wgcf manually: https://github.com/ViRb3/wgcf/releases"
     fi

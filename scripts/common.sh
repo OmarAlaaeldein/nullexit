@@ -95,7 +95,7 @@ is_gateway_active() {
 read_env_var() {
   local var_name="$1"
   local env_file="${2:-.env}"
-  grep -E "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d "\"\\' " || echo ""
+  grep -E "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d "\"\\'" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || echo ""
 }
 
 # Function to get the active network service name (e.g., "Wi-Fi" or "USB 10/100 LAN")
