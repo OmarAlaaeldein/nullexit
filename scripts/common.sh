@@ -209,12 +209,30 @@ is_kill_switch_enabled() {
 }
 
 add_warp_bypass_routes() {
+  local target="${1:-}"
   local ep1
   ep1=$(get_warp_endpoint_1)
   local ep2
   ep2=$(get_warp_endpoint_2)
   
   if [[ "$OSTYPE" == "darwin"* ]]; then
+    if [ -n "$target" ]; then
+      if [[ "$target" =~ ^en[0-9]+$ || "$target" == "bridge"* ]]; then
+        echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via interface $target..."
+        sudo -n route delete -host "$ep1" 2>/dev/null || true
+        sudo -n route delete -host "$ep2" 2>/dev/null || true
+        sudo -n route add -host "$ep1" -interface "$target" >> output.log 2>&1 || true
+        sudo -n route add -host "$ep2" -interface "$target" >> output.log 2>&1 || true
+      else
+        echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via gateway $target..."
+        sudo -n route delete -host "$ep1" 2>/dev/null || true
+        sudo -n route delete -host "$ep2" 2>/dev/null || true
+        sudo -n route add -host "$ep1" "$target" >> output.log 2>&1 || true
+        sudo -n route add -host "$ep2" "$target" >> output.log 2>&1 || true
+      fi
+      return
+    fi
+    
     local gateway_ip
     gateway_ip=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
     
@@ -237,8 +255,10 @@ add_warp_bypass_routes() {
       sudo -n route add -host "$ep2" "$gateway_ip" >> output.log 2>&1 || true
     fi
   else
-    local gateway_ip
-    gateway_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3}')
+    local gateway_ip="${target}"
+    if [ -z "$gateway_ip" ]; then
+      gateway_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3}')
+    fi
     if [ -n "$gateway_ip" ]; then
       sudo ip route add "$ep1" via "$gateway_ip" >> output.log 2>&1 || true
       sudo ip route add "$ep2" via "$gateway_ip" >> output.log 2>&1 || true

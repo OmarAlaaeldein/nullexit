@@ -18,6 +18,13 @@
 
 set -e
 
+# ─── Resolve script directory (used for path-relative refs) ─────────────────
+# recover.sh lives at the repo root; SCRIPT_DIR lets us launch toggle.sh
+# (and reference any other repo-root file) from the same directory no
+# matter where the user invoked recover.sh from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || exit 1
+
 # Enforce Cryptographic Script Integrity
 if [ -x "scripts/crypto.sh" ]; then
   if ! ./scripts/crypto.sh --verify; then
@@ -40,11 +47,6 @@ if [ "${1:-}" = "--post-wake" ]; then
   shift
 fi
 
-# ─── Resolve script directory (used for path-relative refs) ─────────────────
-# recover.sh lives at the repo root; SCRIPT_DIR lets us launch toggle.sh
-# (and reference any other repo-root file) from the same directory no
-# matter where the user invoked recover.sh from.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 rm -f "$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker"
 
 # Source common formatting and helper functions
@@ -116,7 +118,7 @@ if [ "$POST_WAKE" = "true" ]; then
       if run_with_timeout 15 tailscale set --exit-node="$TS_IP" \
                             --exit-node-allow-lan-access=true \
                             >> output.log 2>&1; then
-        ok "Exit-node $TS_IP re-asserted via `tailscale set`"
+        ok "Exit-node $TS_IP re-asserted via 'tailscale set'"
       else
         warn "tailscale set --exit-node=$TS_IP didn't respond; falling back to mesh-only"
         run_with_timeout 10 tailscale set --exit-node= \
@@ -251,9 +253,28 @@ fi
 # ─── 5. Clear stale routing table (always — safe in both modes) ──────────
 step "Flushing stale routing table entries"
 # Resolve physical default gateway IP before flushing
-PHYSICAL_GW=$(route get default 2>> output.log | awk '/gateway:/{print $2; exit}')
-sudo -n route -n flush >> output.log 2>&1 || true
-ok "Routing table flushed"
+# We cannot trust `route get default` here because Tailscale may have already hijacked
+# the default route to utunX. We must read the actual DHCP router assignment from the hardware.
+PHYSICAL_IFACE=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: (Wi-Fi|Ethernet)/{getline; print $2; exit}')
+[ -z "$PHYSICAL_IFACE" ] && PHYSICAL_IFACE="en0"
+PHYSICAL_GW=$(ipconfig getpacket "$PHYSICAL_IFACE" 2>> output.log | awk -F'[{}]' '/router /{print $2}')
+
+if [ "$POST_WAKE" = "false" ]; then
+  # Instead of full route -n flush (which destroys macOS loopback/multicast and wedges the OS until reboot),
+  # we cleanly delete the Tailscale overrides and Cloudflare WARP bypass routes.
+  sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
+  sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
+  remove_warp_bypass_routes
+  ok "Routing overrides cleared"
+else
+  ok "Routing table flush skipped (post-wake mode to preserve Colima bridge100)"
+fi
+
+# In post-wake mode we don't bounce Wi-Fi, so we MUST manually restore the physical default route
+if [ "$POST_WAKE" = "true" ] && [ -n "$PHYSICAL_GW" ]; then
+  # Ensure physical gateway is set just in case it was dropped
+  sudo -n route add default "$PHYSICAL_GW" >> output.log 2>&1 || true
+fi
 
 # CONDITIONAL BYPASS ROUTE RESTORATION:
 # If this was a post-wake recovery and the exit node is active, the route flush
@@ -274,40 +295,64 @@ if [ "$POST_WAKE" = "true" ]; then
   
   echo "Re-adding host bypass routes for Cloudflare WARP endpoints..."
   remove_warp_bypass_routes
-  add_warp_bypass_routes
+  if [ -n "${PHYSICAL_GW:-}" ]; then
+    add_warp_bypass_routes "$PHYSICAL_GW"
+  else
+    add_warp_bypass_routes "$ACTIVE_IF"
+  fi
 
   # Also re-apply the default route pointing to the Tailscale interface
   ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)
   if [ -n "$ts_iface" ]; then
-    echo "Re-routing default gateway to $ts_iface..."
-    sudo -n route delete default 2>> output.log || true
-    sudo -n route add default -interface "$ts_iface" >> output.log 2>&1 || true
+    echo "Re-routing default gateway to $ts_iface using 0.0.0.0/1 split..."
+    # DO NOT delete the physical default route! It crashes Colima.
+    # Use the /1 trick to mathematically override the default route.
+    sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
+    sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
+    sudo -n route add -net 0.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
+    sudo -n route add -net 128.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
   fi
 fi
 
 # ─── 6. Stop gateway Docker containers (default) / Force-recreate warp if unhealthy (post-wake) ─
 if [ "$POST_WAKE" = "true" ]; then
+  step "Checking Colima VM state"
+  colima_status=$(colima status 2>&1)
+  if echo "$colima_status" | grep -qi "running"; then
+    ok "Colima VM is running"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] Colima status check passed." >> output.log
+  else
+    warn "Colima VM is NOT running or unresponsive"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] Colima is unhealthy or dead! Output: $colima_status" >> output.log
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] Attempting to restart Colima..." >> output.log
+    colima restart >> output.log 2>&1 || warn "Failed to restart Colima"
+  fi
+
   step "Checking warp container health (gluetun UDP tunnel)"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] Inspecting warp container state..." >> output.log
   # The warp container is the most failure-prone link in the chain at wake/roam:
   # its UDP NAT binding to Cloudflare's edge (162.159.192.1:2408) silently dies
-  # during a Wi-Fi roam. gluetun's healthcheck may catch it within ~30s, but if
-  # not, a force-recreate forces the tun device to re-bind instantly.
+  # during a Wi-Fi roam. We verify the tunnel is actually passing traffic via curl.
   WARP_STATE=$(docker inspect --format '{{.State.Health.Status}}' warp 2>> output.log || echo "missing")
-  case "$WARP_STATE" in
-    healthy)
-      ok "warp container is healthy (no recreate needed)"
-      ;;
-    missing)
-      warn "warp container is missing — leaving gateway containers alone (full relaunch requires \"$SCRIPT_DIR/toggle.sh\")"
-      ;;
-    *)
-      warn "warp container health = '$WARP_STATE' — force-recreating to nudge UDP rebind"
-      docker compose up -d --force-recreate warp 2>> output.log || warn "force-recreate failed"
-      sleep 5
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container status: $WARP_STATE" >> output.log
+  
+  if [ "$WARP_STATE" = "missing" ]; then
+    warn "warp container is missing — leaving gateway containers alone (full relaunch requires \"$SCRIPT_DIR/toggle.sh\")"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container missing from Docker engine. Requires full toggle.sh launch." >> output.log
+  else
+    if docker compose exec -T warp curl -sf --max-time 3 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "warp=on"; then
+      ok "warp container is healthy and actively tunneling traffic (no recreate needed)"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container passed live traffic healthcheck (Cloudflare trace successful)." >> output.log
+    else
+      warn "warp container tunnel is dead (Docker status: $WARP_STATE) — force-recreating all gateway containers to restore network namespace"
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container is DEAD or STUCK. Forcing recreation of gateway stack..." >> output.log
+      docker compose up -d --force-recreate >> output.log 2>&1 || warn "force-recreate failed"
+      
       NEW_STATE=$(docker inspect --format '{{.State.Health.Status}}' warp 2>> output.log || echo "missing")
       ok "warp container health after recreate: $NEW_STATE"
-      ;;
-  esac
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container health after recreation: $NEW_STATE" >> output.log
+    fi
+  fi
 else
   step "Stopping gateway Docker containers"
   if command -v docker >> output.log 2>&1 && docker info >> output.log 2>&1; then
@@ -438,10 +483,13 @@ fi
 echo -e "${BOLD}──────────────────────────────────────────────${NC}"
 
 # Show final DNS state
-FINAL_DNS=$(networksetup -getdnsservers "Wi-Fi" 2>> output.log || echo "N/A")
+FINAL_DNS=$(networksetup -getdnsservers "Wi-Fi" 2>/dev/null || echo "N/A")
 echo "  DNS (Wi-Fi):  $FINAL_DNS"
 
-FINAL_DNS2=$(networksetup -getdnsservers "Ethernet" 2>> output.log || echo "N/A")
+FINAL_DNS2=$(networksetup -getdnsservers "Ethernet" 2>/dev/null || true)
+if [[ -z "$FINAL_DNS2" || "$FINAL_DNS2" == *"not a recognized"* || "$FINAL_DNS2" == *"Error"* ]]; then
+  FINAL_DNS2="N/A (Not configured)"
+fi
 echo "  DNS (Ethernet): $FINAL_DNS2"
 
 echo ""
@@ -460,8 +508,9 @@ if [ "$POST_WAKE" = "false" ]; then
     echo ""
     echo "    Or try manually:"
     echo "      networksetup -setdnsservers Wi-Fi empty"
-    echo "      tailscale down "
-    echo "      sudo route -n flush"
+    echo "      tailscale down"
+    echo "      sudo route delete -net 0.0.0.0/1"
+    echo "      sudo route delete -net 128.0.0.0/1"
     echo "      brew services restart tailscale"
   fi
 fi
