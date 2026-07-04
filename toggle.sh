@@ -843,14 +843,18 @@ is_gateway_active() {
   fi
 
 echo "Checking Gateway Status..."
+HIJACK_HOST=$(grep -E "^GATEWAY_HIJACK_HOST=" .env 2>> output.log | cut -d'=' -f2- | tr -d '"'\' | tr '[:upper:]' '[:lower:]')
+
 if is_gateway_active; then
   echo -e "\n=============================================="
   echo "Gateway is RUNNING. Stopping it now..."
   echo -e "==============================================\n"
 
   # 1. Disconnect host Tailscale cleanly first before stopping the exit-node container
-  disconnect_tailscale_host
-  echo ""
+  if [[ "$HIJACK_HOST" != "false" ]]; then
+    disconnect_tailscale_host
+    echo ""
+  fi
 
   echo "Stopping Docker containers..."
   docker compose down --remove-orphans -t 30
@@ -864,24 +868,26 @@ if is_gateway_active; then
     echo -e "\nLeaving Colima running. (Set STOP_COLIMA_ON_EXIT=true in .env to change this)"
   fi
 
-  # The host's DNS was hijacked to the gateway IP during ENABLE; now that the
-  # gateway is down, restore DNS to 1.1.1.1 immediately so subsequent lookups
-  # don't stall for the macOS DNS timeout before the 1.1.1.1 fallback engages.
-  echo -e "\nRestoring host DNS to 1.1.1.1 (gateway is gone)... "
-  reset_dns
+  if [[ "$HIJACK_HOST" != "false" ]]; then
+    # The host's DNS was hijacked to the gateway IP during ENABLE; now that the
+    # gateway is down, restore DNS to 1.1.1.1 immediately so subsequent lookups
+    # don't stall for the macOS DNS timeout before the 1.1.1.1 fallback engages.
+    echo -e "\nRestoring host DNS to 1.1.1.1 (gateway is gone)... "
+    reset_dns
 
-  # 3. Stop local DNS proxy if running
-  stop_local_dns_proxy
+    # 3. Stop local DNS proxy if running
+    stop_local_dns_proxy
 
-  # Stop background daemons
-  stop_sleep_prevention
-  stop_dns_watcher
-  stop_warp_watcher
-  stop_host_leak_probe
-  clear_gateway_active_marker
+    # Stop background daemons
+    stop_sleep_prevention
+    stop_dns_watcher
+    stop_warp_watcher
+    stop_host_leak_probe
+    clear_gateway_active_marker
 
-  # 4. Nuke leftover network state so internet actually works after teardown
-  cleanup_network_state
+    # 4. Nuke leftover network state so internet actually works after teardown
+    cleanup_network_state
+  fi
 
   ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
   echo -e "\nGateway has been successfully STOPPED in ${ELAPSED} seconds."
@@ -893,7 +899,9 @@ else
   echo -e "==============================================\n"
 
   # 1. Prevent host exit-node deadlock during VM / Container startup
-  disconnect_tailscale_host
+  if [[ "$HIJACK_HOST" != "false" ]]; then
+    disconnect_tailscale_host
+  fi
 
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
@@ -1077,7 +1085,10 @@ else
   #   Phase B — Set exit node only after pre-flight checks confirm the gateway works
   HOST_ON_MESH=false
   SKIP_EXIT_NODE=false
-  if [ -n "$TS_BIN" ]; then
+  if [ "$HIJACK_HOST" = "false" ]; then
+    echo -e "\n[Info] HIJACK_HOST is false (Headless Mode). Host networking will remain untouched."
+    SKIP_EXIT_NODE=true
+  elif [ -n "$TS_BIN" ]; then
     echo -n "Verifying tailscaled is reachable"
     daemon_ready=false
     status_exit=0
@@ -1238,7 +1249,7 @@ else
       echo "    networksetup -setdnsservers \"$ACTIVE_SERVICE\" $TS_IP"
       echo "    networksetup -setsearchdomains \"$ACTIVE_SERVICE\" ts.net"
     fi
-  elif [ -n "$TS_IP" ]; then
+  elif [ -n "$TS_IP" ] && [ "$HIJACK_HOST" != "false" ]; then
     echo -e "\n[Info] Exit node not enabled (pre-flight checks failed)."
     echo "  Trying local DNS proxy for ad-blocking..."
     if start_local_dns_proxy; then
@@ -1284,15 +1295,17 @@ else
   # Prevent system from going to sleep while gateway is running
   start_sleep_prevention
   
-  if [ -n "$TS_IP" ] && [ "$TS_IP" != "1.1.1.1" ]; then
-    start_dns_watcher "$TS_IP"
+  if [[ "$HIJACK_HOST" != "false" ]]; then
+    if [ -n "$TS_IP" ] && [ "$TS_IP" != "1.1.1.1" ]; then
+      start_dns_watcher "$TS_IP"
+    fi
+
+    # Start WARP liveness monitor (logs to output.log on warp flip)
+    start_warp_watcher
+
+    # Start host-side egress leak prober (polls from HOST, not docker exec)
+    start_host_leak_probe
   fi
-
-  # Start WARP liveness monitor (logs to output.log on warp flip)
-  start_warp_watcher
-
-  # Start host-side egress leak prober (polls from HOST, not docker exec)
-  start_host_leak_probe
 
   # Reset sharing services after network configuration to prevent AirDrop freezes
   echo "Resetting macOS sharing services (AirDrop/AirPlay)..."
