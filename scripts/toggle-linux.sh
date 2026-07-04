@@ -319,8 +319,8 @@ cleanup_network_state() {
   echo "  DNS cache flushed."
 
   # 3. Flush stale routing table entries
-  if command -v route >> output.log 2>&1; then
-    sudo -n route -n flush >> output.log 2>&1 || true
+  if command -v ip >> output.log 2>&1; then
+    sudo -n ip route flush cache >> output.log 2>&1 || true
   fi
   echo "  Routing table flushed."
 

@@ -543,7 +543,8 @@ case "$SCENARIO" in
     echo ""
     echo "  ${BOLD}Recommended fix:${NC}"
     echo "    sudo brew services restart tailscale"
-    echo "    sudo route -n flush"
+    echo "    sudo route delete -net 0.0.0.0/1"
+    echo "    sudo route delete -net 128.0.0.0/1"
     echo "    sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder"
     if [ -n "$GATEWAY_TS_IP" ]; then
     echo "    sudo tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true \\"
@@ -644,7 +645,8 @@ if [ "$DO_FIX" = "true" ] && [ "$SCENARIO" != "OK" ] && [ "$SCENARIO" != "UNKNOW
         || run_with_timeout 15 sudo -n brew services restart tailscale >> "$LOG_FILE" 2>&1
       sleep 3
       line "→ flushing stale host routes + DNS cache"
-      sudo -n route -n flush >> "$LOG_FILE" 2>&1 || true
+      sudo -n route delete -net 0.0.0.0/1 >> "$LOG_FILE" 2>&1 || true
+      sudo -n route delete -net 128.0.0.0/1 >> "$LOG_FILE" 2>&1 || true
       sudo -n dscacheutil -flushcache >> "$LOG_FILE" 2>&1 || true
       sudo -n killall -HUP mDNSResponder >> "$LOG_FILE" 2>&1 || true
       if [ -n "$GATEWAY_TS_IP" ]; then
