@@ -645,6 +645,13 @@ enable_socks_proxy() {
     sudo -n networksetup -setsocksfirewallproxy "$EN0_SERVICE" 127.0.0.1 $SOCKS_PROXY_PORT 2>> output.log || true
     sudo -n networksetup -setsocksfirewallproxystate "$EN0_SERVICE" on 2>> output.log || true
   fi
+
+  # IMPORTANT: Exclude local LAN and mDNS traffic from the proxy so P2P works natively
+  # without source-IP masking from the Colima VM bridge.
+  sudo -n networksetup -setproxybypassdomains "$svc" 127.0.0.1 localhost 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 "*.local" 2>> output.log || true
+  if [ "$svc" != "$EN0_SERVICE" ]; then
+    sudo -n networksetup -setproxybypassdomains "$EN0_SERVICE" 127.0.0.1 localhost 192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 "*.local" 2>> output.log || true
+  fi
   
   echo "done."
   echo "  All TCP traffic now routed through gateway -> WARP tunnel -> internet."
