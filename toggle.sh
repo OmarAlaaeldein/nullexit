@@ -108,7 +108,7 @@ start_sleep_prevention() {
   fi
 
   # Stop any existing sleep prevention process first to avoid duplicates
-  stop_sleep_prevention
+  stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
 
   echo "  Enabling system sleep prevention (caffeinate)..."
   # Run caffeinate wrapped in a bash trap to prevent idle system sleep.
@@ -149,18 +149,7 @@ start_sleep_prevention() {
   echo "  Sleep prevention active (PID $caffe_pid). Your Mac won't sleep while the gateway is running."
 }
 
-# Stop macOS caffeinate when gateway is stopped
-stop_sleep_prevention() {
-  if [ -f "$PID_FILE" ]; then
-    local caffe_pid
-    caffe_pid=$(cat "$PID_FILE")
-    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o command= 2>/dev/null | grep -q -E "caffeinate|recover.sh"; then
-      echo "  Stopping system sleep prevention (caffeinate wrapper PID $caffe_pid)..."
-      kill "$caffe_pid" 2>/dev/null || true
-    fi
-    rm -f "$PID_FILE"
-  fi
-}
+
 
 DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
 WARP_WATCHER_PID_FILE="/tmp/nullexit-warp-watcher.pid"
@@ -168,7 +157,7 @@ HOST_LEAK_PROBE_PID_FILE="/tmp/nullexit-host-leak-probe.pid"
 
 start_dns_watcher() {
   local target_ip=$1
-  stop_dns_watcher
+  stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
   echo "  Starting background DNS Watcher for seamless Wi-Fi roaming..."
   nohup bash -c "
     trap 'exit 0' SIGTERM SIGINT SIGHUP
@@ -186,17 +175,7 @@ start_dns_watcher() {
   echo $! > "$DNS_WATCHER_PID_FILE"
 }
 
-stop_dns_watcher() {
-  if [ -f "$DNS_WATCHER_PID_FILE" ]; then
-    local watcher_pid
-    watcher_pid=$(cat "$DNS_WATCHER_PID_FILE")
-    if [ -n "$watcher_pid" ] && kill -0 "$watcher_pid" 2>/dev/null; then
-      echo "  Stopping background DNS Watcher (PID $watcher_pid)..."
-      kill -9 "$watcher_pid" 2>/dev/null || true
-    fi
-    rm -f "$DNS_WATCHER_PID_FILE"
-  fi
-}
+
 
 # Background WARP tunnel liveness monitor. Polls cdn-cgi/trace every 30s
 # while healthy, but accelerates to polling every 5s if a failure is detected.
@@ -296,7 +275,7 @@ stop_warp_watcher() {
 # failures to output.log on every state change. Enabled via HOST_LEAK_PROBE=true
 # in .env (default true). Safe to leave running for hours; ~1.4 MB RSS.
 start_host_leak_probe() {
-  stop_host_leak_probe
+  stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
   local enabled
   enabled=$(read_env_var HOST_LEAK_PROBE)
   if [ -z "$enabled" ]; then
@@ -310,17 +289,7 @@ start_host_leak_probe() {
   echo $! > "$HOST_LEAK_PROBE_PID_FILE"
 }
 
-stop_host_leak_probe() {
-  if [ -f "$HOST_LEAK_PROBE_PID_FILE" ]; then
-    local hp
-    hp=$(cat "$HOST_LEAK_PROBE_PID_FILE")
-    if [ -n "$hp" ] && kill -0 "$hp" 2>/dev/null; then
-      echo "  Stopping background Host Leak Probe (PID $hp)..."
-      kill "$hp" 2>/dev/null || true
-    fi
-    rm -f "$HOST_LEAK_PROBE_PID_FILE"
-  fi
-}
+
 
 # Cleanup handler to restore DNS to 1.1.1.1 on error or user interrupt (Ctrl+C / SIGTERM / SIGHUP)
 cleanup_handler() {
@@ -346,10 +315,10 @@ cleanup_handler() {
     stop_local_dns_proxy
 
     # Stop sleep prevention
-    stop_sleep_prevention
-    stop_dns_watcher
+    stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
+    stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
     stop_warp_watcher
-    stop_host_leak_probe
+    stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
     clear_gateway_active_marker
 
     # Capture warp logs on failure for debugging before teardown
@@ -447,27 +416,12 @@ fi
 #
 # Defined early (before the if/else branches and referenced by cleanup_handler's
 # ERR trap) so that any failure before the main logic can still tear down Tailscale.
-restart_tailscaled_daemon() {
-  echo "  [Tailscale Recovery] tailscaled daemon appears to be wedged/unresponsive."
-  echo "  [Tailscale Recovery] Attempting to restart tailscaled service..."
-  
-  # Try user-level restart first
-  if run_with_timeout 15 brew services restart tailscale >> output.log 2>&1; then
-    echo "  [Tailscale Recovery] Successfully restarted tailscaled (user service)."
-  # Fallback to system-level restart (using sudo -n so it doesn't block if NOPASSWD isn't set)
-  elif run_with_timeout 15 sudo -n brew services restart tailscale >> output.log 2>&1; then
-    echo "  [Tailscale Recovery] Successfully restarted tailscaled (system service)."
-  else
-    echo "  [Tailscale Recovery] WARNING: Failed to restart tailscaled. Manual intervention may be needed."
-  fi
-  sleep 3
-}
 
 disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
     local ts_args=""
-    if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
+    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
     if ! run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1; then
       restart_tailscaled_daemon
       # Retry once
@@ -491,35 +445,6 @@ EN0_SERVICE=$(get_en0_service)
 # default route (the exit node), and get routed back into the tunnel.
 # We route via the gateway IP (not interface) to ensure packets are routed
 # properly even when the host's default route changes to the Tailscale interface.
-add_warp_bypass_routes() {
-  local gateway_ip
-  gateway_ip=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
-  
-  if [ -z "$gateway_ip" ]; then
-    local iface
-    iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
-    if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
-      iface="en0"
-    fi
-    echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via interface $iface..."
-    sudo -n route delete -host 162.159.192.1 2>/dev/null || true
-    sudo -n route delete -host 162.159.193.1 2>/dev/null || true
-    sudo -n route add -host 162.159.192.1 -interface "$iface" >> output.log 2>&1 || true
-    sudo -n route add -host 162.159.193.1 -interface "$iface" >> output.log 2>&1 || true
-  else
-    echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via gateway $gateway_ip..."
-    sudo -n route delete -host 162.159.192.1 2>/dev/null || true
-    sudo -n route delete -host 162.159.193.1 2>/dev/null || true
-    sudo -n route add -host 162.159.192.1 "$gateway_ip" >> output.log 2>&1 || true
-    sudo -n route add -host 162.159.193.1 "$gateway_ip" >> output.log 2>&1 || true
-  fi
-}
-
-remove_warp_bypass_routes() {
-  echo -e "\nRemoving host bypass routes for Cloudflare WARP endpoints..."
-  sudo -n route delete -host 162.159.192.1 2>/dev/null || true
-  sudo -n route delete -host 162.159.193.1 2>/dev/null || true
-}
 
 # Helper to manually override the host's default route to point through the
 # Tailscale utun* interface. Standalone tailscaled on macOS (Homebrew version)
@@ -572,9 +497,7 @@ cleanup_network_state() {
 
   # 1. Disable any leftover proxy settings (needs root on many macOS versions)
   for svc in "$ACTIVE_SERVICE" "$EN0_SERVICE"; do
-    sudo -n networksetup -setsocksfirewallproxystate "$svc" off 2>> output.log || true
-    sudo -n networksetup -setwebproxystate "$svc" off 2>> output.log || true
-    sudo -n networksetup -setsecurewebproxystate "$svc" off 2>> output.log || true
+    disable_all_proxies "$svc"
   done
   echo "  Proxies disabled."
 
@@ -609,7 +532,7 @@ cleanup_network_state() {
   # Force restart sharing services to prevent AirDrop / AirPlay discovery freezes
   # after network interface/DNS changes.
   echo "  Resetting macOS sharing services (AirDrop/AirPlay)..."
-  sudo -n killall sharingd rapportd 2>> output.log || true
+  reset_sharing_services
 
   echo "Network state cleanup complete."
 }
@@ -860,10 +783,10 @@ if is_gateway_active; then
     stop_local_dns_proxy
 
     # Stop background daemons
-    stop_sleep_prevention
-    stop_dns_watcher
+    stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
+    stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
     stop_warp_watcher
-    stop_host_leak_probe
+    stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
     clear_gateway_active_marker
 
     # 4. Nuke leftover network state so internet actually works after teardown
@@ -1040,7 +963,7 @@ else
   # `tr -d '\r'` strips the CR; `awk 'NR==1{print $1; exit}'` takes only
   # the first field of the first line (preserving the old `head -1` guard).
   TS_IP=""
-  TS_IP=$(cat ADGUARD_IP.txt 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
+  TS_IP=$(read_adguard_ip || true)
   if [ -n "$TS_IP" ]; then
     echo "Using static IP from ADGUARD_IP.txt: $TS_IP"
   elif [ "$connected" = "true" ]; then
@@ -1290,7 +1213,7 @@ else
 
   # Reset sharing services after network configuration to prevent AirDrop freezes
   echo "Resetting macOS sharing services (AirDrop/AirPlay)..."
-  sudo -n killall sharingd rapportd 2>> output.log || true
+  reset_sharing_services
 
   # Tell external watchers (post-wake / network-change) the gateway is up.
   write_gateway_active_marker

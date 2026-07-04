@@ -92,18 +92,6 @@ if [ "$POST_WAKE" = "false" ]; then
 fi
 
 # ─── 1. Disconnect host Tailscale (default) / Refresh exit-node (post-wake) ─
-restart_tailscaled_daemon() {
-  warn "tailscaled daemon appears to be wedged/unresponsive. Attempting restart..."
-
-  if run_with_timeout 15 brew services restart tailscale >> output.log 2>&1; then
-    ok "Successfully restarted tailscaled (user service)"
-  elif run_with_timeout 15 sudo -n brew services restart tailscale >> output.log 2>&1; then
-    ok "Successfully restarted tailscaled (system service)"
-  else
-    warn "Failed to restart tailscaled daemon"
-  fi
-  sleep 3
-}
 
 if [ "$POST_WAKE" = "true" ]; then
   step "Refreshing host Tailscale exit-node routing (post-wake)"
@@ -168,7 +156,7 @@ else
       warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
     fi
     ts_args=""
-    if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
+    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
     if run_with_timeout 10 tailscale down $ts_args >> output.log 2>&1; then
       ok "Tailscale disconnected"
     else
@@ -244,9 +232,7 @@ if [ "$POST_WAKE" = "false" ]; then
   for svc in $(networksetup -listallnetworkservices 2>> output.log | grep -v "^An asterisk" | grep -v "^$" || echo "Wi-Fi"); do
     svc_clean=$(echo "$svc" | sed 's/^\*//')
     [ -z "$svc_clean" ] && continue
-    sudo networksetup -setsocksfirewallproxystate "$svc_clean" off 2>> output.log || true
-    sudo networksetup -setwebproxystate "$svc_clean" off 2>> output.log || true
-    sudo networksetup -setsecurewebproxystate "$svc_clean" off 2>> output.log || true
+    disable_all_proxies "$svc_clean"
   done
   ok "Proxy settings cleared"
 else
@@ -256,8 +242,7 @@ fi
 # ─── 4. Flush macOS DNS cache (always — safe and useful in both modes) ─────
 step "Flushing DNS cache"
 if command -v dscacheutil >> output.log 2>&1; then
-  sudo -n dscacheutil -flushcache 2>> output.log || true
-  sudo -n killall -HUP mDNSResponder 2>> output.log || true
+  flush_dns_cache
   ok "DNS cache flushed (mDNSResponder HUP)"
 else
   warn "dscacheutil not found"
@@ -288,14 +273,11 @@ if [ "$POST_WAKE" = "true" ]; then
   fi
   
   echo "Re-adding host bypass routes for Cloudflare WARP endpoints..."
-  sudo -n route delete -host 162.159.192.1 2>/dev/null || true
-  sudo -n route delete -host 162.159.193.1 2>/dev/null || true
+  remove_warp_bypass_routes
   if [ -n "${PHYSICAL_GW:-}" ]; then
-    sudo -n route add -host 162.159.192.1 "$PHYSICAL_GW" >> output.log 2>&1 || true
-    sudo -n route add -host 162.159.193.1 "$PHYSICAL_GW" >> output.log 2>&1 || true
+    add_warp_bypass_routes
   else
-    sudo -n route add -host 162.159.192.1 -interface "$ACTIVE_IF" >> output.log 2>&1 || true
-    sudo -n route add -host 162.159.193.1 -interface "$ACTIVE_IF" >> output.log 2>&1 || true
+    add_warp_bypass_routes
   fi
 
   # Also re-apply the default route pointing to the Tailscale interface
@@ -346,19 +328,7 @@ fi
 # ─── 6b. Stopping sleep prevention (caffeinate) — default only ──────────────
 if [ "$POST_WAKE" = "false" ]; then
   step "Stopping sleep prevention"
-  PID_FILE="/tmp/nullexit-caffeinate.pid"
-  if [ -f "$PID_FILE" ]; then
-    CAFFE_PID=$(cat "$PID_FILE")
-    if [ -n "$CAFFE_PID" ] && kill -0 "$CAFFE_PID" 2>/dev/null && ps -p "$CAFFE_PID" -o comm= 2>/dev/null | grep -q caffeinate; then
-      kill "$CAFFE_PID" 2>/dev/null || true
-      ok "Sleep prevention stopped (PID $CAFFE_PID)"
-    else
-      warn "Sleep prevention process not running, cleaning up stale PID file"
-    fi
-    rm -f "$PID_FILE"
-  else
-    ok "Sleep prevention was not active"
-  fi
+  stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
 else
   step "Sleep prevention: leaving untouched (caffeinate already re-acquired by parent shell)"
 fi
@@ -366,35 +336,11 @@ fi
 # ─── 6c. Stopping DNS Watcher — default only ────────────────────────────────
 if [ "$POST_WAKE" = "false" ]; then
   step "Stopping DNS Watcher"
-  DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
-  if [ -f "$DNS_WATCHER_PID_FILE" ]; then
-    WATCHER_PID=$(cat "$DNS_WATCHER_PID_FILE")
-    if [ -n "$WATCHER_PID" ] && kill -0 "$WATCHER_PID" 2>/dev/null; then
-      kill -9 "$WATCHER_PID" 2>/dev/null || true
-      ok "DNS Watcher stopped (PID $WATCHER_PID)"
-    else
-      warn "DNS Watcher process not running, cleaning up stale PID file"
-    fi
-    rm -f "$DNS_WATCHER_PID_FILE"
-  else
-    ok "DNS Watcher was not active"
-  fi
+  stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
 
   # ─── 6d. Stopping Host Leak Probe — default only ─────────────────────────
   step "Stopping Host Leak Probe"
-  HOST_LEAK_PROBE_PID_FILE="/tmp/nullexit-host-leak-probe.pid"
-  if [ -f "$HOST_LEAK_PROBE_PID_FILE" ]; then
-    HP=$(cat "$HOST_LEAK_PROBE_PID_FILE")
-    if [ -n "$HP" ] && kill -0 "$HP" 2>/dev/null; then
-      kill "$HP" 2>/dev/null || true
-      ok "Host Leak Probe stopped (PID $HP)"
-    else
-      warn "Host Leak Probe process not running, cleaning up stale PID file"
-    fi
-    rm -f "$HOST_LEAK_PROBE_PID_FILE"
-  else
-    ok "Host Leak Probe was not active"
-  fi
+  stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
 else
   step "DNS Watcher / Host Leak Probe: leaving untouched (it keeps re-hijacking DNS on every roam)"
 fi
@@ -402,25 +348,7 @@ fi
 # ─── 7. Power-cycle Wi-Fi — default only ────────────────────────────────────
 if [ "$POST_WAKE" = "false" ]; then
   step "Power-cycling Wi-Fi"
-  WIFI_PORT=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
-  if [ -n "$WIFI_PORT" ]; then
-    sudo networksetup -setairportpower "$WIFI_PORT" off 2>> output.log
-    sleep 2
-    sudo networksetup -setairportpower "$WIFI_PORT" on 2>> output.log
-    ok "Wi-Fi bounced (interface $WIFI_PORT)"
-    sleep 3
-  else
-    warn "Could not detect Wi-Fi interface. Bouncing fallback interfaces..."
-    set +e
-    for iface in en0 en1 en2 en3 en4 en5; do
-      if ifconfig "$iface" >> output.log 2>&1; then
-        sudo ifconfig "$iface" down 2>> output.log
-        sudo ifconfig "$iface" up 2>> output.log
-      fi
-    done
-    set -e
-    ok "Fallback interfaces bounced"
-  fi
+  bounce_wifi_interfaces
 else
   step "Wi-Fi: leaving untouched (post-wake keeps the current Wi-Fi association)"
 fi
@@ -447,7 +375,7 @@ if [ "$POST_WAKE" = "true" ]; then
   # Direct host → gateway check via Tailscale ping (relayed pong counts as success)
   if command -v tailscale >> output.log 2>&1; then
     TS_IP=""
-    [ -f ADGUARD_IP.txt ] && TS_IP=$(cat ADGUARD_IP.txt 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
+    [ -f ADGUARD_IP.txt ] && TS_IP=$(read_adguard_ip || true)
     if [ -n "$TS_IP" ] && tailscale ping --until-direct=false -c 1 --timeout 4s "$TS_IP" 2>> output.log | grep -q pong; then
       ok "Gateway $TS_IP reachable via Tailscale"
       GATEWAY_OK=true
@@ -545,7 +473,7 @@ fi
 # Reset sharing services to prevent AirDrop freezes after interface changes
 # This is the SAME step in BOTH modes (post-wake inherits the previous fix from §10.27).
 echo -e "  Resetting macOS sharing services (AirDrop/AirPlay)..."
-sudo -n killall sharingd rapportd 2>> output.log || true
+reset_sharing_services
 
 echo ""
 if [ "$POST_WAKE" = "true" ]; then

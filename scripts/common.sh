@@ -139,3 +139,150 @@ get_en0_service() {
   fi
 }
 
+get_warp_endpoint_1() { read_env_var "WARP_ENDPOINT_1" ".env" | grep -Eo '^[0-9\.]+' || echo "162.159.192.1"; }
+get_warp_endpoint_2() { read_env_var "WARP_ENDPOINT_2" ".env" | grep -Eo '^[0-9\.]+' || echo "162.159.193.1"; }
+
+restart_tailscaled_daemon() {
+  echo "  [Tailscale Recovery] tailscaled daemon appears to be wedged/unresponsive."
+  echo "  [Tailscale Recovery] Attempting to restart tailscaled service..."
+  
+  if run_with_timeout 15 brew services restart tailscale >> output.log 2>&1; then
+    echo "  [Tailscale Recovery] Successfully restarted tailscaled (user service)."
+  elif run_with_timeout 15 sudo -n brew services restart tailscale >> output.log 2>&1; then
+    echo "  [Tailscale Recovery] Successfully restarted tailscaled (system service)."
+  else
+    echo "  [Tailscale Recovery] WARNING: Failed to restart tailscaled. Manual intervention may be needed."
+  fi
+  sleep 3
+}
+
+stop_pidfile_daemon() {
+  local pid_file="$1"
+  local label="$2"
+  if [ -f "$pid_file" ]; then
+    local pid
+    pid=$(cat "$pid_file")
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "  Stopping $label (PID $pid)..."
+      sudo -n kill "$pid" 2>> output.log || kill "$pid" 2>> output.log || true
+      sleep 0.5
+      if kill -0 "$pid" 2>/dev/null; then
+        sudo -n kill -9 "$pid" 2>> output.log || kill -9 "$pid" 2>> output.log || true
+      fi
+    fi
+    rm -f "$pid_file"
+  fi
+}
+
+disable_all_proxies() {
+  local svc="$1"
+  if [ -n "$svc" ]; then
+    sudo -n networksetup -setsocksfirewallproxystate "$svc" off 2>> output.log || true
+    sudo -n networksetup -setwebproxystate "$svc" off 2>> output.log || true
+    sudo -n networksetup -setsecurewebproxystate "$svc" off 2>> output.log || true
+  fi
+}
+
+flush_dns_cache() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sudo -n dscacheutil -flushcache 2>> output.log || true
+    sudo -n killall -HUP mDNSResponder 2>> output.log || true
+  else
+    resolvectl flush-caches 2>> output.log || true
+  fi
+}
+
+reset_sharing_services() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sudo -n killall sharingd rapportd 2>> output.log || true
+  fi
+}
+
+read_adguard_ip() {
+  if [ -f "ADGUARD_IP.txt" ]; then
+    tr -d '\r' < "ADGUARD_IP.txt" | awk 'NR==1{print $1;exit}'
+  fi
+}
+
+is_kill_switch_enabled() {
+  grep -iq "^KILL_SWITCH=true" "${1:-.env}" 2>/dev/null
+}
+
+add_warp_bypass_routes() {
+  local ep1
+  ep1=$(get_warp_endpoint_1)
+  local ep2
+  ep2=$(get_warp_endpoint_2)
+  
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    local gateway_ip
+    gateway_ip=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
+    
+    if [ -z "$gateway_ip" ]; then
+      local iface
+      iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
+      if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
+        iface="en0"
+      fi
+      echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via interface $iface..."
+      sudo -n route delete -host "$ep1" 2>/dev/null || true
+      sudo -n route delete -host "$ep2" 2>/dev/null || true
+      sudo -n route add -host "$ep1" -interface "$iface" >> output.log 2>&1 || true
+      sudo -n route add -host "$ep2" -interface "$iface" >> output.log 2>&1 || true
+    else
+      echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via gateway $gateway_ip..."
+      sudo -n route delete -host "$ep1" 2>/dev/null || true
+      sudo -n route delete -host "$ep2" 2>/dev/null || true
+      sudo -n route add -host "$ep1" "$gateway_ip" >> output.log 2>&1 || true
+      sudo -n route add -host "$ep2" "$gateway_ip" >> output.log 2>&1 || true
+    fi
+  else
+    local gateway_ip
+    gateway_ip=$(ip route show default 2>/dev/null | awk '/default/ {print $3}')
+    if [ -n "$gateway_ip" ]; then
+      sudo ip route add "$ep1" via "$gateway_ip" >> output.log 2>&1 || true
+      sudo ip route add "$ep2" via "$gateway_ip" >> output.log 2>&1 || true
+    fi
+  fi
+}
+
+remove_warp_bypass_routes() {
+  local ep1
+  ep1=$(get_warp_endpoint_1)
+  local ep2
+  ep2=$(get_warp_endpoint_2)
+  
+  echo -e "\nRemoving host bypass routes for Cloudflare WARP endpoints..."
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sudo -n route delete -host "$ep1" 2>/dev/null || true
+    sudo -n route delete -host "$ep2" 2>/dev/null || true
+  else
+    sudo ip route del "$ep1" >> output.log 2>&1 || true
+    sudo ip route del "$ep2" >> output.log 2>&1 || true
+  fi
+}
+
+bounce_wifi_interfaces() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    local wifi_port
+    wifi_port=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
+    if [ -n "$wifi_port" ]; then
+      sudo -n networksetup -setairportpower "$wifi_port" off 2>> output.log || true
+      sleep 2
+      sudo -n networksetup -setairportpower "$wifi_port" on 2>> output.log || true
+      echo "Wi-Fi bounced (interface $wifi_port)"
+      sleep 3
+    else
+      echo "Could not detect Wi-Fi interface. Bouncing fallback interfaces..."
+      set +e
+      for iface in en0 en1 en2 en3 en4 en5; do
+        if ifconfig "$iface" >> output.log 2>&1; then
+          sudo -n ifconfig "$iface" down 2>> output.log || true
+          sudo -n ifconfig "$iface" up 2>> output.log || true
+        fi
+      done
+      set -e
+      echo "Fallback interfaces bounced"
+    fi
+  fi
+}
