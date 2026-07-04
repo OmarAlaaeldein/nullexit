@@ -17,7 +17,7 @@ for f in "$PROJECT_ROOT"/adguard/work/userfilters/compiled_rules.txt \
          "$PROJECT_ROOT"/adguard/work/userfilters/cache/ip/*.txt \
          "$PROJECT_ROOT"/adguard/work/data/filters/*.txt; do
   if [ -f "$f" ]; then
-    cp "$f" "$f.tmp" && mv "$f.tmp" "$f"
+    cat "$f" > "$f.tmp" && mv "$f.tmp" "$f"
     echo "✅ Unlocked $f"
   fi
 done
