@@ -1337,3 +1337,13 @@ Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs
 - Added `--build` to `docker compose up -d` in `toggle.sh` to ensure updates are consistently applied on boot.
 - Added `stop_grace_period: 1s` to `routing-fix` in `docker-compose.yml` which eliminates the 30-second teardown hang instantly.
 - Implemented a cryptographic integrity checker (`scripts/crypto.sh`) using HMAC-SHA256 and `NULLEXIT_SEED` in `.env` to prevent tampering of bash scripts.
+
+### 10.32. July 4, 2026: Consolidation of Core Bash Scripts (Refactoring)
+**Symptom:** Over 200 lines of bash logic were directly duplicated across `toggle.sh` and `recover.sh` (e.g. `restart_tailscaled_daemon`, `stop_sleep_prevention`, WARP bypass routes). This caused drift when one script was updated without the other.
+**Root Cause:**
+- Historical separation of responsibilities allowed `recover.sh` to grow complex alongside `toggle.sh`.
+**Resolution:**
+- Massively refactored both scripts by extracting all duplicated networking logic, PID lifecycle management, and environmental configuration down to `scripts/common.sh`.
+- Specifically, the `stop_sleep_prevention`, `stop_dns_watcher`, `stop_host_leak_probe`, and `stop_warp_watcher` functions were collapsed into a single `stop_pidfile_daemon()` abstraction.
+- Proxy disable loops were abstracted to `disable_all_proxies()`.
+- The `162.159.192.1/.193.1` WARP edge IPs are now dynamically resolved from `.env` instead of hardcoded.
