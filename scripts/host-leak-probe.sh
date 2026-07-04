@@ -37,6 +37,12 @@ LOG_FILE="$PROJECT_ROOT/output.log"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
 
+if date +%N | grep -qv '%N' 2>/dev/null; then
+  DATE_FORMAT="+%Y-%m-%d %H:%M:%S.%3N"
+else
+  DATE_FORMAT="+%Y-%m-%d %H:%M:%S"
+fi
+
 echo "════════════════════════════════════════════════════════════"
 echo " host-leak-probe — polling every ${INTERVAL}s from the HOST"
 echo " (not through docker exec — this is the actual browser egress path)"
@@ -78,29 +84,33 @@ while true; do
         "https://www.cloudflare.com/cdn-cgi/trace?_=$(date +%s%N)" 2>>"$LOG_FILE")
   warp=$(printf '%s' "$out" | awk -F'=' '/^warp=/{print $2; exit}')
   ip=$(printf '%s' "$out" | awk -F'=' '/^ip=/{print $2; exit}')
-  ts=$(date -u +%H:%M:%S.%3N)
+  ts=$(date -u "$DATE_FORMAT")
 
   if [ -z "$warp" ]; then
     # Request itself failed/timed out. Noted, but NOT treated as a leak —
     # a failed probe tells you nothing about what actually left the NIC.
     fail_count=$((fail_count + 1))
     printf '[%s] HOST-PROBE failed/timeout (count=%d)\n' "$ts" "$fail_count" >> "$LOG_FILE"
-    printf '\r%s  probe failed/timeout (%d so far)          ' "$ts" "$fail_count"
+    [ -t 1 ] && printf '\r%s  probe failed/timeout (%d so far)          ' "$ts" "$fail_count"
   elif [ "$warp" != "on" ]; then
     leak_count=$((leak_count + 1))
-    echo ""
-    echo -e "${RED}${BOLD}[$ts] LEAK: warp=${warp}  ip=${ip}  (was warp=${last_warp:-?} ip=${last_ip:-?})${NC}"
+    if [ -t 1 ]; then
+      echo ""
+      echo -e "${RED}${BOLD}[$ts] LEAK: warp=${warp}  ip=${ip}  (was warp=${last_warp:-?} ip=${last_ip:-?})${NC}"
+    fi
     printf '[%s] LEAK warp=%s ip=%s prev_warp=%s prev_ip=%s\n' \
       "$ts" "$warp" "$ip" "${last_warp:-?}" "${last_ip:-?}" >> "$LOG_FILE"
   elif [ -n "$last_ip" ] && [ "$ip" != "$last_ip" ]; then
     # IP changed but warp is still "on" — almost certainly Cloudflare
     # anycast/edge rotation, not a leak. Logged for visibility only.
     rotate_count=$((rotate_count + 1))
-    echo ""
-    echo -e "${YELLOW}[$ts] Cloudflare IP rotated (still warp=on): ${last_ip} → ${ip}${NC}"
+    if [ -t 1 ]; then
+      echo ""
+      echo -e "${YELLOW}[$ts] Cloudflare IP rotated (still warp=on): ${last_ip} → ${ip}${NC}"
+    fi
     printf '[%s] ROTATE warp=on ip=%s prev_ip=%s\n' "$ts" "$ip" "$last_ip" >> "$LOG_FILE"
   else
-    printf '\r%s  warp=on  ip=%s   ' "$ts" "$ip"
+    [ -t 1 ] && printf '\r%s  warp=on  ip=%s   ' "$ts" "$ip"
   fi
 
   last_warp="$warp"

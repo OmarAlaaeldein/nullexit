@@ -313,6 +313,8 @@ This section documents issues encountered during development, their status, and 
 ### 9.11 Logging Architecture
 For debugging, logs are strictly segmented based on the component's lifecycle:
 - **`output.log` (Host-side):** Contains all standard error (`stderr`) and verbose output from the host scripts (`toggle.sh`, `recover.sh`, `setup.sh`). Since the `rule-compiler` container is ephemeral and deleted after running, its logs (and any Python errors from `scripts/sync-rules.py`) are extracted and appended to this file before deletion.
+  - **Log Rotation Policy:** On startup, `toggle.sh` checks if `output.log` exceeds **50MB** (`52,428,800` bytes). If it does, it performs a metadata-only rename (`mv output.log output.log.old`), preserving history while resetting the active log to 0 bytes. This rename-based rotation avoids the heavy disk I/O and CPU overhead of rewriting a massive file line-by-line.
+  - **Egress Probe Logging:** The background host-egress leak prober checks if stdout is a TTY (`[ -t 1 ]`) and will only print live status updates (using carriage return `\r`) or duplicate console warnings in interactive mode. It automatically detects macOS/BSD vs. Linux environments to dynamically construct timestamps with date and time (omitting milliseconds on macOS to prevent high CPU utilization from spawning sub-second processes).
 - **`docker logs <container>` (Guest-side):** The persistent containers (`warp`, `tailscale`, `routing-fix`, `adguardhome`, `socks-proxy`) use the Docker `json-file` logging driver with a strict `max-size` (1m-10m) to prevent VM disk exhaustion. Use standard `docker logs` to view them.
 
 ### 9.12 Chrome Remote Desktop Connection Failures
