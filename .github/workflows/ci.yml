@@ -38,6 +38,23 @@ jobs:
           # Lint shell scripts to catch actual code-breaking errors, ignoring styling/formatting recommendations
           shellcheck --severity=error *.sh scripts/*.sh
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Validate Go Logger
+        run: |
+          cd scripts/logger
+          go vet ./...
+          go build -o /dev/null main.go
+
+      - name: Validate Go Rule Compiler
+        run: |
+          cd scripts/rule-compiler
+          go vet ./...
+          go build -o /dev/null main.go
+
       - name: Validate Docker Compose Configuration
         run: |
           # Create a dummy .env file to satisfy environment variable dependencies in docker-compose.yml

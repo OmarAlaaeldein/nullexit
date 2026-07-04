@@ -59,6 +59,16 @@ CURRENT_BG_PID=""
 # Source common bash functions
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
 
+# Prevent concurrent execution of toggle.sh
+LOCK_FILE="/tmp/nullexit-toggle.lock"
+if [ -f "$LOCK_FILE" ]; then
+  LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+  if [ -n "$LOCK_PID" ] && [ "$LOCK_PID" != "$$" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    die "Another instance of toggle.sh (PID $LOCK_PID) is already running."
+  fi
+fi
+echo "$$" > "$LOCK_FILE"
+
 # Helper function to run a GUI command as the logged-in console user
 # (Prevents permission failures if the script is run with sudo)
 run_gui_cmd() {
@@ -348,6 +358,7 @@ cleanup_handler() {
       echo "4. Run 'tailscale status' to check host Tailscale status."
       echo "=============================================="
     fi
+    rm -f "${LOCK_FILE:-/tmp/nullexit-toggle.lock}"
   fi
 }
 
@@ -1246,4 +1257,5 @@ if [ -t 0 ]; then
   fi
 fi
 
+rm -f "${LOCK_FILE:-/tmp/nullexit-toggle.lock}"
 echo -e "\nYou can close this terminal window now."
