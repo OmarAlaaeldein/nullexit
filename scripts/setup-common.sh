@@ -289,7 +289,7 @@ fi
 
 if [[ "${WRITE_ENV:-0}" == "1" ]]; then
     # Preserve existing configuration flags if .env already exists
-    EXISTING_PROFILE="medium"
+    EXISTING_PROFILE="heavy"
     EXISTING_MSS="1120"
     EXISTING_HIJACK="true"
     EXISTING_EXIT="true"

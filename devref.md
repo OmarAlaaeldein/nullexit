@@ -32,7 +32,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `warp` | `qmcgaw/gluetun:v3.41.1` | Gluetun WireGuard client → Cloudflare WARP. Owns the network namespace. Strict firewall. |
 | `tailscale` | `tailscale/tailscale:v1.98.4` | Advertises as exit node on the Tailscale mesh. Kernel-space networking (`TS_USERSPACE=false`). |
 | `socks-proxy` | `serjs/go-socks5-proxy:v0.0.4` | RFC 1928 SOCKS5 proxy. Outbound connections go through kernel routing → tun0 → WARP. |
-| `routing-fix` | `alpine:3.20` | Sidecar that maintains routing tables + iptables rules every 5 seconds. |
+| `routing-fix` | `alpine:3.20` | Sidecar that maintains routing tables + iptables rules every 30 seconds. |
 | `adguardhome` | `adguard/adguardhome:v0.107.77` | DNS sinkhole for ads/trackers. Listens on port 5335. Upstream DNS: `127.0.0.1:53` (through WARP). |
 
 ### Port Mappings (on host via Colima)
@@ -57,7 +57,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `toggle.sh` | ~1211 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
 | `setup.sh` | 406 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
 | `docker-compose.yml` | 194 | Service definitions for all 5 containers. |
-| `scripts/routing-fix.sh` | 201 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
+| `scripts/routing-fix.sh` | 201 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 30-second loop. |
 | `post-rules.txt` | 18 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
 
 | `scripts/dns-proxy.py` | 91 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
@@ -167,13 +167,13 @@ To fix this, we use `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0
 Because every mesh device's traffic passes through the `warp` container's network namespace, this namespace serves as the ultimate choke point for network-wide firewall rules.
 
 **Where to Put Rules**
-The right place to add firewall rules is `scripts/routing-fix.sh`. It runs a 5-second loop inside the namespace and already handles re-injecting rules that Gluetun resets on reconnect. **Do not use `post-rules.txt` for dynamic rules**, as Gluetun flushes and resets it upon VPN reconnects.
+The right place to add firewall rules is `scripts/routing-fix.sh`. It runs a 30-second loop inside the namespace and already handles re-injecting rules that Gluetun resets on reconnect. **Do not use `post-rules.txt` for dynamic rules**, as Gluetun flushes and resets it upon VPN reconnects.
 
 **The Dual iptables Backend Constraint (CRITICAL)**
 The container runs two simultaneous iptables backends: `iptables` (for the nftables backend used by Gluetun) and `iptables-legacy` (for Tailscale). Every rule **must** be added to both stacks, or it will silently fail for certain traffic. 
 
 **Avoiding Duplication**
-Because `scripts/routing-fix.sh` runs in a loop, you must always check for a rule's existence with `-C` before appending with `-A`. Otherwise, your rules will duplicate every 5 seconds.
+Because `scripts/routing-fix.sh` runs in a loop, you must always check for a rule's existence with `-C` before appending with `-A`. Otherwise, your rules will duplicate every 30 seconds.
 
 **Per-Device Identification & Filtering**
 Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the `src` IP in the `FORWARD` chain. This is how you identify devices for filtering.
@@ -268,7 +268,7 @@ This section documents issues encountered during development, their status, and 
 ### 9.2 Gluetun Resets nftables FORWARD Rules
 **Symptom:** FORWARD RELATED,ESTABLISHED rule disappears after Gluetun health check.
 
-**Fix:** `scripts/routing-fix.sh` re-adds to both iptables backends every 5 seconds. Legacy backend (policy ACCEPT) acts as safety net.
+**Fix:** `scripts/routing-fix.sh` re-adds to both iptables backends every 30 seconds. Legacy backend (policy ACCEPT) acts as safety net.
 
 ### 9.3 docker compose exec `\r` Injection
 **Fix:** All `docker compose exec` output piped through `tr -d '\r'`.
@@ -419,7 +419,7 @@ Mesh: SSH/ping 100.x.x.x → utun5 → WireGuard → peers (independent of proxy
 1. Change the main table's default route to `default dev tun0`
 2. Change table 200's default route to `default dev tun0`
 3. Add a specific route for the WARP WireGuard endpoint (`162.159.192.1`) through `eth0` via the Docker gateway in table 200, preventing a tunnel loop
-4. Re-assert all routes every 5 seconds (gluetun may reset them on health checks)
+4. Re-assert all routes every 30 seconds (gluetun may reset them on health checks)
 5. Dynamically detect the Docker subnet from `ip route show dev eth0` instead of hardcoding `172.18.0.0/16`
 
 ### 10.6 IPv6 Exit-Node Leak
@@ -565,10 +565,10 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 **Decision:** AdGuard is deployed with the hardcoded credentials `admin / nullexit`. This is perfectly safe behind a NAT on a local macOS laptop. However, if deployed on a cloud host with exposed ports, this becomes a severe security risk. We added a stark warning comment in `docker-compose.yml` to ensure cloud users change this before deployment.
 
-### 10.18 Routing Fix: 5-Second Polling vs Netlink Socket
+### 10.18 Routing Fix: 30-second polling vs Netlink Socket
 
 **Decision:** Instead of building a complex Netlink socket listener (`ip monitor`) to react instantly to iptables and routing flushes from Gluetun, we retained the 5-second `sleep` loop in `scripts/routing-fix.sh`. 
-- **Reasoning:** Building a netlink listener in pure bash on Alpine is incredibly brittle and complex (especially for iptables events). The 5-second polling loop is bulletproof. The only trade-off is a potential 1-4 second stutter if Gluetun reconnects, which was deemed an acceptable edge case for absolute reliability.
+- **Reasoning:** Building a netlink listener in pure bash on Alpine is incredibly brittle and complex (especially for iptables events). The 30-second polling loop is bulletproof. The only trade-off is a potential 1-4 second stutter if Gluetun reconnects, which was deemed an acceptable edge case for absolute reliability.
 
 ### 10.19 Cache Poisoning and URL Rot in scripts/sync-rules.py
 
@@ -598,7 +598,7 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 **Problem:** The Tailscale, WireGuard, and Colima NAT stacks are natively designed for connectionless roaming and will seamlessly survive when the macOS host switches Wi-Fi networks (e.g., roaming from home Wi-Fi to a cellular hotspot). However, the internet completely breaks upon network transition. This occurs because macOS intentionally wipes out all custom DNS settings (`networksetup -setdnsservers`) and reverts to the new network's default DHCP nameserver whenever the active Wi-Fi BSSID changes. Since the Mac is locked to the exit node, its DNS requests are swallowed by WARP and dumped onto the public internet, which cannot route private DHCP IPs. This results in a total DNS failure.
 
-**Solution:** Implementing a silent background "DNS Watcher" daemon (`nullexit-dns-watcher`) in `toggle.sh`. When the gateway starts, it spawns a background polling loop that checks the active Wi-Fi DNS every 5 seconds. If macOS resets the DNS during a network change, the watcher instantly detects the drift and forcefully re-injects `100.100.21.8` via `networksetup`. When the gateway stops, the watcher process is cleanly killed. This allows true, seamless roaming across physical networks without ever dropping the gateway state.
+**Solution:** Implementing a silent background "DNS Watcher" daemon (`nullexit-dns-watcher`) in `toggle.sh`. When the gateway starts, it spawns a background polling loop that checks the active Wi-Fi DNS every 30 seconds. If macOS resets the DNS during a network change, the watcher instantly detects the drift and forcefully re-injects `100.100.21.8` via `networksetup`. When the gateway stops, the watcher process is cleanly killed. This allows true, seamless roaming across physical networks without ever dropping the gateway state.
 
 ### 10.23 The Infinite Recursive Routing Loop (Hotspot Paradox)
 
@@ -651,7 +651,7 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 1. The compiler concurrently fetches four curated threat-intelligence feeds: **Feodo Tracker** (abuse.ch — botnet C2 IPs), **Spamhaus DROP** (IPs allocated to criminal organizations), **Emerging Threats** (Proofpoint — active C2 and scanners), and **CINS** (active brute-force sources).
 2. All entries are normalized via Python's `ipaddress` module. Any IP or CIDR that overlaps with RFC1918 private ranges, loopback, link-local, or the Tailscale CGNAT range (`100.64.0.0/10`) is stripped to prevent accidentally locking users out of their own LAN or mesh.
 3. The cleaned list (16,721 unique IPs/CIDRs) is written as an `ipset restore` file using an **atomic swap pattern**: `create_new → populate → swap with live → destroy_new`. This guarantees the live `block_malicious` ipset is never empty during a reload.
-4. `scripts/routing-fix.sh` watches the file's mtime every 5 seconds. On change it runs `ipset restore` and idempotently re-injects `FORWARD DROP` rules for both `src` and `dst` into both iptables backends (nftables + legacy).
+4. `scripts/routing-fix.sh` watches the file's mtime every 30 seconds. On change it runs `ipset restore` and idempotently re-injects `FORWARD DROP` rules for both `src` and `dst` into both iptables backends (nftables + legacy).
 5. `docker-compose.yml` mounts `adguard/work/userfilters/` into `routing-fix` as `/userfilters:ro` and adds `rule-compiler: service_completed_successfully` to its `depends_on`, eliminating the race condition where routing-fix could start before the file existed.
 
 **Memory cost:** The entire 16,721-entry ipset costs only ~1.6 MiB of kernel memory — negligible in the 600MB VM budget.
@@ -770,7 +770,7 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
 * **`caffeinate <flags>`** creates I/O Kit power assertions via `IOPMAssertionCreateWithName`. It does NOT block forced sleep (lid close, low-battery shutdown, sleep timer firing on a per-set Energy Settings policy). Flags:
   * `-i`  PreventIdleSleep (the only one `toggle.sh` uses; protects against the OS going idle while the user is active — but a clamshell close still hard-puts it to sleep)
   * `-s`  PreventSystemSleep (only honored on AC power; the user may be on battery)
-  * `-u`  DeclareUserActive (resets the idle timer every 5s by default; equivalent to keeping the cursor moving)
+  * `-u`  DeclareUserActive (resets the idle timer every 30s by default; equivalent to keeping the cursor moving)
   * `-d`  PreventDisplaySleep
   * `-m`  PreventDiskIdleSleep
   * There is NO `-l` (lid-block) flag in any modern macOS. Lid close is a kernel-firmware-level event that ignores user-space assertions.
@@ -973,7 +973,7 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
    Better reproduction recipes in priority order:
    * Walk between two real SSIDs via `networksetup -switchtolocation` (or actual physical station movement) — guaranteed to fire the scutil event.
    * Force a DHCP rebind on the same SSID with `sudo ipconfig set en0 DHCP` — triggers `State:/Network/Global/IPv4` to update.
-   * Trust the existing 5-second DNS Watcher inside `toggle.sh` for the DNS path: it re-hijacks DNS automatically. The post-wake watcher adds clear value mostly for tailscale exit-node re-assertion and warp gluetun force-recreate, both of which self-heal within ~30 s anyway.
+   * Trust the existing 30-second DNS Watcher inside `toggle.sh` for the DNS path: it re-hijacks DNS automatically. The post-wake watcher adds clear value mostly for tailscale exit-node re-assertion and warp gluetun force-recreate, both of which self-heal within ~30 s anyway.
 
 ### 10.31 Infinite Egress Routing Loops & Subnet Takeover Paradoxes
 
@@ -994,7 +994,7 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
 
 **Why.** nullexit's core promise is that your IP always appears as Cloudflare. If the WARP tunnel silently dies — due to a UDP NAT timeout, a Cloudflare edge rotation, a Colima VM clock skew causing TLS cert rejection, or any of a dozen other failure modes — the host silently falls back to egressing through the physical ISP. The user sees the gateway as "up" (containers running, Tailscale connected, DNS hijacked) but their real IP is exposed. This is the exact class of failure that Ingo Blechschmidt documented in his chilling 2024 Linux kernel post-mortem: for over two years, LUKS disk encryption on suspend was silently broken because a refactored kernel syscall returned success while doing nothing ([source](https://mathstodon.xyz/@iblech/116769502749142438)). The lesson: **a security mechanism that fails silently is worse than no mechanism at all** — it creates a false sense of safety that prevents the user from taking corrective action.
 
-**Design principle.** The WARP Watcher (`start_warp_watcher()` in `toggle.sh`) is a background daemon that polls `cdn-cgi/trace` every 5 seconds and applies a **statistically calibrated threshold** before triggering any safety response. This threshold distinguishes transient network blips (which self-heal within seconds) from genuine outages (which require intervention). A single `warp=off` reading is meaningless — Docker might be slow, the network might be congested, a container healthcheck might be restarting. But 6 consecutive `off` readings (30 continuous seconds of downtime) has vanishingly low probability of being a false positive: even at an unrealistically high 10% false-positive rate per poll, P(6 consecutive) = 0.1⁶ ≈ 0.0001%. In practice, the per-poll false-positive rate is far lower than 10%, making the real probability astronomically small.
+**Design principle.** The WARP Watcher (`start_warp_watcher()` in `toggle.sh`) is a background daemon that polls `cdn-cgi/trace` every 30 seconds and applies a **statistically calibrated threshold** before triggering any safety response. This threshold distinguishes transient network blips (which self-heal within seconds) from genuine outages (which require intervention). A single `warp=off` reading is meaningless — Docker might be slow, the network might be congested, a container healthcheck might be restarting. But 6 consecutive off readings (30 continuous seconds of downtime) has vanishingly low probability of being a false positive: even at an unrealistically high 10% false-positive rate per poll, P(6 consecutive) = 0.1⁶ ≈ 0.0001%. In practice, the per-poll false-positive rate is far lower than 10%, making the real probability astronomically small.
 
 **What it does.**
 
@@ -1120,7 +1120,7 @@ Add a WireGuard PSK between peer nodes. Adds a symmetric encryption layer that T
 Because every mesh device routes internet-bound traffic through the `warp` container's `FORWARD` chain, they all appear with their stable `100.x.x.x` Tailscale IP as the `src` address. This gives two powerful enforcement surfaces:
 
 ### IP & Port Level (`scripts/routing-fix.sh`)
-Write raw `iptables` rules targeting specific devices. The 5-second idempotent loop auto-survives Gluetun reconnects:
+Write raw `iptables` rules targeting specific devices. The 30-second idempotent loop auto-survives Gluetun reconnects:
 
 ```bash
 # Block a specific device from a target subnet
@@ -1236,7 +1236,7 @@ To add a new country to the blocklist:
 
 **The Solution:**
 1. Added `WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s` (the WireGuard standard to beat standard 30s NAT timeouts) to keep the UDP tunnel permanently pinned open through the router.
-2. Injected a **Fail-Closed Kill-Switch** into `routing-fix.sh`: A 5-second loop now actively verifies tunnel health by running `curl` over `tun0` to Cloudflare's trace endpoint. If it fails 3 consecutive times, it immediately rewrites the default route to `blackhole`, severing all traffic instead of letting it leak through `eth0`.
+2. Injected a **Fail-Closed Kill-Switch** into `routing-fix.sh`: A 30-second loop now actively verifies tunnel health by running `curl` over `tun0` to Cloudflare's trace endpoint. If it fails 3 consecutive times, it immediately rewrites the default route to `blackhole`, severing all traffic instead of letting it leak through `eth0`.
 3. Added a listener in `watcher.sh` that detects this fail-closed event and instantly pushes a native macOS UI notification to the desktop, alerting the user to manually intervene.
 
 > [!NOTE]

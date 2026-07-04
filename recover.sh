@@ -307,7 +307,7 @@ if [ "$POST_WAKE" = "true" ]; then
   # its UDP NAT binding to Cloudflare's edge (162.159.192.1:2408) silently dies
   # during a Wi-Fi roam. gluetun's healthcheck may catch it within ~30s, but if
   # not, a force-recreate forces the tun device to re-bind instantly.
-  WARP_STATE=$(docker inspect --format '{{.State.Health.Status}}' nullexit-warp-1 2>> output.log || echo "missing")
+  WARP_STATE=$(docker inspect --format '{{.State.Health.Status}}' warp 2>> output.log || echo "missing")
   case "$WARP_STATE" in
     healthy)
       ok "warp container is healthy (no recreate needed)"
@@ -319,7 +319,7 @@ if [ "$POST_WAKE" = "true" ]; then
       warn "warp container health = '$WARP_STATE' — force-recreating to nudge UDP rebind"
       docker compose up -d --force-recreate warp 2>> output.log || warn "force-recreate failed"
       sleep 5
-      NEW_STATE=$(docker inspect --format '{{.State.Health.Status}}' nullexit-warp-1 2>> output.log || echo "missing")
+      NEW_STATE=$(docker inspect --format '{{.State.Health.Status}}' warp 2>> output.log || echo "missing")
       ok "warp container health after recreate: $NEW_STATE"
       ;;
   esac

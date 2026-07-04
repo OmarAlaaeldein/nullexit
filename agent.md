@@ -19,7 +19,7 @@
 | 4 | `clear_gateway_active_marker()` | L92–95 | Remove gateway active marker + TUNNEL_FAILED_CLOSED.marker |
 | 5 | `start_sleep_prevention()` | L108–154 | Start `caffeinate` in background with shutdown trap to revert DNS |
 | 6 | `stop_sleep_prevention()` | L157–167 | Stop caffeinate process via PID file |
-| 7 | `start_dns_watcher()` | L173–191 | Background loop to re-hijack DNS every 5s for Wi-Fi roaming |
+| 7 | `start_dns_watcher()` | L173–191 | Background loop to re-hijack DNS every 30s for Wi-Fi roaming |
 | 8 | `stop_dns_watcher()` | L193–203 | Stop DNS watcher via PID file |
 | 9 | `start_warp_watcher()` | L220–279 | Background WARP liveness monitor; triggers recover.sh after N consecutive failures |
 | 10 | `stop_warp_watcher()` | L281–291 | Stop WARP watcher via PID file |
@@ -138,7 +138,7 @@
 | 2 | `run_gui_cmd()` | L57 | ⚠️ macOS code — uses `stat -f '%Su' /dev/console`, DEAD CODE on Linux |
 | 3 | `start_sleep_prevention()` | L74 | Uses `systemd-inhibit` (Linux) to block sleep |
 | 4 | `stop_sleep_prevention()` | L116 | Kills sleep prevention process via PID file |
-| 5 | `start_dns_watcher()` | L130 | Background daemon polling DNS every 5s, re-hijacks if changed |
+| 5 | `start_dns_watcher()` | L130 | Background daemon polling DNS every 30s, re-hijacks if changed |
 | 6 | `stop_dns_watcher()` | L149 | Kills DNS watcher process via PID file |
 | 7 | `cleanup_handler()` | L162 | Trap handler for ERR/INT/TERM/HUP — restores DNS, kills bg processes |
 | 8 | `disconnect_tailscale_host()` | L273 | Disconnects host Tailscale from mesh |
