@@ -102,7 +102,7 @@ services:
         max-file: "3"
 
   socks-proxy:
-    image: python:3.13-alpine3.20
+    image: serjs/go-socks5-proxy:latest
     container_name: socks-proxy
     network_mode: service:warp
     depends_on:
@@ -110,16 +110,10 @@ services:
         condition: service_healthy
     environment:
       - TZ=America/New_York
-    volumes:
-      - ./scripts/socks5-proxy.py:/socks5-proxy.py:ro
-    command: python3 /socks5-proxy.py --bind 0.0.0.0 --port 1080
+      - PROXY_USER=
+      - PROXY_PASSWORD=
+      - REQUIRE_AUTH=false
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c 'import socket,struct; s=socket.create_connection((\"127.0.0.1\",1080), timeout=3); s.send(bytes([5,1,0])); r=s.recv(2); s.close(); exit(0 if r==bytes([5,0]) else 1)'"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
-      start_period: 5s
     logging:
       driver: "json-file"
       options:

@@ -59,7 +59,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `docker-compose.yml` | 194 | Service definitions for all 5 containers. |
 | `scripts/routing-fix.sh` | 201 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 5-second loop. |
 | `post-rules.txt` | 18 | Gluetun iptables rules loaded at container start. FORWARD accept for tailscale0, NAT MASQUERADE on tun0, DNS redirect to port 5335, IPv6 drop, TCP MSS clamping. |
-| `scripts/socks5-proxy.py` | 198 | SOCKS5 proxy (Python). Handles RFC 1928 handshake, bidirectional forwarding with `select.select()`. |
+
 | `scripts/dns-proxy.py` | 91 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
 | `scripts/sync-rules.py` | 668 | Unified threat compiler. **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Memory profiles: `light`/`medium`/`heavy`. 24-hour file cache for both pipelines. |
 | **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`scripts/sync-rules.py`. See README §6.** |
@@ -373,6 +373,10 @@ These bugs and edge cases were discovered and resolved during development.
 - **dnsmasq** tries UDP first to reach the upstream (`127.0.0.1#5354`), but Colima's SSH tunnel only forwards TCP. With a single upstream server, dnsmasq doesn't fall back to TCP even with `--timeout=1`.
 
 **Solution:** Replaced both with a **Python DNS proxy** (`scripts/dns-proxy.py`, ~25 lines) that properly handles the DNS-over-TCP wire format: reads a UDP query from the host, prepends the 2-byte length prefix, sends it over TCP to AdGuard, strips the prefix from the response, and sends it back over UDP.
+
+*Architectural Note: Why is the DNS proxy in Python while the SOCKS5 proxy was moved to a compiled Go Docker container?*
+The SOCKS5 proxy handles heavy data streaming (e.g., video, downloads). Python introduces massive CPU/battery overhead for raw socket streaming, making a compiled Go image (`serjs/go-socks5-proxy`) the only performant choice. 
+Conversely, the DNS proxy only handles intermittent UDP queries (a few bytes per minute). The Python overhead for this is effectively 0.001 Watts. We deliberately kept `dns-proxy.py` in Python because it runs natively on the macOS/Linux host—rewriting it in Go would force users to install a Go compiler (`brew install go`) on their host machine for zero noticeable battery gain.
 
 ### 10.2 Exit Node Routing Conflict & The SOCKS5 Failover
 
@@ -1299,3 +1303,16 @@ If you want to truly know how many Watt-hours or mAh your background daemons (`r
 4. Turn the gateway off and repeat the test for another hour.
 
 The delta in mAh drained between the two tests is the true, exact cost of running the software. When optimizing polling loops (e.g., changing `sleep 5` to `sleep 30`), this is the only reliable way to measure the actual battery life returned to the user.
+
+---
+
+## 14. Architectural Limitations: Host Lockdown Mode
+
+A common privacy feature request is a "Host Lockdown Mode" (Mode 3): A mode where the Docker exit node remains perfectly functional for remote devices, but the host machine itself is completely blocked from accessing the internet (to prevent even encrypted host traffic from leaking metadata).
+
+**Why this is impossible on macOS:**
+On Linux (e.g., a Raspberry Pi), Docker runs natively. The host's traffic traverses the `OUTPUT` iptables chain, while Docker traffic traverses the `FORWARD` chain. We could easily drop all `OUTPUT` traffic to kill the host's internet, and Docker would continue routing traffic perfectly.
+
+However, Docker on macOS runs inside a Linux Virtual Machine (via `qemu` or Apple `Virtualization.framework`). This VM runs as a standard macOS user-space application. If you configure the macOS firewall (`pf`) to drop all host outbound traffic, it will indiscriminately drop the VM application's traffic as well, instantly killing the Cloudflare WARP tunnel and the exit node. 
+
+Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs, allow Tailscale DERP IPs, but block everything else" is highly fragile and heavily discouraged. Since the current `toggle.sh` default mode already fully encrypts the host's traffic via the WARP tunnel, the host is already protected from ISP leaks.
