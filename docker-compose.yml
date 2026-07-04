@@ -167,6 +167,7 @@ services:
       - ./adguard/work:/opt/adguardhome/work
       - ./adguard/conf:/opt/adguardhome/conf
     restart: unless-stopped
+    stop_grace_period: 2s
     logging:
       driver: "json-file"
       options:

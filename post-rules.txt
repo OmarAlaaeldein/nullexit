@@ -16,3 +16,7 @@ iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 53 -j REDIRECT --to-port 53
 
 # Block IPv6 exit-node traffic to prevent leakage (Gluetun/WARP is IPv4-only)
 ip6tables -A FORWARD -i tailscale0 -j DROP
+
+# Block DNS-over-TLS (Port 853) to force Android Private DNS to fallback to Port 53
+iptables -A FORWARD -i tailscale0 -p tcp --dport 853 -j REJECT --reject-with tcp-reset
+iptables -A FORWARD -i tailscale0 -p udp --dport 853 -j REJECT

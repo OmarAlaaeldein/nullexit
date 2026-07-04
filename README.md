@@ -60,8 +60,17 @@ curl -s https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(warp|ip|colo)='
 # expect: warp=on
 ```
 
-### Zero-Config Ad-Blocking
-Enable **MagicDNS** in the Tailscale Admin DNS tab. Traffic through the exit node is automatically intercepted at port 53 and redirected to AdGuard — no manual DNS configuration needed on client devices.
+### 4. Enable AdGuard (DNS Filtering)
+
+To ensure client devices correctly route DNS through the AdGuard container (and do not bypass it via `tailscaled`'s internal resolver), you **must** configure your Tailscale Admin Console:
+1. Go to the **DNS** tab in the [Tailscale Admin Console](https://login.tailscale.com/admin/dns).
+2. Enable **MagicDNS**.
+3. Under **Nameservers**, add a **Custom** nameserver and enter the gateway's Tailscale IPv4 address (run `tailscale ip -4` on the gateway machine to find it, e.g., `100.x.x.x`).
+4. Click the **three dots (...)** next to the nameserver you just added and enable **"Use with exit node"**.
+5. Delete any other Global Nameservers (like Google or Cloudflare).
+6. Toggle ON **Override local DNS**.
+
+Traffic will now be correctly forced into the AdGuard sinkhole, and mobile devices will be blocked from bypassing it via encrypted DNS (DoH/DoT).
 
 > [!WARNING]
 > **Disable "Private DNS" on mobile devices.** Android's Private DNS (DoT/DoH) bypasses port 53 interception entirely. Go to `Settings → Connections → More connection settings → Private DNS → Off`.
