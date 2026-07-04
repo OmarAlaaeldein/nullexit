@@ -5,7 +5,8 @@
 > **Note (July 2026):** `sync-rules.py` and `logger.py` have been fully ported to Go (`scripts/rule-compiler/main.go` and `scripts/logger/main.go`) to dramatically improve performance and reduce container footprint via multi-stage Alpine builds. The analysis below reflects their previous Python states.
 
 ## 🛑 Important Agent Instruction
-**Always run `bash scripts/crypto.sh --sign` after making any modifications to the core bash scripts.** This is required to update the cryptographic HMAC-SHA256 signatures; otherwise, the startup integrity checks will fail and block execution.
+- **Always run `bash scripts/crypto.sh --sign` after making any modifications to the core bash scripts.** This is required to update the cryptographic HMAC-SHA256 signatures; otherwise, the startup integrity checks will fail and block execution.
+- **Always run `git diff` and print the changes to the user *before* requesting or executing any git commit command.** The user must be shown the diff so they can review and understand the changes. Based on this diff, formulate a highly precise, detailed, and descriptive commit message (explaining exactly what was changed and why) rather than a generic summary, and present it to the user alongside the diff.
 
 ---
 
@@ -61,6 +62,7 @@
 | WARP endpoints | `162.159.192.1`, `162.159.193.1` | L535-544 |
 | DNS fallback | `1.1.1.1` | L592 |
 | DNS search domain | `ts.net` | L794 |
+| `LOCK_FILE` | `/tmp/nullexit-toggle.lock` | L62 |
 
 ---
 
