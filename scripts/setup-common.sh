@@ -182,12 +182,23 @@ ok "WARP keys extracted."
 
 # ─── 5. Tailscale auth key ───────────────────────────────────────────────────
 step "Tailscale authentication"
-echo ""
-echo "  Generate a key at: https://login.tailscale.com/admin/settings/keys"
-echo "  → 'Generate auth key' → enable Reusable if you plan to re-run setup"
-echo ""
-read -rp "  Paste your Tailscale auth key: " TS_AUTHKEY
-echo ""
+
+if [[ -f ".env" ]]; then
+    EXISTING_TS_KEY=$(grep -E "^TS_AUTHKEY=" .env | cut -d'=' -f2- | tr -d '"'\')
+    if [[ -n "$EXISTING_TS_KEY" ]]; then
+        TS_AUTHKEY="$EXISTING_TS_KEY"
+        warn "Found existing TS_AUTHKEY in .env. Skipping prompt."
+    fi
+fi
+
+if [[ -z "$TS_AUTHKEY" ]]; then
+    echo ""
+    echo "  Generate a key at: https://login.tailscale.com/admin/settings/keys"
+    echo "  → 'Generate auth key' → enable Reusable if you plan to re-run setup"
+    echo ""
+    read -rp "  Paste your Tailscale auth key: " TS_AUTHKEY
+    echo ""
+fi
 
 [[ -z "$TS_AUTHKEY" ]] && die "Tailscale auth key is required."
 [[ "$TS_AUTHKEY" != tskey-auth-* ]] && warn "Key doesn't look like a Tailscale auth key — proceeding anyway."
@@ -219,19 +230,40 @@ else
 fi
 
 if [[ "${WRITE_ENV:-0}" == "1" ]]; then
+    # Preserve existing configuration flags if .env already exists
+    EXISTING_PROFILE="medium"
+    EXISTING_MSS="1120"
+    EXISTING_HIJACK="true"
+    EXISTING_EXIT="true"
+    EXISTING_THRESH="6"
+    EXISTING_PROBE="true"
+    EXISTING_KILL="false"
+    
+    if [[ -f ".env" ]]; then
+        [[ -n "$(grep -E "^GATEWAY_RULE_PROFILE=" .env)" ]] && EXISTING_PROFILE=$(grep -E "^GATEWAY_RULE_PROFILE=" .env | cut -d'=' -f2-)
+        [[ -n "$(grep -E "^GATEWAY_MSS=" .env)" ]] && EXISTING_MSS=$(grep -E "^GATEWAY_MSS=" .env | cut -d'=' -f2-)
+        [[ -n "$(grep -E "^GATEWAY_HIJACK_HOST=" .env)" ]] && EXISTING_HIJACK=$(grep -E "^GATEWAY_HIJACK_HOST=" .env | cut -d'=' -f2-)
+        [[ -n "$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env)" ]] && EXISTING_EXIT=$(grep -E "^GATEWAY_USE_EXIT_NODE=" .env | cut -d'=' -f2-)
+        [[ -n "$(grep -E "^WARP_FAIL_THRESHOLD=" .env)" ]] && EXISTING_THRESH=$(grep -E "^WARP_FAIL_THRESHOLD=" .env | cut -d'=' -f2-)
+        [[ -n "$(grep -E "^HOST_LEAK_PROBE=" .env)" ]] && EXISTING_PROBE=$(grep -E "^HOST_LEAK_PROBE=" .env | cut -d'=' -f2-)
+        [[ -n "$(grep -E "^KILL_SWITCH=" .env)" ]] && EXISTING_KILL=$(grep -E "^KILL_SWITCH=" .env | cut -d'=' -f2-)
+    fi
+
     cat > .env <<EOF
 WIREGUARD_PRIVATE_KEY=${PRIVATE_KEY}
 WIREGUARD_PUBLIC_KEY=${PUBLIC_KEY}
 WIREGUARD_ADDRESSES=${ADDRESSES}
 TS_AUTHKEY=${TS_AUTHKEY}
-GATEWAY_RULE_PROFILE=medium
+GATEWAY_RULE_PROFILE=${EXISTING_PROFILE}
 # Safe MSS for double-tunneled traffic (Tailscale + WARP). Change to 1180 if you experience slow speeds and have a healthy path.
-GATEWAY_USE_EXIT_NODE=true
-GATEWAY_MSS=1120
-WARP_FAIL_THRESHOLD=6
+GATEWAY_MSS=${EXISTING_MSS}
+# Set to false to run as a 'Headless Server' (Docker acts as an exit node, but the host Mac/Linux's own internet is NOT hijacked).
+GATEWAY_HIJACK_HOST=${EXISTING_HIJACK}
+GATEWAY_USE_EXIT_NODE=${EXISTING_EXIT}
+WARP_FAIL_THRESHOLD=${EXISTING_THRESH}
 # Set to false to disable the 300ms host-egress leak prober (scripts/host-leak-probe.sh).
-HOST_LEAK_PROBE=true
-KILL_SWITCH=false
+HOST_LEAK_PROBE=${EXISTING_PROBE}
+KILL_SWITCH=${EXISTING_KILL}
 EOF
     ok ".env written."
 fi
