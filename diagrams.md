@@ -33,7 +33,7 @@ graph TB
                 TS["tailscale container\nAdvertises exit node\ntailscale0 interface"]
                 SOCKS["tailscale\nSOCKS5\nport 1080"]
                 ADGUARD["adguardhome\nDNS sinkhole\nport 5335"]
-                ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Kill-Switch\n(curl healthcheck loop)"]
+                ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Go Logger\n(writes blocked.log)"]
             end
         end
 
@@ -61,6 +61,9 @@ graph TB
     WARPWATCH -->|"docker exec warp wget cdn-cgi/trace"| GLUETUN
     LEAKPROBE -->|"curl cdn-cgi/trace (HOST NIC)"| CF
     DNSWATCHER -->|"networksetup -getdnsservers"| HOSTDNS
+
+    %% Logging
+    ROUTINGFIX -->|"writes"| BLOCKEDLOG["blocked.log\n(Host-side)"]
 
     %% Recovery triggers
     WARPWATCH -->|"≥6 consecutive warp=off"| RECOVER
