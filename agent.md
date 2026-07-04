@@ -8,6 +8,14 @@
 - **Always run `bash scripts/crypto.sh --sign` after making any modifications to the core bash scripts.** This is required to update the cryptographic HMAC-SHA256 signatures; otherwise, the startup integrity checks will fail and block execution.
 - **Always run `git diff` and print the changes to the user *before* requesting or executing any git commit command.** The user must be shown the diff so they can review and understand the changes. Based on this diff, formulate a highly precise, detailed, and descriptive commit message (explaining exactly what was changed and why) rather than a generic summary, and present it to the user alongside the diff.
 
+## 🔬 How to Verify Gateway is Working
+Whenever modifications are made to the gateway scripts, routing, or containers, execute these verification checks in order:
+1. **Container Health:** Run `docker compose ps` to ensure all containers (`warp`, `adguardhome`, `routing-fix`, `tailscale`) are `running` and `healthy`.
+2. **DNS Hijacking Status:** Run `networksetup -getdnsservers "Wi-Fi"` (or appropriate network service) and ensure it is set exclusively to the gateway's Tailscale static IP (typically `100.100.21.8`).
+3. **DNS Query Interception:** Run `dig @100.100.21.8 google.com` (using the gateway static IP from `ADGUARD_IP.txt`) to ensure AdGuard Home is active, intercepting, and resolving queries.
+4. **Double-Tunnel Egress:** Run `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp` to verify the egress is routed through Cloudflare WARP (`warp=on`).
+5. **Host Leak Monitoring:** Run `tail -n 30 output.log` and verify the background watchers and host leak prober are reporting healthy status without `LEAK` warnings.
+
 ---
 
 ## Part 1: macOS Main Scripts
