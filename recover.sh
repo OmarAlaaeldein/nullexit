@@ -53,7 +53,7 @@ rm -f "$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker"
 source "$SCRIPT_DIR/scripts/common.sh"
 
 # Always add Homebrew path
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+setup_standard_path
 
 echo ""
 if [ "$POST_WAKE" = "true" ]; then
@@ -134,39 +134,7 @@ if [ "$POST_WAKE" = "true" ]; then
   fi
 else
   step "Disconnecting host Tailscale from mesh"
-  if command -v tailscale >> output.log 2>&1; then
-    # Check if actually connected first (with timeout — tailscaled could be wedged)
-    status_ok=false
-    if run_with_timeout 5 tailscale status >> output.log 2>&1; then
-      status_ok=true
-    else
-      status_exit=$?
-      # If it was a quick exit code 1 (disconnected), it is still reachable
-      if [ "$status_exit" -ne 143 ] && [ -S /var/run/tailscaled.socket ]; then
-        status_ok=true
-      fi
-    fi
-
-    if [ "$status_ok" = "false" ]; then
-      restart_tailscaled_daemon
-    fi
-
-    # Also explicitly reset any exit-node so it doesn't linger.
-    if run_with_timeout 10 tailscale up --reset --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
-      ok "Exit-node preference cleared"
-    else
-      warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
-    fi
-    ts_args=""
-    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
-    if run_with_timeout 10 tailscale down $ts_args >> output.log 2>&1; then
-      ok "Tailscale disconnected"
-    else
-      warn "tailscale down didn't respond"
-    fi
-  else
-    warn "tailscale CLI not found — skipping"
-  fi
+  disconnect_tailscale_host "tailscale"
 fi
 
 # ─── 2. Reset DNS to default on ALL network services (default) / Re-hijack gateway DNS (post-wake) ─
@@ -372,7 +340,7 @@ fi
 # ─── 6b. Stopping sleep prevention (caffeinate) — default only ──────────────
 if [ "$POST_WAKE" = "false" ]; then
   step "Stopping sleep prevention"
-  stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
+  stop_pidfile_daemon "$PID_CAFFEINATE" "system sleep prevention"
 else
   step "Sleep prevention: leaving untouched (caffeinate already re-acquired by parent shell)"
 fi
@@ -380,7 +348,7 @@ fi
 # ─── 6c. Stopping DNS Watcher — default only ────────────────────────────────
 if [ "$POST_WAKE" = "false" ]; then
   step "Stopping DNS Watcher"
-  stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
+  stop_pidfile_daemon "$PID_DNS_WATCHER" "background DNS Watcher"
 
   # ─── 6d. Stopping Host Leak Probe — default only ─────────────────────────
   step "Stopping Host Leak Probe"

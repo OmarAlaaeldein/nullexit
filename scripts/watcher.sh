@@ -32,15 +32,16 @@
 # AND the parent's final `wait` would propagate a non-zero child exit and kill
 # the entire watcher. Every error path is already wrapped in `|| true` /
 # `2>/dev/null` fallbacks.
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common.sh"
+setup_standard_path
 
 LOG="/tmp/nullexit-watcher.log"
 # Resolve our own directory; recover.sh lives one level up at the repo root.
 # This makes the daemon install-agnostic — no need to template the path
 # in launchd, no need to keep a deploy-specific hardcoded location in sync.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RECOVER="$SCRIPT_DIR/../recover.sh"
-MARKER="/tmp/nullexit-gateway-active.marker"
+MARKER="$MARKER_FILE"
 DEBOUNCE_FILE="/tmp/nullexit-watcher.last-recovery"
 DEBOUNCE_SECONDS="${NULLEXIT_DEBOUNCE_SECONDS:-10}"
 

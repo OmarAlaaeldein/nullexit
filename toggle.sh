@@ -108,7 +108,7 @@ clear_gateway_active_marker() {
 # definitions so bash resolves the call at parse time.
 clear_gateway_active_marker
 
-PID_FILE="/tmp/nullexit-caffeinate.pid"
+PID_FILE="$PID_CAFFEINATE"
 
 # Start macOS caffeinate to prevent sleep while gateway is running
 start_sleep_prevention() {
@@ -161,7 +161,7 @@ start_sleep_prevention() {
 
 
 
-DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
+DNS_WATCHER_PID_FILE="$PID_DNS_WATCHER"
 WARP_WATCHER_PID_FILE="/tmp/nullexit-warp-watcher.pid"
 HOST_LEAK_PROBE_PID_FILE="/tmp/nullexit-host-leak-probe.pid"
 
@@ -374,7 +374,7 @@ trap 'cleanup_handler HUP' HUP
 # No credential caching loop is needed.
 
 # Add Homebrew and standard paths
-export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+setup_standard_path
 
 # Check for local DNS proxy tools (used when tailnet data plane is unavailable)
 # Uses a Python DNS proxy (handles TCP wire format correctly).
@@ -428,19 +428,6 @@ fi
 # Defined early (before the if/else branches and referenced by cleanup_handler's
 # ERR trap) so that any failure before the main logic can still tear down Tailscale.
 
-disconnect_tailscale_host() {
-  if [ -n "$TS_BIN" ]; then
-    echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
-    local ts_args=""
-    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
-    if ! run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1; then
-      restart_tailscaled_daemon
-      # Retry once
-      echo "Retrying Tailscale disconnection..."
-      run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1 || true
-    fi
-  fi
-}
 
 
 ACTIVE_SERVICE=$(get_active_service)
@@ -747,8 +734,8 @@ reset_dns
   # Using '-an' avoids hanging on DNS reverse resolution when the network state is in transition.
   ARP_COUNT=$(arp -an 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
   if [ "$ARP_COUNT" -gt 15 ]; then
-    echo -e "  \033[1;33m[!] WARNING: High ARP activity detected ($ARP_COUNT devices in cache).\033[0m"
-    echo -e "  \033[1;33m[!] This Wi-Fi network may be heavily congested or actively scanned (e.g., arp-scan).\033[0m"
+    warn "High ARP activity detected ($ARP_COUNT devices in cache)."
+    warn "This Wi-Fi network may be heavily congested or actively scanned (e.g., arp-scan)."
     echo -e "  [✓] Your traffic remains fully encrypted and invisible.\n"
   else
     echo -e "  [✓] Local network looks quiet ($ARP_COUNT devices). No aggressive scanning detected.\n"
@@ -1029,9 +1016,9 @@ else
     # If the daemon was unresponsive or socket check failed, attempt auto-restart
     if [ "$daemon_ready" != "true" ]; then
       if [ "$status_exit" -eq 143 ]; then
-        echo -e "\033[0;33m[!] tailscaled daemon is wedged/unresponsive. Restarting it...\033[0m"
+        warn "tailscaled daemon is wedged/unresponsive. Restarting it..."
       else
-        echo -e "\033[0;33m[!] tailscaled daemon is not running. Attempting to start it...\033[0m"
+        warn "tailscaled daemon is not running. Attempting to start it..."
       fi
       restart_tailscaled_daemon
       
@@ -1050,7 +1037,7 @@ else
         HOST_ON_MESH=true
         echo "Host is on Tailscale mesh."
       else
-        echo -e "\033[0;33m[!] tailscale up failed even though the daemon is running.\033[0m"
+        warn "tailscale up failed even though the daemon is running."
         echo "  This usually means the host hasn't authenticated with your tailnet yet."
         echo "  Run this command in a terminal to authenticate:"
         echo ""
@@ -1059,7 +1046,7 @@ else
         echo "  A browser will open. Log in to your Tailscale account, then re-run toggle.sh."
       fi
     else
-      echo -e "\033[0;31m[!] tailscaled could NOT be started automatically.\033[0m"
+      fail "tailscaled could NOT be started automatically."
       echo "  Run this in a terminal to start and authenticate Tailscale:"
       echo ""
       echo "      sudo brew services start tailscale"
@@ -1133,7 +1120,7 @@ else
     fi
     
     if [ "$SKIP_EXIT_NODE" = "true" ]; then
-      echo -e "\n\033[0;33m[!] Pre-flight checks failed — EXIT NODE + DNS HIJACK SKIPPED.\033[0m"
+      warn "Pre-flight checks failed — EXIT NODE + DNS HIJACK SKIPPED."
       echo "  Host stays on Tailscale mesh but your internet routes through your normal connection."
       echo "  Troubleshoot with:"
       echo "    docker compose logs warp | tail -20"
