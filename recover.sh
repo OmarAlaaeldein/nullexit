@@ -93,6 +93,45 @@ if [ "$POST_WAKE" = "false" ]; then
   trap 'kill $SUDO_KEEPER_PID 2>/dev/null' EXIT
 fi
 
+# ─── Resolve physical default interface and gateway upfront ─────────────────
+PHYSICAL_IFACE=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: (Wi-Fi|Ethernet)/{getline; print $2; exit}')
+[ -z "$PHYSICAL_IFACE" ] && PHYSICAL_IFACE="en0"
+
+if [ "$POST_WAKE" = "true" ]; then
+  step "Waiting for physical interface $PHYSICAL_IFACE DHCP lease to settle..."
+  settled=false
+  for attempt in {1..20}; do
+    PHYSICAL_GW=$(ipconfig getpacket "$PHYSICAL_IFACE" 2>> output.log | awk -F'[{}]' '/router /{print $2}')
+    local_ip=$(ifconfig "$PHYSICAL_IFACE" 2>/dev/null | awk '/inet /{print $2}')
+    
+    if [ -n "$PHYSICAL_GW" ] && [[ "$PHYSICAL_GW" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
+       [ -n "$local_ip" ] && [[ "$local_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
+       [[ "$local_ip" != "169.254."* ]]; then
+      ok "DHCP lease settled. Interface IP: $local_ip, Router IP: $PHYSICAL_GW"
+      settled=true
+      break
+    fi
+    
+    if [ "$attempt" -gt 6 ] && [ -n "$local_ip" ] && [[ "$local_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "$local_ip" != "169.254."* ]]; then
+      fallback_gw=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
+      if [ -n "$fallback_gw" ] && [[ "$fallback_gw" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        PHYSICAL_GW="$fallback_gw"
+      fi
+      ok "Static/settled network detected. Interface IP: $local_ip, Gateway IP: ${PHYSICAL_GW:-unknown}"
+      settled=true
+      break
+    fi
+    
+    sleep 0.5
+  done
+  if [ "$settled" = "false" ]; then
+    warn "DHCP settlement timed out or no active link. Proceeding anyway."
+  fi
+else
+  # Quick resolution in non-post-wake mode (non-blocking)
+  PHYSICAL_GW=$(ipconfig getpacket "$PHYSICAL_IFACE" 2>> output.log | awk -F'[{}]' '/router /{print $2}')
+fi
+
 # ─── 1. Disconnect host Tailscale (default) / Refresh exit-node (post-wake) ─
 
 if [ "$POST_WAKE" = "true" ]; then
@@ -223,9 +262,7 @@ step "Flushing stale routing table entries"
 # Resolve physical default gateway IP before flushing
 # We cannot trust `route get default` here because Tailscale may have already hijacked
 # the default route to utunX. We must read the actual DHCP router assignment from the hardware.
-PHYSICAL_IFACE=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: (Wi-Fi|Ethernet)/{getline; print $2; exit}')
-[ -z "$PHYSICAL_IFACE" ] && PHYSICAL_IFACE="en0"
-PHYSICAL_GW=$(ipconfig getpacket "$PHYSICAL_IFACE" 2>> output.log | awk -F'[{}]' '/router /{print $2}')
+# PHYSICAL_IFACE and PHYSICAL_GW resolved upfront
 
 # Instead of full route -n flush (which destroys macOS loopback/multicast and wedges the OS until reboot),
 # we cleanly delete the Tailscale overrides and Cloudflare WARP bypass routes in ALL modes.
