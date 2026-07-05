@@ -49,7 +49,6 @@ metrics.spotify.com
 metrika.yandex.ru
 omaze.com
 pagead2.googlesyndication.com
-redirector.gvt1.com
 securepubads.g.doubleclick.net
 static.doubleclick.net
 stats.g.doubleclick.net
