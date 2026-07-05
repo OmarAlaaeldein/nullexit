@@ -170,7 +170,7 @@ run_recover() {
       echo "n.add State:/Network/Global/IPv6"
       echo "n.watch"
       while true; do sleep 86400; done
-    ) | scutil 2>/dev/null \
+    ) | script -q /dev/null scutil 2>/dev/null \
       | while IFS= read -r line; do
           case "$line" in
             *n.state*|*SCEventUpdate*) run_recover "NET: $(echo "$line" | head -c 100)" ;;
