@@ -9,6 +9,17 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# ─── Constants & Environment ───────────────────────────────────────────────────
+export MARKER_FILE="/tmp/nullexit-gateway-active.marker"
+export PID_CAFFEINATE="/tmp/nullexit-caffeinate.pid"
+export PID_DNS_WATCHER="/tmp/nullexit-dns-watcher.pid"
+export DEFAULT_WARP_ENDPOINT_1="162.159.192.1"
+export DEFAULT_WARP_ENDPOINT_2="162.159.193.1"
+
+setup_standard_path() {
+  export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+}
+
 step() { echo -e "\n${BLUE}${BOLD}▶ $*${NC}"; }
 ok()   { echo -e "  ${GREEN}✓ $*${NC}"; }
 warn() { echo -e "  ${YELLOW}⚠ $*${NC}"; }
@@ -139,8 +150,8 @@ get_en0_service() {
   fi
 }
 
-get_warp_endpoint_1() { read_env_var "WARP_ENDPOINT_1" ".env" | grep -Eo '^[0-9\.]+' || echo "162.159.192.1"; }
-get_warp_endpoint_2() { read_env_var "WARP_ENDPOINT_2" ".env" | grep -Eo '^[0-9\.]+' || echo "162.159.193.1"; }
+get_warp_endpoint_1() { read_env_var "WARP_ENDPOINT_1" ".env" | grep -Eo '^[0-9\.]+' || echo "$DEFAULT_WARP_ENDPOINT_1"; }
+get_warp_endpoint_2() { read_env_var "WARP_ENDPOINT_2" ".env" | grep -Eo '^[0-9\.]+' || echo "$DEFAULT_WARP_ENDPOINT_2"; }
 
 restart_tailscaled_daemon() {
   echo "  [Tailscale Recovery] tailscaled daemon appears to be wedged/unresponsive."
@@ -154,6 +165,46 @@ restart_tailscaled_daemon() {
     echo "  [Tailscale Recovery] WARNING: Failed to restart tailscaled. Manual intervention may be needed."
   fi
   sleep 3
+}
+
+disconnect_tailscale_host() {
+  local ts_bin="${1:-tailscale}"
+  if command -v "$ts_bin" >> output.log 2>&1; then
+    echo "  Disconnecting host Tailscale from mesh..."
+    
+    # Check if actually connected first (with timeout — tailscaled could be wedged)
+    local status_ok=false
+    if run_with_timeout 5 "$ts_bin" status >> output.log 2>&1; then
+      status_ok=true
+    else
+      local status_exit=$?
+      # If it was a quick exit code 1 (disconnected), it is still reachable
+      if [ "$status_exit" -ne 143 ] && [ -S /var/run/tailscaled.socket ]; then
+        status_ok=true
+      fi
+    fi
+
+    if [ "$status_ok" = "false" ]; then
+      restart_tailscaled_daemon
+    fi
+
+    # Explicitly reset any exit-node so it doesn't linger.
+    if run_with_timeout 10 "$ts_bin" up --reset --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
+      echo "  [✓] Exit-node preference cleared."
+    else
+      echo "  [!] tailscale up --reset didn't respond (tailscaled may be wedged)"
+    fi
+    
+    local ts_args=""
+    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
+    if run_with_timeout 10 "$ts_bin" down $ts_args >> output.log 2>&1; then
+      echo "  [✓] Tailscale disconnected."
+    else
+      echo "  [!] tailscale down didn't respond"
+    fi
+  else
+    echo "  [!] tailscale CLI not found — skipping"
+  fi
 }
 
 stop_pidfile_daemon() {

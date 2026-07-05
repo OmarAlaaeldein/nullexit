@@ -266,7 +266,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 **Purpose:** Runs INSIDE warp container. Maintains routing table 200, FORWARD rules, country blocking, IP blocklists, tunnel health checks.
 
 **Duplicated logic:**
-- WARP_ENDPOINT `162.159.192.1` hardcoded (also in docker-compose.yml)
+- (Fixed) WARP_ENDPOINT defaults are now centralized in common.sh
 - WARP health check via cdn-cgi/trace (another instance)
 - iptables dual-backend pattern (for-loop over `iptables iptables-legacy`)
 
@@ -368,12 +368,12 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 | `1080` (SOCKS5 port) | docker-compose.yml, toggle.sh |
 | `1120` (MSS clamp) | post-rules.txt, .env |
 | `admin:nullexit` (AdGuard creds) | AdGuardHome.yaml (bcrypt), sync-rules.py (plaintext) |
-| `10.200.1.0/24` (Docker subnet) | toggle.sh, recover.sh, toggle-linux.sh, recover-linux.sh, fix-docker-bridge-collision.sh, docker-compose.yml |
+| `10.200.1.0/24` (Docker subnet) | (Fixed) no longer duplicated |
 | `America/New_York` (timezone) | docker-compose.yml (×4 services) |
-| `/tmp/nullexit-caffeinate.pid` | toggle.sh, recover.sh, toggle-linux.sh |
-| `/tmp/nullexit-dns-watcher.pid` | toggle.sh, recover.sh, toggle-linux.sh |
+| `/tmp/nullexit-caffeinate.pid` | (Fixed) centralized in common.sh |
+| `/tmp/nullexit-dns-watcher.pid` | (Fixed) centralized in common.sh |
 | `/tmp/nullexit-host-leak-probe.pid` | toggle.sh, recover.sh |
-| `/opt/homebrew/bin:...` (PATH) | toggle.sh, recover.sh, diagnose-host-leak.sh, watcher.sh |
+| `/opt/homebrew/bin:...` (PATH) | (Fixed) centralized in common.sh |
 
 ---
 
