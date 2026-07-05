@@ -1477,15 +1477,17 @@ To use either Shadowsocks (Path B) or AmneziaWG, you cannot use the free Cloudfl
 
 ---
 
-## 16. TODO: Zero-Leak macOS pf Firewall Kill-Switch
+## 16. TODO
 
-### 16.1 Objective
+### 16.1 Zero-Leak macOS pf Firewall Kill-Switch
+
+#### 16.1.1 Objective
 Move from a reactive 300ms host leak prober (`host-leak-probe.sh`) to a kernel-level mathematical guarantee that zero packets egress to the clear internet via the physical interface (`en0` / Wi-Fi) if the VPN tunnel goes down.
 
-### 16.2 Technical Design
+#### 16.1.2 Technical Design
 Use macOS's native `pf` (Packet Filter) firewall using isolated rulesets (anchors) to enforce a default-deny policy on the physical WAN interfaces while whitelisting the local loopback (`lo0`), Tailscale (`utun*`), and the encrypted WireGuard UDP endpoint handshake.
 
-#### 16.2.1 Ruleset Blueprint (`scripts/pf.conf`)
+##### 16.1.2.1 Ruleset Blueprint (`scripts/pf.conf`)
 ```pf
 # Macros for interface mapping
 ext_if = "en0"                # Physical Wi-Fi interface (can be dynamically parameterized)
@@ -1506,10 +1508,69 @@ pass out quick on $ext_if proto udp to <vpn_endpoints> port 2408
 pass out quick on $ext_if proto udp to <derp_relays>
 ```
 
-#### 16.2.2 Script Integration
+##### 16.1.2.2 Script Integration
 - `scripts/common.sh` gets:
   - `enable_killswitch()`: Executes `sudo pfctl -e -f scripts/pf.conf`, dynamically injecting the resolved WARP endpoints and the fetched DERP IP list into the `<vpn_endpoints>` and `<derp_relays>` tables.
   - `disable_killswitch()`: Executes `sudo pfctl -d` to tear down the ruleset when shutting down.
 - `setup.sh`: Prompts the user to add `/sbin/pfctl` to `/etc/sudoers.d/nullexit` to allow silent, non-interactive execution.
 - `recover.sh`: Ensure the `pf` rules stay active on post-wake events.
+
+### 16.2 Comparative Ping Test (Latency Benchmarking)
+
+To baseline and verify the latency overhead introduced by the `nullexit` chained gateway (Tailscale + Cloudflare WARP), perform a comparative ping test. This benchmarks the routing latency under two conditions: **without nullexit** (baseline/clear internet) and **with nullexit active** (routed through the double-encrypted mesh). Both the baseline tests and the active mesh tests will be done on the same Wi-Fi network and cellular connection.
+
+#### 16.2.1 Test Matrix
+
+The test compares three representative device network positions:
+1. **Cellular Device**: A remote client connected via cellular data (typically experiencing CGNAT and higher latency).
+2. **Wi-Fi Device**: A client on the same local Wi-Fi network as the gateway host.
+3. **Gateway Host**: The macOS host machine hosting the docker gateway itself.
+
+#### 16.2.2 Step-by-Step Execution
+
+##### Phase 1: Baseline Testing (Without nullexit)
+Ensure the gateway is stopped and exit-node routing is disabled on the clients.
+
+1. **Host Baseline**:
+   From the macOS host, ping a public server to establish standard internet latency:
+   ```bash
+   ping -c 10 1.1.1.1
+   ```
+2. **Wi-Fi Client Baseline**:
+   From the Wi-Fi client device (not using the exit node), ping the public server:
+   ```bash
+   ping -c 10 1.1.1.1
+   ```
+3. **Cellular Client Baseline**:
+   From the cellular device (not using the exit node), ping the public server:
+   ```bash
+   ping -c 10 1.1.1.1
+   ```
+
+##### Phase 2: Mesh Testing (With nullexit active)
+1. Turn on the gateway on the macOS host:
+   ```bash
+   ./toggle.sh
+   ```
+2. Set the client devices (cellular and Wi-Fi) to use the gateway as their **Tailscale Exit Node**.
+3. **Host Mesh Test**:
+   From the macOS host (which now intercepts and routes local egress through the tunnel), ping the public server:
+   ```bash
+   ping -c 10 1.1.1.1
+   ```
+4. **Wi-Fi Client Mesh Test**:
+   From the Wi-Fi client device (connected to the mesh and routing via the exit node), ping the public server:
+   ```bash
+   ping -c 10 1.1.1.1
+   ```
+5. **Cellular Client Mesh Test**:
+   From the cellular device (connected to the mesh and routing via the exit node), ping the public server:
+   ```bash
+   ping -c 10 1.1.1.1
+   ```
+
+#### 16.2.3 Expected Performance Analysis
+- **Host**: Latency will increase slightly due to the overhead of routing through the Colima VM network namespace and Cloudflare WARP edge.
+- **Wi-Fi Client**: Latency will be the sum of local Wi-Fi transport, Tailscale decryption on the host (negligible), and WARP exit routing.
+- **Cellular Client**: Latency will be highest due to cellular transport (often involving a Tailscale DERP relay if direct P2P cannot be established) coupled with the WARP tunnel overhead.
 
