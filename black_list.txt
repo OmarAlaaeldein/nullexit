@@ -68,4 +68,6 @@ heads4.spotify.com
 pixel.spotify.com
 segs.spotify.com
 audio-fa.spotify.com
-
+events.data.microsoft.com
+datarouter-prod.ak.epicgames.com
+nel.cloudflare.com

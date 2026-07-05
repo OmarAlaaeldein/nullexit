@@ -19,7 +19,7 @@ services:
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
       - WIREGUARD_PUBLIC_KEY=${WIREGUARD_PUBLIC_KEY}
       - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
-      - WIREGUARD_ENDPOINT_IP=162.159.192.1
+      - WIREGUARD_ENDPOINT_IP=${WARP_ENDPOINT_1:-162.159.192.1}
       - WIREGUARD_ENDPOINT_PORT=2408
       # Set to 25s (WireGuard default) to beat standard 30s hardware NAT/firewall UDP timeouts
       - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
@@ -121,7 +121,7 @@ services:
         condition: service_completed_successfully
     environment:
       - TZ=America/New_York
-      - WARP_ENDPOINT=162.159.192.1
+      - WARP_ENDPOINT=${WARP_ENDPOINT_1:-162.159.192.1}
       - BLOCKED_COUNTRIES=${BLOCKED_COUNTRIES}
     volumes:
       - ./scripts/routing-fix.sh:/routing-fix.sh:ro
