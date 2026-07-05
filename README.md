@@ -83,7 +83,7 @@ Navigate to `http://<gateway-tailscale-ip>:3000` — credentials: **`admin` / `n
 
 ### Access Any Mesh Device From Anywhere (SFTP/SSH)
 
-Once the gateway exit node is online, **any device on your Tailscale mesh can reach any other mesh device, anywhere in the world** — as long as both devices are on the mesh and the target device has an SSH server running. No port forwarding, no public IPs, no firewall holes.
+Once the gateway exit node is online, **any device on your Tailscale mesh can reach any other mesh device, anywhere in the world** — as long as both devices are on the mesh and the target device has an SSH server running. No port forwarding, no public IPs, no firewall holes. You can SSH into any device using its MagicDNS hostname (e.g. `ssh username@my-macbook`) or its assigned Tailscale IP (`100.x.x.x`).
 
 #### Example: Browse your Android phone's files from your Mac
 

@@ -216,43 +216,52 @@ add_warp_bypass_routes() {
   ep2=$(get_warp_endpoint_2)
   
   if [[ "$OSTYPE" == "darwin"* ]]; then
+    local routing_arg=""
+    local msg_via=""
     if [ -n "$target" ]; then
       if [[ "$target" =~ ^en[0-9]+$ || "$target" == "bridge"* ]]; then
-        echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via interface $target..."
-        sudo -n route delete -host "$ep1" 2>/dev/null || true
-        sudo -n route delete -host "$ep2" 2>/dev/null || true
-        sudo -n route add -host "$ep1" -interface "$target" >> output.log 2>&1 || true
-        sudo -n route add -host "$ep2" -interface "$target" >> output.log 2>&1 || true
+        routing_arg="-interface $target"
+        msg_via="interface $target"
       else
-        echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via gateway $target..."
-        sudo -n route delete -host "$ep1" 2>/dev/null || true
-        sudo -n route delete -host "$ep2" 2>/dev/null || true
-        sudo -n route add -host "$ep1" "$target" >> output.log 2>&1 || true
-        sudo -n route add -host "$ep2" "$target" >> output.log 2>&1 || true
+        routing_arg="$target"
+        msg_via="gateway $target"
       fi
-      return
+    else
+      local gateway_ip
+      gateway_ip=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
+      if [ -z "$gateway_ip" ]; then
+        local iface
+        iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
+        if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
+          iface="en0"
+        fi
+        routing_arg="-interface $iface"
+        msg_via="interface $iface"
+      else
+        routing_arg="$gateway_ip"
+        msg_via="gateway $gateway_ip"
+      fi
     fi
     
-    local gateway_ip
-    gateway_ip=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
+    echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via $msg_via..."
+    sudo -n route delete -host "$ep1" 2>/dev/null || true
+    sudo -n route delete -host "$ep2" 2>/dev/null || true
+    sudo -n route add -host "$ep1" $routing_arg >> output.log 2>&1 || true
+    sudo -n route add -host "$ep2" $routing_arg >> output.log 2>&1 || true
     
-    if [ -z "$gateway_ip" ]; then
-      local iface
-      iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
-      if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
-        iface="en0"
-      fi
-      echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via interface $iface..."
-      sudo -n route delete -host "$ep1" 2>/dev/null || true
-      sudo -n route delete -host "$ep2" 2>/dev/null || true
-      sudo -n route add -host "$ep1" -interface "$iface" >> output.log 2>&1 || true
-      sudo -n route add -host "$ep2" -interface "$iface" >> output.log 2>&1 || true
-    else
-      echo -e "\nAdding host bypass routes for Cloudflare WARP endpoints via gateway $gateway_ip..."
-      sudo -n route delete -host "$ep1" 2>/dev/null || true
-      sudo -n route delete -host "$ep2" 2>/dev/null || true
-      sudo -n route add -host "$ep1" "$gateway_ip" >> output.log 2>&1 || true
-      sudo -n route add -host "$ep2" "$gateway_ip" >> output.log 2>&1 || true
+    echo -e "Adding host bypass routes for Tailscale control plane via $msg_via..."
+    sudo -n route delete -net 192.200.0.0/16 2>/dev/null || true
+    sudo -n route add -net 192.200.0.0/16 $routing_arg >> output.log 2>&1 || true
+
+    echo -e "Adding host bypass routes for Tailscale DERP relays via $msg_via..."
+    local derp_ips
+    derp_ips=$(curl -s --connect-timeout 5 https://login.tailscale.com/derpmap/default | awk -F'"IPv4": "' '{print $2}' | cut -d'"' -f1 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
+    if [ -n "$derp_ips" ]; then
+      echo "$derp_ips" > /tmp/nullexit-derp-ips.txt
+      for ip in $derp_ips; do
+        sudo -n route delete -host "$ip" 2>/dev/null || true
+        sudo -n route add -host "$ip" $routing_arg >> output.log 2>&1 || true
+      done
     fi
   else
     local gateway_ip="${target}"
@@ -272,10 +281,19 @@ remove_warp_bypass_routes() {
   local ep2
   ep2=$(get_warp_endpoint_2)
   
-  echo -e "\nRemoving host bypass routes for Cloudflare WARP endpoints..."
   if [[ "$OSTYPE" == "darwin"* ]]; then
-    sudo -n route delete -host "$ep1" 2>/dev/null || true
-    sudo -n route delete -host "$ep2" 2>/dev/null || true
+    echo -e "\nRemoving host bypass routes for Cloudflare WARP endpoints..."
+    sudo -n route delete -host "$ep1" >> output.log 2>&1 || true
+    sudo -n route delete -host "$ep2" >> output.log 2>&1 || true
+    echo -e "Removing host bypass routes for Tailscale control plane..."
+    sudo -n route delete -net 192.200.0.0/16 >> output.log 2>&1 || true
+    if [ -f /tmp/nullexit-derp-ips.txt ]; then
+      echo -e "Removing host bypass routes for Tailscale DERP relays..."
+      while read -r ip; do
+        sudo -n route delete -host "$ip" >> output.log 2>&1 || true
+      done < /tmp/nullexit-derp-ips.txt
+      rm -f /tmp/nullexit-derp-ips.txt
+    fi
   else
     sudo ip route del "$ep1" >> output.log 2>&1 || true
     sudo ip route del "$ep2" >> output.log 2>&1 || true

@@ -259,15 +259,18 @@ PHYSICAL_IFACE=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardw
 [ -z "$PHYSICAL_IFACE" ] && PHYSICAL_IFACE="en0"
 PHYSICAL_GW=$(ipconfig getpacket "$PHYSICAL_IFACE" 2>> output.log | awk -F'[{}]' '/router /{print $2}')
 
+# Instead of full route -n flush (which destroys macOS loopback/multicast and wedges the OS until reboot),
+# we cleanly delete the Tailscale overrides and Cloudflare WARP bypass routes in ALL modes.
+# This ensures tailscaled isn't blocked from reaching its control plane when waking from sleep.
+sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
+sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
+remove_warp_bypass_routes
+ok "Routing overrides cleared"
+
 if [ "$POST_WAKE" = "false" ]; then
-  # Instead of full route -n flush (which destroys macOS loopback/multicast and wedges the OS until reboot),
-  # we cleanly delete the Tailscale overrides and Cloudflare WARP bypass routes.
-  sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
-  sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
-  remove_warp_bypass_routes
-  ok "Routing overrides cleared"
+  ok "Routing table flush completed via targeted deletes"
 else
-  ok "Routing table flush skipped (post-wake mode to preserve Colima bridge100)"
+  ok "Routing overrides cleared (post-wake mode to preserve Colima bridge100)"
 fi
 
 # In post-wake mode we don't bounce Wi-Fi, so we MUST manually restore the physical default route
