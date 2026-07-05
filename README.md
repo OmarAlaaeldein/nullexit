@@ -144,7 +144,13 @@ osacompile -o "Toggle Gateway.app" Toggle-Gateway.applescript
 Optional `.env` settings:
 - `GATEWAY_BYPASS_PING=true` — proceed even if pre-flight connectivity checks fail.
 - `GATEWAY_USE_EXIT_NODE=false` — DNS-only mode, skip exit-node routing.
+- `GATEWAY_HIJACK_HOST=false` — skip DNS hijacking on the host (provides VPN/adblocking only to external Tailscale peers).
+- `GATEWAY_MSS=1360` — override TCP Maximum Segment Size for the tunnel (default is calculated automatically).
+- `HOST_LEAK_PROBE=false` — disable background host-egress leak prober (default: true).
+- `KILL_SWITCH=true` — enforce strict network lock that breaks SSH if the VPN fails.
 - `STOP_COLIMA_ON_EXIT=true` — fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts).
+- `WARP_FAIL_THRESHOLD=3` — number of consecutive failed checks before forcing a gateway teardown (default: 6 checks = 30s).
+- `WARP_ENDPOINT_1` / `WARP_ENDPOINT_2` — override the Cloudflare WARP WireGuard endpoints.
 
 ### Linux — `scripts/toggle-linux.sh`
 ```bash

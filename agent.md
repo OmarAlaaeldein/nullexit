@@ -8,6 +8,7 @@
 - **Always run `bash scripts/crypto.sh --sign` after making any modifications to the core bash scripts.** This is required to update the cryptographic HMAC-SHA256 signatures; otherwise, the startup integrity checks will fail and block execution.
 - **Always run `git diff` and print the changes to the user *before* requesting or executing any git commit command.** The user must be shown the diff so they can review and understand the changes. Based on this diff, formulate a highly precise, detailed, and descriptive commit message (explaining exactly what was changed and why) rather than a generic summary, and present it to the user alongside the diff.
 - **Always use the `--restart` flag when asked to restart the toggle (e.g., run `./toggle.sh --restart`).**
+- **NEVER execute any `sudo` commands (especially `sudo route`, `sudo dscacheutil`, or any network-modifying commands) without explicitly explaining to the user what the command does and why it is needed FIRST. Do not assume implicit permission. Wait for the user's approval before running it.**
 
 ## 🔬 How to Verify Gateway is Working
 Whenever modifications are made to the gateway scripts, routing, or containers, execute these verification checks in order:

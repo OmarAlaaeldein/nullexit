@@ -1414,6 +1414,16 @@ While bypassing the control plane kept the daemon connected to the coordination 
 - The script parses out all active DERP relay IPv4 addresses (~80 IPs) and adds a physical host bypass route for every single one of them.
 - These IPs are written to a temporary file (`/tmp/nullexit-derp-ips.txt`) so they can be cleanly un-routed by `remove_warp_bypass_routes` when the gateway shuts down. Peer connectivity (ping, SSH, SFTP) was fully restored.
 
+### 10.35. July 5, 2026: Hardcoded WARP Endpoints in docker-compose
+**Symptom:**
+The bash scripts allowed overriding the default Cloudflare WARP IP endpoints via `.env` variables (`WARP_ENDPOINT_1` and `WARP_ENDPOINT_2`) to establish bypass routes. However, `docker-compose.yml` statically hardcoded `162.159.192.1` for the `warp` container's `WIREGUARD_ENDPOINT_IP`.
+
+**Root Cause & Risk:**
+If a user set a custom endpoint in `.env`, the script would successfully bypass the custom IP on the host level. However, Gluetun would still attempt to connect to the hardcoded `162.159.192.1`. Since `162.159.192.1` was no longer explicitly bypassed, its packets would be sucked into the `utun*` exit node, causing an infinite WireGuard routing loop that instantly breaks the gateway.
+
+**Resolution:**
+Modified `docker-compose.yml` to dynamically read the environment variable via `${WARP_ENDPOINT_1:-162.159.192.1}`, ensuring both the host routing scripts and the container use the exact same endpoint.
+
 ---
 
 ## 15. Censorship-Resistant Transport (Shadowsocks / Obfuscation)
