@@ -9,6 +9,8 @@
 - **Always run `git diff` and print the changes to the user *before* requesting or executing any git commit command.** The user must be shown the diff so they can review and understand the changes. Based on this diff, formulate a highly precise, detailed, and descriptive commit message (explaining exactly what was changed and why) rather than a generic summary, and present it to the user alongside the diff.
 - **Always use the `--restart` flag when asked to restart the toggle (e.g., run `./toggle.sh --restart`).**
 - **NEVER execute any `sudo` commands (especially `sudo route`, `sudo dscacheutil`, or any network-modifying commands) without explicitly explaining to the user what the command does and why it is needed FIRST. Do not assume implicit permission. Wait for the user's approval before running it.**
+- **When fixing an error and using logs to debug, always show the user the reasoning and the specific logs that support this theory.**
+- **When the user tells you to "push", this means read git diffs and prepare commit messages that correspond to these changes (do not ignore any changes). If the changes can be atomized into multiple commits for easier understanding, do so.**
 
 ## 🔬 How to Verify Gateway is Working
 Whenever modifications are made to the gateway scripts, routing, or containers, execute these verification checks in order:
