@@ -70,6 +70,7 @@ start_sleep_prevention() {
   nohup bash -c "
     trap '
       echo \"[Shutdown Trap] Reverting network settings...\" >> \"$PWD/output.log\" 2>&1
+      kill \$! 2>/dev/null || true
       sudo -n resolvectl domain \"$ACTIVE_SERVICE\" \"\" >> \"$PWD/output.log\" 2>&1 || true
       sudo -n resolvectl revert \"$ACTIVE_SERVICE\" >> \"$PWD/output.log\" 2>&1 || true
       resolvectl domain \"$ACTIVE_SERVICE\" \"\" >> \"$PWD/output.log\" 2>&1 || true

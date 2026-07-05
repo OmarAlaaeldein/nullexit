@@ -131,6 +131,7 @@ start_sleep_prevention() {
   nohup bash -c "
     trap '
       echo \"[Shutdown Trap] Reverting network settings...\" >> \"$PWD/output.log\" 2>&1
+      kill \$! 2>/dev/null || true
       sudo -n networksetup -setdnsservers \"$ACTIVE_SERVICE\" 1.1.1.1 >> \"$PWD/output.log\" 2>&1 || true
       sudo -n networksetup -setdnsservers \"$EN0_SERVICE\" 1.1.1.1 >> \"$PWD/output.log\" 2>&1 || true
       sudo -n networksetup -setsearchdomains \"$ACTIVE_SERVICE\" \"Empty\" >> \"$PWD/output.log\" 2>&1 || true
