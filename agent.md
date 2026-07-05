@@ -1,7 +1,6 @@
 # nullexit — Detailed Agent Analysis
 
 > Complete per-file breakdown of every function, constant, duplication, and bug found.
-> This document is a work order for implementing the refactor described in `redundancy_analysis.md`.
 > **Note (July 2026):** `sync-rules.py` and `logger.py` have been fully ported to Go (`scripts/rule-compiler/main.go` and `scripts/logger/main.go`) to dramatically improve performance and reduce container footprint via multi-stage Alpine builds. The analysis below reflects their previous Python states.
 
 ## 🛑 Important Agent Instruction

@@ -1,6 +1,6 @@
 # nullexit — Development Reference & Resolved Issues
 
-> **Last updated:** July 4, 2026
+> **Last updated:** July 5, 2026
 > **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
 > **Diagrams:** See [`diagrams.md`](./diagrams.md) for system architecture, toggle.sh flowcharts, monitoring layer, traffic sequence, recover.sh decision tree, and the full failure→self-healing map.
 
