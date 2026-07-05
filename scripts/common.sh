@@ -306,7 +306,7 @@ add_warp_bypass_routes() {
 
     echo -e "Adding host bypass routes for Tailscale DERP relays via $msg_via..."
     local derp_ips
-    derp_ips=$(curl -s --connect-timeout 5 https://login.tailscale.com/derpmap/default | awk -F'"IPv4": "' '{print $2}' | cut -d'"' -f1 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
+    derp_ips=$(curl -s --connect-timeout 5 https://login.tailscale.com/derpmap/default | grep -oE '"IPv4"[[:space:]]*:[[:space:]]*"[0-9.]+"' | cut -d'"' -f4 | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
     if [ -n "$derp_ips" ]; then
       echo "$derp_ips" > /tmp/nullexit-derp-ips.txt
       for ip in $derp_ips; do
