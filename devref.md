@@ -1474,3 +1474,42 @@ To use either Shadowsocks (Path B) or AmneziaWG, you cannot use the free Cloudfl
 
 - **Free Tier (Oracle Cloud):** You can host your remote server on Oracle Cloud's "Always Free" tier for $0. However, this routes your highly sensitive, censorship-evading traffic directly through Oracle—a massive corporate data broker. If privacy is the core objective, handing all your metadata to Oracle defeats the purpose.
 - **Paid Tier (Hetzner / Mullvad):** The recommended path is to rent a standard ~$4/month Virtual Private Server (VPS) in a free country (e.g., Hetzner in Germany, subject to strict EU GDPR privacy laws) and self-host the server. Alternatively, Mullvad VPN (€5/month) provides native v2ray/Shadowsocks bridges built into their network, allowing you to bypass censorship with a strict zero-logs policy. It is highly recommended to pay with untrackable payment methods to maintain complete anonymity, which these providers typically support without requiring local residency.
+
+---
+
+## 16. TODO: Zero-Leak macOS pf Firewall Kill-Switch
+
+### 16.1 Objective
+Move from a reactive 300ms host leak prober (`host-leak-probe.sh`) to a kernel-level mathematical guarantee that zero packets egress to the clear internet via the physical interface (`en0` / Wi-Fi) if the VPN tunnel goes down.
+
+### 16.2 Technical Design
+Use macOS's native `pf` (Packet Filter) firewall using isolated rulesets (anchors) to enforce a default-deny policy on the physical WAN interfaces while whitelisting the local loopback (`lo0`), Tailscale (`utun*`), and the encrypted WireGuard UDP endpoint handshake.
+
+#### 16.2.1 Ruleset Blueprint (`scripts/pf.conf`)
+```pf
+# Macros for interface mapping
+ext_if = "en0"                # Physical Wi-Fi interface (can be dynamically parameterized)
+ts_if  = "utun+"               # Virtual Tailscale/VPN interface pattern
+
+# Tables loaded dynamically via pfctl on startup
+table <vpn_endpoints> persist { 162.159.192.1, 162.159.193.1 }
+table <derp_relays> persist    # Populated dynamically via the control plane DERP list
+
+# Core Rules
+set skip on lo0                # Ensure local loopback is never blocked
+pass quick on $ts_if all       # Allow all Tailscale traffic (essential to prevent SSH lockout)
+
+block out on $ext_if all       # Default-deny outbound WAN traffic
+
+# Exceptions for tunnel handshakes and coordination
+pass out quick on $ext_if proto udp to <vpn_endpoints> port 2408
+pass out quick on $ext_if proto udp to <derp_relays>
+```
+
+#### 16.2.2 Script Integration
+- `scripts/common.sh` gets:
+  - `enable_killswitch()`: Executes `sudo pfctl -e -f scripts/pf.conf`, dynamically injecting the resolved WARP endpoints and the fetched DERP IP list into the `<vpn_endpoints>` and `<derp_relays>` tables.
+  - `disable_killswitch()`: Executes `sudo pfctl -d` to tear down the ruleset when shutting down.
+- `setup.sh`: Prompts the user to add `/sbin/pfctl` to `/etc/sudoers.d/nullexit` to allow silent, non-interactive execution.
+- `recover.sh`: Ensure the `pf` rules stay active on post-wake events.
+

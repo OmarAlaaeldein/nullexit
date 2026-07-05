@@ -37,8 +37,9 @@
                                  Sonoma+ accumulate orphan watcher.sh PIDs
                                  because SIGCONT/resume doesn't reliably kill
                                  the prior instance. The watcher.sh script
-                                 now enforces single-instance via `flock -n`
-                                 at the top, so a re-launch on crash is
+                                 now enforces single-instance via a manual
+                                 PID-file and process-identity check at the
+                                 top, so a re-launch on crash is
                                  actively dangerous (it would skip the lock
                                  and exit; better to surface the crash in
                                  logs than to silently 0-process). -->

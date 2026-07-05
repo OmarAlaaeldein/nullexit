@@ -178,6 +178,10 @@ func parseDomainsFromContent(content string) map[string]bool {
 	return domains
 }
 
+// WARNING: Parsing AdGuardHome.yaml using regex instead of a proper YAML parser
+// is brittle and assumes the exact format currently emitted by AdGuard.
+// If an AdGuard version bump updates the configuration schema format,
+// this parser will fail silently or loudly and should be refactored to use gopkg.in/yaml.v3.
 func getAdguardNativeLists() []string {
 	yamlPath := "adguard/conf/AdGuardHome.yaml"
 	var enabledUrls []string
