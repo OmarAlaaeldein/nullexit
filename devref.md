@@ -1424,6 +1424,16 @@ If a user set a custom endpoint in `.env`, the script would successfully bypass 
 **Resolution:**
 Modified `docker-compose.yml` to dynamically read the environment variable via `${WARP_ENDPOINT_1:-162.159.192.1}`, ensuring both the host routing scripts and the container use the exact same endpoint.
 
+### 10.36. July 6, 2026: Packet Filter (pfctl) Defaulting Local LAN Rules to TCP-Only
+**Symptom:**
+Devices on the exact same local Wi-Fi network as the gateway were experiencing ~500ms latency to the gateway instead of the expected ~80ms.
+
+**Root Cause:**
+When writing the `pf.conf` rules to whitelist local LAN traffic (`pass out quick on $ext_if to { 192.168.0.0/16, ... }`), the rule omitted an explicit protocol. The macOS `pfctl` compiler implicitly applies state tracking to all `pass` rules. However, because state tracking (`keep state`) natively evaluates TCP sessions, `pfctl` automatically appended the `flags S/SA` modifier to the compiled rule in the kernel. This silently restricted the whitelist to **TCP only**, causing all local UDP traffic to be dropped by the default-deny kill-switch. Since Tailscale relies on UDP port 41641 for direct P2P connections, the local devices were unable to hole-punch and were forced to fall back to routing traffic through a remote Tailscale DERP relay, massively inflating latency.
+
+**Resolution:**
+Split the single implicit rule into explicit `proto tcp`, `proto udp`, and `proto icmp` rules in `scripts/pf.conf` to guarantee the macOS compiler allows all three core transport protocols on the local subnet without mutating the rule into a TCP-only lock.
+
 ---
 
 ## 15. Censorship-Resistant Transport (Shadowsocks / Obfuscation)
