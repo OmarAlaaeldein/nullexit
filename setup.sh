@@ -28,6 +28,12 @@ echo "  → https://login.tailscale.com/admin/machines"
 echo "  → Find your gateway → '...' → 'Edit route settings' → enable Exit Node"
 echo ""
 
+echo -e "${YELLOW}${BOLD}Packet Filter (PF) Kill-Switch Requirements:${NC}"
+echo "  To allow silent, non-interactive execution of the firewall killswitch, add '/sbin/pfctl' to '/etc/sudoers.d/nullexit'."
+echo "  Example entry:"
+echo "    $USER ALL=(root) NOPASSWD: /sbin/pfctl"
+echo ""
+
 if [[ -n "${TS_IP:-}" ]]; then
     echo -e "${BOLD}AdGuard Home dashboard:${NC}  http://${TS_IP}:3000  (username: admin)"
     echo ""

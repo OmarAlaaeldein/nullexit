@@ -57,7 +57,7 @@ if command -v tailscale >> output.log 2>&1; then
       warn "tailscale up --reset didn't respond (tailscaled may be wedged)"
     fi
     ts_args=""
-    if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
+    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
     if run_with_timeout 10 tailscale down $ts_args >> output.log 2>&1; then
       ok "Tailscale disconnected"
     else
@@ -216,7 +216,9 @@ else
   echo ""
   echo "    Or try manually:"
   echo "      resolvectl revert $ACTIVE_SERVICE"
-  echo "      tailscale down $(grep -iq '^KILL_SWITCH=true' .env 2>/dev/null && echo '--accept-risk=lose-ssh')"
+  local extra_args=""
+  if is_kill_switch_enabled; then extra_args="--accept-risk=lose-ssh"; fi
+  echo "      tailscale down $extra_args"
   echo "      sudo ip route flush cache"
   echo "      systemctl restart tailscaled"
 fi

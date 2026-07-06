@@ -296,7 +296,6 @@ if [[ "${WRITE_ENV:-0}" == "1" ]]; then
     EXISTING_HIJACK="true"
     EXISTING_EXIT="true"
     EXISTING_THRESH="6"
-    EXISTING_PROBE="true"
     EXISTING_KILL="false"
     EXISTING_BLOCKED="kp il"
     
@@ -306,7 +305,6 @@ if [[ "${WRITE_ENV:-0}" == "1" ]]; then
         [[ -n "$(read_env_var GATEWAY_HIJACK_HOST)" ]] && EXISTING_HIJACK=$(read_env_var GATEWAY_HIJACK_HOST)
         [[ -n "$(read_env_var GATEWAY_USE_EXIT_NODE)" ]] && EXISTING_EXIT=$(read_env_var GATEWAY_USE_EXIT_NODE)
         [[ -n "$(read_env_var WARP_FAIL_THRESHOLD)" ]] && EXISTING_THRESH=$(read_env_var WARP_FAIL_THRESHOLD)
-        [[ -n "$(read_env_var HOST_LEAK_PROBE)" ]] && EXISTING_PROBE=$(read_env_var HOST_LEAK_PROBE)
         [[ -n "$(read_env_var KILL_SWITCH)" ]] && EXISTING_KILL=$(read_env_var KILL_SWITCH)
         [[ -n "$(read_env_var BLOCKED_COUNTRIES)" ]] && EXISTING_BLOCKED=$(read_env_var BLOCKED_COUNTRIES)
     fi
@@ -323,8 +321,6 @@ GATEWAY_MSS=${EXISTING_MSS}
 GATEWAY_HIJACK_HOST=${EXISTING_HIJACK}
 GATEWAY_USE_EXIT_NODE=${EXISTING_EXIT}
 WARP_FAIL_THRESHOLD=${EXISTING_THRESH}
-# Set to false to disable the 300ms host-egress leak prober (scripts/host-leak-probe.sh).
-HOST_LEAK_PROBE=${EXISTING_PROBE}
 KILL_SWITCH=${EXISTING_KILL}
 ADGUARD_PASSWORD=${ADGUARD_PASSWORD}
 BLOCKED_COUNTRIES="${EXISTING_BLOCKED}"
