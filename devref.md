@@ -1479,43 +1479,9 @@ To use either Shadowsocks (Path B) or AmneziaWG, you cannot use the free Cloudfl
 
 ## 16. TODO
 
-### 16.1 Zero-Leak macOS pf Firewall Kill-Switch
 
-#### 16.1.1 Objective
-Move from a reactive 300ms host leak prober (`host-leak-probe.sh`) to a kernel-level mathematical guarantee that zero packets egress to the clear internet via the physical interface (`en0` / Wi-Fi) if the VPN tunnel goes down.
 
-#### 16.1.2 Technical Design
-Use macOS's native `pf` (Packet Filter) firewall using isolated rulesets (anchors) to enforce a default-deny policy on the physical WAN interfaces while whitelisting the local loopback (`lo0`), Tailscale (`utun*`), and the encrypted WireGuard UDP endpoint handshake.
-
-##### 16.1.2.1 Ruleset Blueprint (`scripts/pf.conf`)
-```pf
-# Macros for interface mapping
-ext_if = "en0"                # Physical Wi-Fi interface (can be dynamically parameterized)
-ts_if  = "utun+"               # Virtual Tailscale/VPN interface pattern
-
-# Tables loaded dynamically via pfctl on startup
-table <vpn_endpoints> persist { 162.159.192.1, 162.159.193.1 }
-table <derp_relays> persist    # Populated dynamically via the control plane DERP list
-
-# Core Rules
-set skip on lo0                # Ensure local loopback is never blocked
-pass quick on $ts_if all       # Allow all Tailscale traffic (essential to prevent SSH lockout)
-
-block out on $ext_if all       # Default-deny outbound WAN traffic
-
-# Exceptions for tunnel handshakes and coordination
-pass out quick on $ext_if proto udp to <vpn_endpoints> port 2408
-pass out quick on $ext_if proto udp to <derp_relays>
-```
-
-##### 16.1.2.2 Script Integration
-- `scripts/common.sh` gets:
-  - `enable_killswitch()`: Executes `sudo pfctl -e -f scripts/pf.conf`, dynamically injecting the resolved WARP endpoints and the fetched DERP IP list into the `<vpn_endpoints>` and `<derp_relays>` tables.
-  - `disable_killswitch()`: Executes `sudo pfctl -d` to tear down the ruleset when shutting down.
-- `setup.sh`: Prompts the user to add `/sbin/pfctl` to `/etc/sudoers.d/nullexit` to allow silent, non-interactive execution.
-- `recover.sh`: Ensure the `pf` rules stay active on post-wake events.
-
-### 16.2 Comparative Ping Test (Latency Benchmarking)
+### 16.1 Comparative Ping Test (Latency Benchmarking)
 
 To baseline and verify the latency overhead introduced by the `nullexit` chained gateway (Tailscale + Cloudflare WARP), perform a comparative ping test. This benchmarks the routing latency under two conditions: **without nullexit** (baseline/clear internet) and **with nullexit active** (routed through the double-encrypted mesh). Both the baseline tests and the active mesh tests will be done on the same Wi-Fi network and cellular connection.
 

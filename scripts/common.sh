@@ -109,6 +109,13 @@ read_env_var() {
   grep -E "^${var_name}=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d "\"\\'" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' || echo ""
 }
 
+# Load KILL_SWITCH variable from .env (defaults to false if not found/empty)
+export KILL_SWITCH
+KILL_SWITCH=$(read_env_var "KILL_SWITCH" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+if [ -z "$KILL_SWITCH" ]; then
+  KILL_SWITCH="false"
+fi
+
 # Function to get the active network service name (e.g., "Wi-Fi" or "USB 10/100 LAN")
 get_active_service() {
   local iface
@@ -256,7 +263,7 @@ read_adguard_ip() {
 }
 
 is_kill_switch_enabled() {
-  grep -iq "^KILL_SWITCH=true" "${1:-.env}" 2>/dev/null
+  [ "$KILL_SWITCH" = "true" ]
 }
 
 add_warp_bypass_routes() {
@@ -375,3 +382,104 @@ bounce_wifi_interfaces() {
     fi
   fi
 }
+
+get_active_interface() {
+  local iface
+  iface=$(route get default 2>> output.log | awk '/interface:/ {print $2}')
+  
+  # If the default interface is empty or a VPN tunnel (like utunX), fallback to the active physical interface
+  if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
+    for i in en0 en1 en2 en3; do
+      if ifconfig "$i" 2>> output.log | grep -q "status: active" && ifconfig "$i" 2>> output.log | grep -q "inet "; then
+        iface="$i"
+        break
+      fi
+    done
+  fi
+
+  # Default fallback if still empty or not enX
+  if [[ -z "$iface" || ! "$iface" =~ ^en[0-9]+$ ]]; then
+    iface="en0"
+  fi
+
+  echo "$iface"
+}
+
+enable_killswitch() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    if ! is_kill_switch_enabled; then
+      return 0
+    fi
+
+    local ext_if
+    ext_if=$(get_active_interface)
+    local ep1
+    ep1=$(get_warp_endpoint_1)
+    local ep2
+    ep2=$(get_warp_endpoint_2)
+    local pf_conf_path
+    pf_conf_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pf.conf"
+
+    echo -e "\nEnabling macOS Packet Filter (PF) Kill-Switch on $ext_if..."
+
+    # Enable PF and capture the reference token
+    local token_out
+    token_out=$(sudo -n pfctl -E 2>> output.log || true)
+    local token
+    token=$(echo "$token_out" | awk '/Token/{print $NF}')
+    if [ -n "$token" ]; then
+      echo "$token" > /tmp/nullexit-pf-token.txt
+      echo "  [✓] PF enabled with token $token."
+    else
+      echo "  [!] WARNING: Could not capture PF reference token (may already be enabled or sudo failed)."
+    fi
+
+    # Load the rules into the anchor
+    if sudo -n pfctl -D "ext_if=$ext_if" -a com.apple/nullexit -f "$pf_conf_path" >> output.log 2>&1; then
+      echo "  [✓] Ruleset loaded into anchor com.apple/nullexit."
+    else
+      echo "  [!] ERROR: Failed to load ruleset into anchor."
+    fi
+
+    # Populate tables in the anchor
+    sudo -n pfctl -a com.apple/nullexit -t vpn_endpoints -T flush >> output.log 2>&1 || true
+    sudo -n pfctl -a com.apple/nullexit -t vpn_endpoints -T add "$ep1" >> output.log 2>&1 || true
+    sudo -n pfctl -a com.apple/nullexit -t vpn_endpoints -T add "$ep2" >> output.log 2>&1 || true
+
+    if [ -f /tmp/nullexit-derp-ips.txt ]; then
+      local derp_ips
+      derp_ips=$(tr '\n' ' ' < /tmp/nullexit-derp-ips.txt)
+      if [ -n "$derp_ips" ]; then
+        sudo -n pfctl -a com.apple/nullexit -t derp_relays -T flush >> output.log 2>&1 || true
+        sudo -n pfctl -a com.apple/nullexit -t derp_relays -T add $derp_ips >> output.log 2>&1 || true
+      fi
+    fi
+    echo "  [✓] Kill-switch tables populated."
+  fi
+}
+
+disable_killswitch() {
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    if ! is_kill_switch_enabled; then
+      return 0
+    fi
+    echo -e "\nDisabling macOS PF Kill-Switch..."
+
+    # Flush rules from anchor com.apple/nullexit
+    sudo -n pfctl -a com.apple/nullexit -F all >> output.log 2>&1 || true
+
+    # Release the enable reference if token is present
+    if [ -f /tmp/nullexit-pf-token.txt ]; then
+      local token
+      token=$(cat /tmp/nullexit-pf-token.txt)
+      if [ -n "$token" ]; then
+        sudo -n pfctl -X "$token" >> output.log 2>&1 || true
+        echo "  [✓] Released PF enable reference token $token."
+      fi
+      rm -f /tmp/nullexit-pf-token.txt
+    else
+      echo "  [✓] Rules flushed from anchor com.apple/nullexit."
+    fi
+  fi
+}
+

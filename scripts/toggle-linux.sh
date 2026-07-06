@@ -78,7 +78,7 @@ start_sleep_prevention() {
       if command -v tailscale >/dev/null 2>&1; then
         tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
         TS_DOWN_ARGS=\"\"
-        if grep -iq \"^KILL_SWITCH=true\" .env 2>/dev/null; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
+        if [ \"\$KILL_SWITCH\" = \"true\" ]; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
         tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
       fi
       sleep 1
@@ -265,7 +265,7 @@ disconnect_tailscale_host() {
   if [ -n "$TS_BIN" ]; then
     echo "Disconnecting host Tailscale from mesh (tailscaled stays running as system service)..."
     local ts_args=""
-    if grep -iq "^KILL_SWITCH=true" .env 2>/dev/null; then ts_args="--accept-risk=lose-ssh"; fi
+    if is_kill_switch_enabled; then ts_args="--accept-risk=lose-ssh"; fi
     if ! run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1; then
       restart_tailscaled_daemon
       run_with_timeout 10 $TS_BIN down $ts_args >> output.log 2>&1 || true

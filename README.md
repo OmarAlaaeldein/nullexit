@@ -115,7 +115,7 @@ That's it — you can now browse, download, and upload files to your phone from 
 
 ---
 
-## 5. Dual-Layer Firewall
+## 5. Multi-Layer Firewall & Kill-Switch
 
 ### Layer 1 — DNS Sinkhole (AdGuard Home)
 Blocks ads and tracking domains before they are downloaded. In automated Lighthouse tests on ad-heavy sites:
@@ -130,6 +130,16 @@ On every startup, the `rule-compiler` fetches threat-intelligence feeds (Spamhau
 ### Layer 3 — Geo-IP Blocking
 Dynamically blocks all traffic to and from specific countries using live IP ranges from `ipdeny.com`. 
 To add countries to your blocklist, open your `.env` file and set the `BLOCKED_COUNTRIES` variable with 2-letter ISO country codes (e.g. `BLOCKED_COUNTRIES="kp il cn ru"`), then restart the gateway.
+
+### Layer 4 — macOS PF Kill-Switch
+A native macOS Packet Filter (`pf`) kill-switch that enforces a strict default-deny policy on your physical Wi-Fi interface (`en0`). When `KILL_SWITCH=true` is set in your `.env`, it drops all outgoing traffic except the Cloudflare WARP endpoints and Tailscale DERP relays.
+
+- **Failsafe Design:** If the VPN tunnel crashes or Docker dies, your Mac completely loses internet access rather than leaking your real IP.
+- **Remote-Access Safe:** Carefully designed to whitelist Tailscale's control plane (`192.200.0.0/16`), `utun*` tunnel traffic, and local LAN subnets. This guarantees that your remote SSH sessions and local AirDrop will survive even when the kill switch engages.
+- **Setup Requirement:** The toggle scripts need permission to manipulate the firewall in the background without prompting you for a password. You must append `/sbin/pfctl` to your passwordless sudo config by running exactly:
+  ```bash
+  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl" | sudo tee -a /etc/sudoers.d/nullexit
+  ```
 
 ---
 

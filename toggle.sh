@@ -145,7 +145,7 @@ start_sleep_prevention() {
       if command -v tailscale >/dev/null 2>&1; then
         tailscale up --reset --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
         TS_DOWN_ARGS=\"\"
-        if grep -iq \"^KILL_SWITCH=true\" .env 2>/dev/null; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
+        if [ \"\$KILL_SWITCH\" = \"true\" ]; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
         tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
       fi
       sleep 1
@@ -164,7 +164,6 @@ start_sleep_prevention() {
 
 DNS_WATCHER_PID_FILE="$PID_DNS_WATCHER"
 WARP_WATCHER_PID_FILE="/tmp/nullexit-warp-watcher.pid"
-HOST_LEAK_PROBE_PID_FILE="/tmp/nullexit-host-leak-probe.pid"
 
 start_dns_watcher() {
   local target_ip=$1
@@ -281,24 +280,7 @@ stop_warp_watcher() {
   fi
 }
 
-# Background host-egress leak prober. Polls cdn-cgi/trace directly from the
-# HOST (not via docker exec) at 300ms resolution. Logs LEAK / ROTATE / probe
-# failures to output.log on every state change. Enabled via HOST_LEAK_PROBE=true
-# in .env (default true). Safe to leave running for hours; ~1.4 MB RSS.
-start_host_leak_probe() {
-  stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
-  local enabled
-  enabled=$(read_env_var HOST_LEAK_PROBE)
-  if [ -z "$enabled" ]; then
-    enabled="${HOST_LEAK_PROBE:-true}"
-  fi
-  if [ "$enabled" != "true" ]; then
-    return 0
-  fi
-  echo "  Starting background Host Leak Probe (polling every 300ms from HOST, logging to output.log)..."
-  nohup bash "$PWD/scripts/host-leak-probe.sh" >> "$PWD/output.log" 2>&1 &
-  echo $! > "$HOST_LEAK_PROBE_PID_FILE"
-}
+
 
 
 
@@ -329,7 +311,6 @@ cleanup_handler() {
     stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
     stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
     stop_warp_watcher
-    stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
     clear_gateway_active_marker
 
     # Capture warp logs on failure for debugging before teardown
@@ -509,7 +490,8 @@ cleanup_network_state() {
     sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
   fi
   remove_warp_bypass_routes
-  echo "  Routing table flushed."
+  disable_killswitch
+  echo "  Routing table and firewall flushed."
 
   # 4. Power-cycle Wi-Fi to clear any lingering interface state
   WIFI_PORT=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: Wi-Fi/{getline; print $2}')
@@ -782,7 +764,6 @@ if is_gateway_active; then
     stop_pidfile_daemon "/tmp/nullexit-caffeinate.pid" "system sleep prevention"
     stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
     stop_warp_watcher
-    stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
     clear_gateway_active_marker
 
     # 4. Nuke leftover network state so internet actually works after teardown
@@ -1114,6 +1095,7 @@ else
         echo "Exit node enabled."
         add_warp_bypass_routes
         setup_exit_node_routing
+        enable_killswitch
       else
         echo "[Warning] Failed to set exit node."
         SKIP_EXIT_NODE=true
@@ -1202,9 +1184,6 @@ else
 
     # Start WARP liveness monitor (logs to output.log on warp flip)
     start_warp_watcher
-
-    # Start host-side egress leak prober (polls from HOST, not docker exec)
-    start_host_leak_probe
   fi
 
   # Reset sharing services after network configuration to prevent AirDrop freezes

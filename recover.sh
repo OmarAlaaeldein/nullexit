@@ -273,7 +273,8 @@ remove_warp_bypass_routes
 ok "Routing overrides cleared"
 
 if [ "$POST_WAKE" = "false" ]; then
-  ok "Routing table flush completed via targeted deletes"
+  disable_killswitch
+  ok "Routing table flush completed via targeted deletes and firewall disabled"
 else
   ok "Routing overrides cleared (post-wake mode to preserve Colima bridge100)"
 fi
@@ -319,6 +320,7 @@ if [ "$POST_WAKE" = "true" ]; then
     sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
     sudo -n route add -net 0.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
     sudo -n route add -net 128.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
+    enable_killswitch
   fi
 fi
 
@@ -386,12 +388,8 @@ fi
 if [ "$POST_WAKE" = "false" ]; then
   step "Stopping DNS Watcher"
   stop_pidfile_daemon "$PID_DNS_WATCHER" "background DNS Watcher"
-
-  # ─── 6d. Stopping Host Leak Probe — default only ─────────────────────────
-  step "Stopping Host Leak Probe"
-  stop_pidfile_daemon "/tmp/nullexit-host-leak-probe.pid" "background host-leak-probe"
 else
-  step "DNS Watcher / Host Leak Probe: leaving untouched (it keeps re-hijacking DNS on every roam)"
+  step "DNS Watcher: leaving untouched (it keeps re-hijacking DNS on every roam)"
 fi
 
 # ─── 7. Power-cycle Wi-Fi — default only ────────────────────────────────────
