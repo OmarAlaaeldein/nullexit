@@ -70,3 +70,5 @@ audio-fa.spotify.com
 events.data.microsoft.com
 datarouter-prod.ak.epicgames.com
 nel.cloudflare.com
+eu-mobile.events.data.microsoft.com
+stocks-analytics-events.apple.com
