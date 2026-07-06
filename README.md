@@ -27,11 +27,15 @@ WIREGUARD_PUBLIC_KEY=<Generated>
 WIREGUARD_ADDRESSES=<Generated>
 TS_AUTHKEY=tskey-auth-...
 GATEWAY_RULE_PROFILE=medium        # light | medium | heavy
-GATEWAY_BYPASS_PING=false
+# Safe MSS for double-tunneled traffic (Tailscale + WARP). Change to 1180 if you experience slow speeds and have a healthy path.
+GATEWAY_MSS=1120                   
+# Set to false to run as a 'Headless Server' (Docker acts as an exit node, but the host Mac/Linux's own internet is NOT hijacked).
+GATEWAY_HIJACK_HOST=true
 GATEWAY_USE_EXIT_NODE=true
-GATEWAY_MSS=1120                   # 1120 for stability, 1180 for speed
 WARP_FAIL_THRESHOLD=6              # consecutive warp=off polls before auto-shutdown (default 6 = 30s)
-HOST_LEAK_PROBE=true               # 300ms host-egress probe; logs LEAK/ROTATE events to output.log
+KILL_SWITCH=false                  # enforce strict PF lock that breaks SSH if VPN fails
+ADGUARD_PASSWORD=nullexit
+BLOCKED_COUNTRIES="kp il"          # dynamically block country IP ranges via ipdeny.com
 ```
 
 ## 3. Deploy the Gateway
