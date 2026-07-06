@@ -216,7 +216,7 @@ else
   echo ""
   echo "    Or try manually:"
   echo "      resolvectl revert $ACTIVE_SERVICE"
-  local extra_args=""
+  extra_args=""
   if is_kill_switch_enabled; then extra_args="--accept-risk=lose-ssh"; fi
   echo "      tailscale down $extra_args"
   echo "      sudo ip route flush cache"

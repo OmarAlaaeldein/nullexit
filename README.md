@@ -136,9 +136,9 @@ A native macOS Packet Filter (`pf`) kill-switch that enforces a strict default-d
 
 - **Failsafe Design:** If the VPN tunnel crashes or Docker dies, your Mac completely loses internet access rather than leaking your real IP.
 - **Remote-Access Safe:** Carefully designed to whitelist Tailscale's control plane (`192.200.0.0/16`), `utun*` tunnel traffic, and local LAN subnets. This guarantees that your remote SSH sessions and local AirDrop will survive even when the kill switch engages.
-- **Setup Requirement:** The toggle scripts need permission to manipulate the firewall in the background without prompting you for a password. You must append `/sbin/pfctl` to your passwordless sudo config by running exactly:
+- **Setup Requirement:** The toggle scripts need permission to manipulate the network and firewall in the background without prompting you for a password. You must configure your passwordless sudo config by running exactly:
   ```bash
-  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl" | sudo tee -a /etc/sudoers.d/nullexit
+  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl, /usr/sbin/networksetup, /usr/bin/dscacheutil, /usr/bin/killall, /usr/bin/pkill, /bin/kill, /sbin/route, /sbin/ifconfig, /usr/bin/true, /opt/homebrew/bin/brew, /usr/local/bin/brew" | sudo tee /etc/sudoers.d/nullexit
   ```
 
 ---
