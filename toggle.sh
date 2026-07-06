@@ -5,8 +5,8 @@
 set -e
 
 # Enforce Cryptographic Script Integrity
-if [ -x "scripts/crypto.sh" ]; then
-  if ! ./scripts/crypto.sh --verify; then
+if [ -f "scripts/crypto.sh" ]; then
+  if ! bash scripts/crypto.sh --verify; then
     exit 1
   fi
 fi
@@ -64,7 +64,9 @@ LOCK_FILE="/tmp/nullexit-toggle.lock"
 if [ -f "$LOCK_FILE" ]; then
   LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
   if [ -n "$LOCK_PID" ] && [ "$LOCK_PID" != "$$" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-    die "Another instance of toggle.sh (PID $LOCK_PID) is already running."
+    if ps -p "$LOCK_PID" -o args= 2>/dev/null | grep -q "toggle\.sh"; then
+      die "Another instance of toggle.sh (PID $LOCK_PID) is already running."
+    fi
   fi
 fi
 echo "$$" > "$LOCK_FILE"
@@ -170,9 +172,10 @@ start_dns_watcher() {
   stop_pidfile_daemon "/tmp/nullexit-dns-watcher.pid" "background DNS Watcher"
   echo "  Starting background DNS Watcher for seamless Wi-Fi roaming..."
   nohup bash -c "
+    source \"$SCRIPT_DIR/scripts/common.sh\"
     trap 'exit 0' SIGTERM SIGINT SIGHUP
     while true; do
-      ACTIVE_IF=\$(networksetup -listallnetworkservices | awk 'NR>1' | grep -v '*' | grep -i 'Wi-Fi' | head -1)
+      ACTIVE_IF=\$(get_active_service)
       if [ -n \"\$ACTIVE_IF\" ]; then
         CURRENT_DNS=\$(networksetup -getdnsservers \"\$ACTIVE_IF\" 2>/dev/null)
         if [ \"\$CURRENT_DNS\" != \"$target_ip\" ]; then
@@ -193,8 +196,8 @@ start_dns_watcher() {
 # WARP_FAIL_THRESHOLD consecutive polls (default 6 = 30s of downtime), the watcher
 # triggers a nuclear recovery: runs recover.sh to tear down the entire
 # gateway — disconnecting Tailscale, stopping containers, resetting DNS,
-# and power-cycling Wi-Fi. This guarantees no traffic ever leaks through
-# a dead WARP tunnel while the user thinks they're protected.
+# and power-cycling Wi-Fi. Note: This minimizes exposure window, but
+# only the pf kill switch guarantees absolutely zero leakage on drop.
 #
 # The threshold (default 6) is statistically chosen: even at an
 # unrealistically high 10% false-positive rate per poll, P(6 consecutive
@@ -442,6 +445,12 @@ setup_exit_node_routing() {
     sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
     sudo -n route add -net 0.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
     sudo -n route add -net 128.0.0.0/1 -interface "$ts_iface" >> output.log 2>&1 || true
+
+    if netstat -nr | grep -E -q "^(0\.0\.0\.0/1|0/1)[[:space:]]+.*$ts_iface"; then
+      echo "  [✓] Default route successfully overridden via $ts_iface."
+    else
+      echo "  [!] Failed to verify exit node routing on $ts_iface."
+    fi
   else
     echo "[Warning] Could not detect Tailscale utun interface for host routing."
   fi
@@ -709,20 +718,6 @@ reset_dns
 
 
 
-  # ── Local Network Surveillance Check ──────────────────────────────────────
-  echo -e "\n──────────────────────────────────────────────"
-  echo "Local Network Surveillance Check"
-  echo "──────────────────────────────────────────────"
-  # Count populated ARP cache entries to detect network scanning or high congestion
-  # Using '-an' avoids hanging on DNS reverse resolution when the network state is in transition.
-  ARP_COUNT=$(arp -an 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
-  if [ "$ARP_COUNT" -gt 15 ]; then
-    warn "High ARP activity detected ($ARP_COUNT devices in cache)."
-    warn "This Wi-Fi network may be heavily congested or actively scanned (e.g., arp-scan)."
-    echo -e "  [✓] Your traffic remains fully encrypted and invisible.\n"
-  else
-    echo -e "  [✓] Local network looks quiet ($ARP_COUNT devices). No aggressive scanning detected.\n"
-  fi
 
 echo "Checking Gateway Status..."
 HIJACK_HOST=$(read_env_var GATEWAY_HIJACK_HOST | tr '[:upper:]' '[:lower:]')
@@ -1192,6 +1187,21 @@ else
 
   # Tell external watchers (post-wake / network-change) the gateway is up.
   write_gateway_active_marker
+
+  # ── Local Network Surveillance Check ──────────────────────────────────────
+  echo -e "\n──────────────────────────────────────────────"
+  echo "Local Network Surveillance Check"
+  echo "──────────────────────────────────────────────"
+  # Count populated ARP cache entries to detect network scanning or high congestion
+  # Using '-an' avoids hanging on DNS reverse resolution when the network state is in transition.
+  ARP_COUNT=$(arp -an 2>/dev/null | grep -iv 'incomplete' | wc -l | tr -d ' ')
+  if [ "$ARP_COUNT" -gt 15 ]; then
+    warn "High ARP activity detected ($ARP_COUNT devices in cache)."
+    warn "This Wi-Fi network may be heavily congested or actively scanned (e.g., arp-scan)."
+    echo -e "  [✓] Your traffic remains fully encrypted and invisible.\n"
+  else
+    echo -e "  [✓] Local network looks quiet ($ARP_COUNT devices). No aggressive scanning detected.\n"
+  fi
 fi
 
 SUCCESS_RUN=true

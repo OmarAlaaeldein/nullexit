@@ -26,8 +26,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
 # Enforce Cryptographic Script Integrity
-if [ -x "scripts/crypto.sh" ]; then
-  if ! ./scripts/crypto.sh --verify; then
+if [ -f "scripts/crypto.sh" ]; then
+  if ! bash scripts/crypto.sh --verify; then
     exit 1
   fi
 fi
