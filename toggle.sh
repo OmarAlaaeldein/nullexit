@@ -4,6 +4,8 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Enforce Cryptographic Script Integrity
 if [ -f "scripts/crypto.sh" ]; then
   if ! bash scripts/crypto.sh --verify; then
@@ -38,7 +40,7 @@ TOGGLE_START_TIME=$SECONDS
 if [[ "$1" == "--restart" ]]; then
   echo "Executing Gateway Restart Sequence..."
   # We must source common.sh here temporarily to check is_gateway_active before we proceed
-  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
+  source "$SCRIPT_DIR/scripts/common.sh"
   if is_gateway_active; then
     echo "Gateway is currently running. Stopping it first..."
     bash "$0"
@@ -57,7 +59,7 @@ SUCCESS_RUN=false
 CURRENT_BG_PID=""
 
 # Source common bash functions
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"
+source "$SCRIPT_DIR/scripts/common.sh"
 
 # Prevent concurrent execution of toggle.sh
 LOCK_FILE="/tmp/nullexit-toggle.lock"
