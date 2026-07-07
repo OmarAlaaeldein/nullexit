@@ -313,10 +313,11 @@ cleanup_network_state() {
   echo "  Proxies disabled."
 
   # 2. Flush DNS cache
-  if command -v dscacheutil >> output.log 2>&1; then
+  if command -v resolvectl >> output.log 2>&1; then
     sudo -n resolvectl flush-caches 2>> output.log || true
+  elif command -v systemd-resolve >> output.log 2>&1; then
+    sudo -n systemd-resolve --flush-caches 2>> output.log || true
   fi
-  sudo -n killall -HUP mDNSResponder 2>> output.log || true
   echo "  DNS cache flushed."
 
   # 3. Flush stale routing table entries

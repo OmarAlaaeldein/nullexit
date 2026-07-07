@@ -39,7 +39,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | Host Port | Container Port | Protocol | Purpose |
 |-----------|---------------|----------|---------|
 | 5354 | 5335 | TCP+UDP | AdGuard DNS |
-| 80 | 80 | TCP | AdGuard web UI |
+| (Tailscale IP):3000 | 3000 | TCP | AdGuard web UI (Internal to Mesh) |
 | 41641 | 41641 | UDP | Tailscale WireGuard direct |
 | 1080 | 1080 | TCP | SOCKS5 proxy |
 
@@ -157,7 +157,7 @@ ip6tables: DROP FORWARD on tailscale0
 
 ---
 
-### 5.5 Tailscale Local Network Discovery (DERP Bypass)
+### 5.1 Tailscale Local Network Discovery (DERP Bypass)
 By default, Gluetun's strict NAT swallows all of Tailscale's UDP hole-punching packets, forcing Tailscale to fall back to incredibly slow DERP relay servers (often adding 500ms+ latency). 
 
 To fix this, we use `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0.0.0/8` in `docker-compose.yml` (on the `warp` container). This creates `ip rule` bypasses (Priority 99, Table 199) that route all packets destined for private IP ranges *outside* the WARP tunnel directly to the host's `eth0`. 
@@ -166,7 +166,7 @@ To fix this, we use `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0
 
 ---
 
-### 5.6 Firewalling & Per-Device Access Control
+### 5.2 Firewalling & Per-Device Access Control
 Because every mesh device's traffic passes through the `warp` container's network namespace, this namespace serves as the ultimate choke point for network-wide firewall rules.
 
 **Where to Put Rules**
@@ -577,38 +577,38 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 | `FIREWALL_OUTBOUND_SUBNETS` was the root cause | **Fixed** | Removed from `docker-compose.yml`. Gluetun no longer hijacks CGNAT routing. |
 | Host tailscaled error state from aggressive `tailscale down` | **Mitigated** | Toggle script now detects and auto-restarts. |
 
-### 10.14 Double-Tunneling MSS Clamping (Stalling Bug)
+### 11.1 Double-Tunneling MSS Clamping (Stalling Bug)
 
 **Problem:** Traffic double-wrapped through Tailscale (WireGuard) and WARP (WireGuard) suffered 120 bytes of MTU overhead (60 + 60). The default MSS clamp of 1180 was still slightly too large, causing large packets to fragment or drop, which resulted in mysterious web page stalls on strict-MSS endpoints.
 
 **Fix:** Lowered the TCP MSS clamp in `post-rules.txt` to `1120` to guarantee double-tunneled payloads fit safely within standard internet MTUs.
 
-### 10.15 Linux Native Wi-Fi Bouncing
+### 11.2 Linux Native Wi-Fi Bouncing
 
 **Problem:** The generated `scripts/recover-linux.sh` incorrectly retained the macOS `networksetup` commands, which would crash and fail to bounce Wi-Fi on Linux hosts.
 
 **Fix:** Swapped the macOS logic for native Linux commands. The script now attempts `nmcli radio wifi off/on` first, and gracefully falls back to `ip link set wl... down/up` if NetworkManager is unavailable.
 
-### 10.16 TS_AUTH_ONCE Cloud Footgun & Ephemeral Keys
+### 11.3 TS_AUTH_ONCE Cloud Footgun & Ephemeral Keys
 
 **Decision:** The compose file uses `TS_AUTH_ONCE=true` to prevent authentication loops. However, on headless cloud VPS deployments, if a standard auth key expires (usually 90 days), the container will silently drop off the mesh. We documented this trade-off explicitly in `docker-compose.yml` and recommended the use of **Tailscale Ephemeral Keys** for cloud deployments, which automatically clean themselves up and bypass this issue.
 
-### 10.17 Hardcoded AdGuard Credentials
+### 11.4 Hardcoded AdGuard Credentials
 
 **Decision:** AdGuard is deployed with the hardcoded credentials `admin / nullexit`. This is perfectly safe behind a NAT on a local macOS laptop. However, if deployed on a cloud host with exposed ports, this becomes a severe security risk. We added a stark warning comment in `docker-compose.yml` to ensure cloud users change this before deployment.
 
-### 10.18 Routing Fix: 30-second polling vs Netlink Socket
+### 11.5 Routing Fix: 30-second polling vs Netlink Socket
 
 **Decision:** Instead of building a complex Netlink socket listener (`ip monitor`) to react instantly to iptables and routing flushes from Gluetun, we retained the 5-second `sleep` loop in `scripts/routing-fix.sh`. 
 - **Reasoning:** Building a netlink listener in pure bash on Alpine is incredibly brittle and complex (especially for iptables events). The 30-second polling loop is bulletproof. The only trade-off is a potential 1-4 second stutter if Gluetun reconnects, which was deemed an acceptable edge case for absolute reliability.
 
-### 10.19 Cache Poisoning and URL Rot in scripts/sync-rules.py
+### 11.6 Cache Poisoning and URL Rot in scripts/sync-rules.py
 
 **Problem:** If a remote blocklist URL went permanently offline (404 Not Found), the Python `urllib` request would return the 404 HTML string. The script would aggressively regex-parse this HTML, find no domains, and overwrite the healthy local cache with a 0-domain file. This effectively disabled ad-blocking until the URL was fixed.
 
 **Fix:** Implemented a defensive programming sanity check in `scripts/sync-rules.py`. Before overwriting the cache, the script now verifies that the compiled domain count is greater than 10 (and 1 for IP feeds). If it falls below this threshold (indicating a catastrophic 404 failure across multiple URLs), it aborts the cache overwrite, raises a `ValueError`, and keeps the previous day's healthy cache intact.
 
-### 10.20 Cellular Networks & PMTUD Blackholes (The 1280 Byte Limit)
+### 11.7 Cellular Networks & PMTUD Blackholes (The 1280 Byte Limit)
 
 **Experiment:** Conducted a live packet sweep from the PC-1 host to Phone-1 connected via a cellular network + Tailscale DERP relay using `ping -D -s <size>`.
 
@@ -620,19 +620,19 @@ No FORWARD chain involved. No CGNAT rule involved. No table 199. It just works.
 
 **Conclusion:** This empirically validates the absolute necessity of the TCP MSS clamping rule in `post-rules.txt`. By artificially clamping the MSS to `1120` (or `1180`), we ensure the TCP payload + headers + double-WireGuard overhead never exceeds the strict 1280-byte ceiling of the cellular mesh link.
 
-### 10.21 Gluetun nf_tables Parser Crash (Bash Interpolation Failure)
+### 11.8 Gluetun nf_tables Parser Crash (Bash Interpolation Failure)
 
 **Problem:** Attempting to make the TCP MSS dynamically configurable by using a standard bash variable inside `post-rules.txt` (`iptables ... --set-mss ${GATEWAY_MSS:-1120}`) caused the Gluetun container to catastrophically crash during startup. Gluetun's internal parser executes `post-rules.txt` line by line without a shell, meaning the variable was never expanded. It literally attempted to inject the string `${GATEWAY_MSS:-1120}` into iptables, resulting in a fatal `bad value for option "--set-mss"` error.
 
 **Fix:** Removed the bash variable from `post-rules.txt` and reverted it to a pure hardcoded integer. To retain dynamic `.env` configuration, we moved the interpolation logic to `toggle.sh`. Right before Docker starts, the host script parses `GATEWAY_MSS` from the `.env` file and uses a cross-platform `sed` command to dynamically overwrite the integer directly inside `post-rules.txt`. This perfectly mimics manual configuration and completely bypasses Gluetun's strict parser.
 
-### 10.22 Seamless Wi-Fi Roaming & The macOS DNS Wipeout Loophole
+### 11.9 Seamless Wi-Fi Roaming & The macOS DNS Wipeout Loophole
 
 **Problem:** The Tailscale, WireGuard, and Colima NAT stacks are natively designed for connectionless roaming and will seamlessly survive when the macOS host switches Wi-Fi networks (e.g., roaming from home Wi-Fi to a cellular hotspot). However, the internet completely breaks upon network transition. This occurs because macOS intentionally wipes out all custom DNS settings (`networksetup -setdnsservers`) and reverts to the new network's default DHCP nameserver whenever the active Wi-Fi BSSID changes. Since the Mac is locked to the exit node, its DNS requests are swallowed by WARP and dumped onto the public internet, which cannot route private DHCP IPs. This results in a total DNS failure.
 
 **Solution:** Implementing a silent background "DNS Watcher" daemon (`nullexit-dns-watcher`) in `toggle.sh`. When the gateway starts, it spawns a background polling loop that checks the active Wi-Fi DNS every 30 seconds. If macOS resets the DNS during a network change, the watcher instantly detects the drift and forcefully re-injects `100.100.21.8` via `networksetup`. When the gateway stops, the watcher process is cleanly killed. This allows true, seamless roaming across physical networks without ever dropping the gateway state.
 
-### 10.23 The Infinite Recursive Routing Loop (Hotspot Paradox)
+### 11.10 The Infinite Recursive Routing Loop (Hotspot Paradox)
 
 **Problem:** A critical network topology crash occurs if the host Mac connects to a Mobile Hotspot (e.g., a Windows PC or Phone) that is *also* connected to the Tailscale mesh and has "Use Exit Node" enabled. Because the Mac is hosting the Exit Node, it routes its internet traffic to the Hotspot. The Hotspot intercepts the Mac's traffic on its way to the cellular tower and routes it *back* to the Exit Node (the Mac) via Tailscale. The Mac receives it, tries to send it out again, and the Hotspot intercepts it again. This creates an infinite, recursive encryption loop that instantly destroys network bandwidth and drops all connections.
 
@@ -663,7 +663,7 @@ route add -host 162.159.193.1 -interface en0
 
 This punches a tiny hole straight through the paradox, letting the Mac's WARP packets escape to the physical internet while keeping the rest of the upstream router's traffic securely trapped in the Tailscale Exit Node.
 
-### 10.24 AdGuard Filter Redundancy & Memory Optimization
+### 11.11 AdGuard Filter Redundancy & Memory Optimization
 
 **Problem:** AdGuard Home does not perform cross-list deduplication in memory. When it loads its own native subscription filters (e.g., `AdGuard DNS filter`) alongside our massive `compiled_rules.txt`, overlapping rules are loaded twice, wasting significant RAM in the Colima VM. The UI would show ~500k rules, representing the sum of all lists rather than unique domains.
 
@@ -675,7 +675,7 @@ This punches a tiny hole straight through the paradox, letting the Mac's WARP pa
 
 This reduces the final compiled output from ~325k to ~281k rules on the `heavy` profile, saving ~45k rules from being loaded into memory twice and reducing the overall RAM footprint of the `adguardhome` container.
 
-### 10.25 Kernel-Level IP Blocklist (Threat Intelligence Firewall)
+### 11.12 Kernel-Level IP Blocklist (Threat Intelligence Firewall)
 
 **Problem:** DNS sinkholing cannot stop malware or botnets that bypass DNS entirely by hardcoding direct IP addresses (a common technique for C2 communication). These connections pass straight through AdGuard unseen.
 
@@ -688,7 +688,7 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 
 **Memory cost:** The entire 16,721-entry ipset costs only ~1.6 MiB of kernel memory — negligible in the 600MB VM budget.
 
-### 10.26 Standalone Tailscale Daemon Freeze after macOS Sleep/Wake
+### 11.13 Standalone Tailscale Daemon Freeze after macOS Sleep/Wake
 
 **Problem:** When the macOS host goes to sleep and wakes up, the network interfaces and routing tables are rebuilt. The standalone `tailscaled` daemon (installed via Homebrew) occasionally fails to handle this transition and becomes completely frozen/unresponsive. In this state, any command like `tailscale down` or `tailscale status` hangs indefinitely, and all DNS requests sent to the local Tailscale resolver (`100.100.21.8`) time out, causing a total internet blackout on the host.
 
@@ -697,7 +697,7 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 2. **Auto-Recovery Loop:** If the daemon is unresponsive, the script now automatically attempts to restart the service using `brew services restart tailscale` (falling back to `sudo -n brew services restart tailscale`).
 3. **Graceful Retry:** Once restarted, the script pauses for 3 seconds for the daemon to initialize before proceeding with connection or teardown commands.
 
-### 10.27 macOS Sharing Services (AirDrop/AirPlay) Freeze on Network Transitions
+### 11.14 macOS Sharing Services (AirDrop/AirPlay) Freeze on Network Transitions
 
 **Problem:** When the gateway is turned on or off, the scripts perform network configuration cleanups which include flushing the routing tables (`route -n flush`), restarting the `mDNSResponder` daemon (`killall -HUP mDNSResponder`), and power-cycling the Wi-Fi interface (`setairportpower` or `ifconfig en0 down/up`). While AirDrop BLE discovery continues to function, the actual file transfers stall at "Waiting..." indefinitely.
 
@@ -707,7 +707,7 @@ This reduces the final compiled output from ~325k to ~281k rules on the `heavy` 
 1. The script now automatically runs `sudo -n killall sharingd rapportd` at the end of both the **START** path and the **STOP** path (as well as inside `recover.sh`).
 2. Killing these daemons forces macOS to immediately relaunch them, binding them fresh to the newly initialized network interfaces and routing tables, allowing AirDrop to work seamlessly while the gateway is active.
 
-### 10.28 Unlocking Mode-Locked Output Files Without `chmod` (→ `unlock-files.sh`)
+### 11.15 Unlocking Mode-Locked Output Files Without `chmod` (→ `unlock-files.sh`)
 
 **The one-command fix:** `bash scripts/unlock-files.sh` — replaces every known locked inode in the project with a fresh writable one. No `chmod`. Covers `.env` (mode `000`), `adguard/work/userfilters/compiled_rules.txt`, `ip_blocklist.ipset`, `cache/*.txt`, `cache/ip/*.txt`, and `adguard/work/data/filters/*.txt` (mode `0444`). Run it once after setup or after pulling an old repo; `toggle.sh` and `sync-rules.py` will then work without permission errors.
 
@@ -784,7 +784,7 @@ ls -la <FILE>             # mode should be 0644
 ```
 
 
-### 10.29 Gateway Breakage on Lid Close / Wi-Fi Roam — Post-Wake + Post-Roam Auto-Recovery
+### 11.16 Gateway Breakage on Lid Close / Wi-Fi Roam — Post-Wake + Post-Roam Auto-Recovery
 
 **Context / Symptom.** Closing the lid (sleep/wake) OR losing + reconnecting Wi-Fi (e.g. in an elevator, café, or roaming between APs) leaves the gateway in a partly-dead state. Symptoms range from a ~30s window of dead DNS to a permanent outage that only full `recover.sh` or `toggle.sh` fixes. The root cause is that nullexit has **no daemon watching macOS sleep/wake or network-state-change events** — the existing DNS Watcher inside `toggle.sh` only runs in-process and is suspended along with the rest of the user shell on lid close, so the gateway cannot self-heal after either event.
 
@@ -840,7 +840,7 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
   * `RunAtLoad: true` — starts immediately on `launchctl load` (no need to log out and back in)
   * `KeepAlive: { SuccessfulExit: false, Crashed: false }` — **don't** restart on clean SIGTERM exit (so `launchctl bootout` doesn't get stuck in a relaunch loop). Also **don't** restart on hard crash: we observed that macOS Sonoma+'s sleep/wake suspend-resume path accumulates orphan watcher.sh PIDs because SIGCONT does not reliably clean up the prior instance's listener grandchildren, and a `KeepAlive.Crashed=true`-driven relaunch actively races with the still-live prior process. The script enforces single-instance on its own via a `flock`-style PID-file lock, so a relaunch-on-crash would be skipped by the lock and produce   0 listener coverage until the live instance happened to die. Trade-off: a real crash leaves the user without auto-recovery until they run `launchctl load -w` manually — acceptable because (a) gateway still works without auto-recovery, (b) a relaunch wouldn't fix whatever caused the crash, and (c) the gateway-recovery itself is observably broken (no DNS, no exit-node) if it does go down.
 
-### 10.30 Host-Side Traffic Leaking Past the Exit Node (with Remote Clients Routing Correctly)
+### 11.17 Host-Side Traffic Leaking Past the Exit Node (with Remote Clients Routing Correctly)
 
 **Symptom.** `toggle.sh` reports success. Remote tailnet clients (e.g. an S24 phone) correctly egress through Cloudflare WARP and see a Cloudflare IP on `whatismyip.com`. But on the **HOST Mac running the gateway**, `whatismyip.com` reports the underlying physical ISP's ASN (e.g. `campus_isp` for a university campus Wi-Fi). The gateway container itself is healthy; the leak is specifically on the host.
 
@@ -1007,7 +1007,7 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
    * Force a DHCP rebind on the same SSID with `sudo ipconfig set en0 DHCP` — triggers `State:/Network/Global/IPv4` to update.
    * Trust the existing 30-second DNS Watcher inside `toggle.sh` for the DNS path: it re-hijacks DNS automatically. The post-wake watcher adds clear value mostly for tailscale exit-node re-assertion and warp gluetun force-recreate, both of which self-heal within ~30 s anyway.
 
-### 10.31 Infinite Egress Routing Loops & Subnet Takeover Paradoxes
+### 11.18 Infinite Egress Routing Loops & Subnet Takeover Paradoxes
 
 **Problem:** Two distinct network loops can break host egress connectivity entirely when the exit node is active:
 
@@ -1022,7 +1022,7 @@ Two findings came up while deploying this fix end-to-end; recording so the next 
 
 > See also §10.23 (The Hotspot Paradox) for the related infinite loop that occurs when the physical upstream router is also a Tailscale exit-node client.
 
-### 10.32 In-Flight WARP Tunnel Liveness Monitor & Statistical Auto-Shutdown
+### 11.19 In-Flight WARP Tunnel Liveness Monitor & Statistical Auto-Shutdown
 
 **Why.** nullexit's core promise is that your IP always appears as Cloudflare. If the WARP tunnel silently dies — due to a UDP NAT timeout, a Cloudflare edge rotation, a Colima VM clock skew causing TLS cert rejection, or any of a dozen other failure modes — the host silently falls back to egressing through the physical ISP. The user sees the gateway as "up" (containers running, Tailscale connected, DNS hijacked) but their real IP is exposed. This is the exact class of failure that Ingo Blechschmidt documented in his chilling 2024 Linux kernel post-mortem: for over two years, LUKS disk encryption on suspend was silently broken because a refactored kernel syscall returned success while doing nothing ([source](https://mathstodon.xyz/@iblech/116769502749142438)). The lesson: **a security mechanism that fails silently is worse than no mechanism at all** — it creates a false sense of safety that prevents the user from taking corrective action.
 
@@ -1059,7 +1059,7 @@ Or, if WARP self-recovers before the threshold:
 
 ---
 
-## 11. Recent Updates
+## 12. Recent Updates
 
 Reflects the current branch's state. Each entry one line + commit hash; read the commit message for detail.
 
@@ -1103,7 +1103,7 @@ Manual START → STOP cycle ran clean on macOS after the path relativization + p
 
 ---
 
-## 12. Privacy Architecture, Threat Model & Upgrades
+## 13. Privacy Architecture, Threat Model & Upgrades
 
 ### Layered Defense
 The gateway stacks four layers targeting different attack surfaces:
@@ -1176,7 +1176,7 @@ Plain Shadowsocks can still be caught by active-probing DPI in more aggressive c
 
 ---
 
-## 13. Per-Device Access Control
+## 14. Per-Device Access Control
 
 Because every mesh device routes internet-bound traffic through the `warp` container's `FORWARD` chain, they all appear with their stable `100.x.x.x` Tailscale IP as the `src` address. This gives two powerful enforcement surfaces:
 
@@ -1188,7 +1188,7 @@ Write raw `iptables` rules targeting specific devices. The 30-second idempotent 
 iptables -I FORWARD -s 100.x.x.x -d 203.0.113.0/24 -j DROP
 
 # Restrict a device to only HTTP/HTTPS
-iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 80 -j DROP
+iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 3000 -j DROP
 iptables -I FORWARD -s 100.x.x.x -p tcp ! --dport 443 -j DROP
 
 # Block a device from internet egress entirely (mesh only)
@@ -1214,7 +1214,7 @@ curl -X POST http://localhost:80/control/clients/add \
 
 ---
 
-## 14. Packaging nullexit as a macOS Application (.dmg)
+## 15. Packaging nullexit as a macOS Application (.dmg)
 
 nullexit can be packaged into a native `.app` bundle, but this introduces nested virtualization requirements.
 
@@ -1247,7 +1247,7 @@ Without a paid Apple Developer certificate ($99/yr), users see an "App is damage
 
 ---
 
-## 15. Moonlight/Sunshine + Tailscale Race Condition
+## 16. Moonlight/Sunshine + Tailscale Race Condition
 
 When streaming from a remote Windows host running Sunshine over a Tailscale mesh (e.g., while the client is on a cellular hotspot), a race condition can occur on boot:
 
@@ -1264,14 +1264,14 @@ On the Windows host, open `services.msc`, locate the **Sunshine Service**, and c
 
 ---
 
-## 16. Future Work
+## 17. Future Work
 
 - **Direct P2P on VM Hosts:** Non-Linux hosts run Docker inside a VM, making true UDP hole-punching impossible. The only working solution is a native Linux host (Raspberry Pi, Intel NUC) where Docker runs without VM hypervisor translation.
 - **Native Linux Deployment:** Benchmark on a Raspberry Pi — native container footprint is ~75MB without macOS hypervisor overhead.
 - **Mesh-Wide Filesystem (SFTP over Tailscale):** Any mesh device passively exposes its filesystem over SFTP. Android via Termux + OpenSSH + wakelock; iOS is client-only due to background process limits.
 - **Post-Quantum Cryptography (PQC):** Tailscale uses Curve25519, theoretically vulnerable to "harvest now, decrypt later" quantum attacks. A future iteration could replace the Tailscale container with raw WireGuard + [Rosenpass](https://rosenpass.eu/) to negotiate post-quantum PSKs.
 
-## 17. Geo-IP Blocking
+## 18. Geo-IP Blocking
 
 To block traffic to and from specific countries, the system dynamically downloads country-specific IP ranges from [ipdeny.com](http://www.ipdeny.com/ipblocks/data/countries/) and drops them via iptables `FORWARD` rules.
 
@@ -1284,7 +1284,7 @@ To add a new country to the blocklist:
 > [!NOTE]
 > **Limitations of Geo-IP Blocking:** IP-based blocking is highly effective at blocking servers, direct apps, and raw infrastructure physically located and registered in a specific country (e.g., `www.gov.il`). However, it will **not** block high-profile websites (e.g., `jpost.com`) that route their traffic through global Content Delivery Networks (CDNs) like Google Cloud, Cloudflare, or Fastly. Because the CDN's IP addresses are registered in the US or globally, the network traffic physically never routes to the blocked country, allowing it to bypass the Geo-IP firewall.
 
-## 18. Incident Post-Mortems
+## 19. Incident Post-Mortems
 
 ### Incident: The Overnight Silent IP Leak (July 2026)
 
@@ -1306,7 +1306,7 @@ To add a new country to the blocklist:
 > 1. **Automated Self-Healing (WARP Watcher + `recover.sh`):** Triggered when the `warp` container logs `warp=off`. This happens when the server actively kicks the client. Because the container *knows* it is disconnected, it triggers `recover.sh` to safely reboot Docker and reconnect.
 > 2. **Fail-Closed Kill-Switch (`routing-fix.sh` + `watcher.sh`):** Triggered when a silent network failure occurs (e.g., NAT timeouts). The container incorrectly believes it is connected (`warp=on`), so auto-recovery never fires. Instead of auto-recovering (which risks falling back to raw Wi-Fi mid-process while the user isn't looking), this kill-switch actively blackholes the internet and forces a manual intervention via a desktop notification.
 
-## 19. Design Decisions: Exit Node IP Rotation
+## 20. Design Decisions: Exit Node IP Rotation
 
 A common question for privacy architectures is whether the system should aggressively rotate its public exit IP (e.g., every 5 minutes, like a Tor circuit or a proxy rotator). 
 
@@ -1321,7 +1321,7 @@ A common question for privacy architectures is whether the system should aggress
 
 *(Note: The only exception where aggressive IP rotation is genuinely required is for specialized offensive security tasks—like high-volume web scraping or dark web research—where avoiding IP bans or active tracking overrides the need for TCP stability.)*
 
-## 20. Cloudflare WARP Privacy & Logging
+## 21. Cloudflare WARP Privacy & Logging
 
 Because `nullexit` uses Cloudflare WARP (via Gluetun) as its upstream exit node, the system inherits Cloudflare's consumer privacy policy.
 
@@ -1342,18 +1342,18 @@ Cloudflare WARP provides excellent **historical privacy**. Because they do not l
 
 ---
 
-## 13. Battery & Power Measurement Quirks
+## 22. Battery & Power Measurement Quirks
 
 When trying to optimize this framework (or any daemon) for battery life, developers often look for a way to programmatically measure the exact Wattage consumed by a specific process (e.g., "How many Watts is `toggle.sh` using?"). 
 
 **This is a hardware impossibility on macOS and Linux.**
 
-### 13.1 Why Activity Monitor is Lying to You
+### 22.1 Why Activity Monitor is Lying to You
 Your machine's logic board only has physical power sensors for the *entire* CPU package, the GPU, and the RAM. It knows the CPU is pulling 5W total, but it has no physical hardware capability to know whether Docker is using 3W and Chrome is using 2W. 
 
 The "Energy Impact" score you see in macOS Activity Monitor is a **synthetic, heuristic score** calculated by `powerd`. It penalizes apps for waking up the CPU (idle wakes), doing disk I/O, or keeping the screen awake. It is a relative score, not actual Wattage.
 
-### 13.2 The Proper A/B Testing Methodology
+### 22.2 The Proper A/B Testing Methodology
 If you want to truly know how many Watt-hours or mAh your background daemons (`routing-fix.sh`, `host-leak-probe.sh`, etc.) are costing you, you must perform a hardware-level A/B drain test:
 
 1. Unplug the laptop, run the gateway, and note your exact battery mAh using:
@@ -1368,7 +1368,7 @@ The delta in mAh drained between the two tests is the true, exact cost of runnin
 
 ---
 
-## 14. Architectural Limitations: Host Lockdown Mode
+## 23. Architectural Limitations: Host Lockdown Mode
 
 A common privacy feature request is a "Host Lockdown Mode" (Mode 3): A mode where the Docker exit node remains perfectly functional for remote devices, but the host machine itself is completely blocked from accessing the internet (to prevent even encrypted host traffic from leaking metadata).
 
@@ -1379,7 +1379,7 @@ However, Docker on macOS runs inside a Linux Virtual Machine (via `qemu` or Appl
 
 Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs, allow Tailscale DERP IPs, but block everything else" is highly fragile and heavily discouraged. Since the current `toggle.sh` default mode already fully encrypts the host's traffic via the WARP tunnel, the host is already protected from ISP leaks.
 
-### 10.31. July 4, 2026: Multi-stage Docker Builds for Go Ports & Teardown Hang Fix
+### 23.1 July 4, 2026: Multi-stage Docker Builds for Go Ports & Teardown Hang Fix
 **Symptom:** The Python implementations of `logger.py` and `sync-rules.py` were slow and required a heavy python runtime inside Alpine containers. Also, `routing-fix` container teardown was hanging for 30s during `toggle.sh` shutdown.
 **Root Cause:**
 - Python is slower than Go and installing it dynamically via `apk add` added overhead and complexity to the containers.
@@ -1391,7 +1391,7 @@ Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs
 - Added `stop_grace_period: 1s` to `routing-fix` in `docker-compose.yml` which eliminates the 30-second teardown hang instantly.
 - Implemented a cryptographic integrity checker (`scripts/crypto.sh`) using HMAC-SHA256 and `NULLEXIT_SEED` in `.env` to prevent tampering of bash scripts.
 
-### 10.32. July 4, 2026: Consolidation of Core Bash Scripts (Refactoring)
+### 23.2 July 4, 2026: Consolidation of Core Bash Scripts (Refactoring)
 **Symptom:** Over 200 lines of bash logic were directly duplicated across `toggle.sh` and `recover.sh` (e.g. `restart_tailscaled_daemon`, `stop_sleep_prevention`, WARP bypass routes). This caused drift when one script was updated without the other.
 **Root Cause:**
 - Historical separation of responsibilities allowed `recover.sh` to grow complex alongside `toggle.sh`.
@@ -1403,7 +1403,7 @@ Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs
 
 ---
 
-### 10.33. July 4, 2026: The "Network Unreachable" Host Leak & Post-Wake Container Destructions
+### 23.3 July 4, 2026: The "Network Unreachable" Host Leak & Post-Wake Container Destructions
 **Symptom:**
 1. Running `docker compose config` with dummy keys corrupted the user's `.env` file by appending invalid WireGuard keys. This caused the `warp` container to become unhealthy on boot, which triggered a full teardown of the gateway by `toggle.sh`.
 2. After fixing `.env`, `toggle.sh` successfully booted the gateway, but the host's internet started bypassing the tunnel entirely (a massive host leak). The Cloudflare trace returned `warp=off` and exposed the host's physical ISP IP.
@@ -1420,7 +1420,7 @@ Writing complex macOS `pf` rules to "allow the VM app, allow Cloudflare WARP IPs
 - Changed the health check in `recover.sh` to use `wget -qO- --timeout=3` which is natively installed in the Gluetun image. This stopped the unnecessary destructive recreations of the containers during post-wake events.
 - Reverted the `restart` alias in `toggle.sh` to strictly require `--restart`.
 
-### 10.34. July 4-5, 2026: Tailscale Data-Plane Loop (The DERP Relay Deadlock)
+### 23.4 July 4-5, 2026: Tailscale Data-Plane Loop (The DERP Relay Deadlock)
 **Symptom:**
 After bypassing the Tailscale control plane (`192.200.0.0/16`) to fix the "offline" mesh status, the Mac appeared online. However, external peer devices (like the user's phone on cellular) could not successfully ping or SSH into the Mac. `tailscale netcheck` reported `Nearest DERP: unknown (no response to latency probes)`.
 
@@ -1432,7 +1432,7 @@ While bypassing the control plane kept the daemon connected to the coordination 
 - The script parses out all active DERP relay IPv4 addresses (~80 IPs) and adds a physical host bypass route for every single one of them.
 - These IPs are written to a temporary file (`/tmp/nullexit-derp-ips.txt`) so they can be cleanly un-routed by `remove_warp_bypass_routes` when the gateway shuts down. Peer connectivity (ping, SSH, SFTP) was fully restored.
 
-### 10.35. July 5, 2026: Hardcoded WARP Endpoints in docker-compose
+### 23.5 July 5, 2026: Hardcoded WARP Endpoints in docker-compose
 **Symptom:**
 The bash scripts allowed overriding the default Cloudflare WARP IP endpoints via `.env` variables (`WARP_ENDPOINT_1` and `WARP_ENDPOINT_2`) to establish bypass routes. However, `docker-compose.yml` statically hardcoded `162.159.192.1` for the `warp` container's `WIREGUARD_ENDPOINT_IP`.
 
@@ -1442,7 +1442,7 @@ If a user set a custom endpoint in `.env`, the script would successfully bypass 
 **Resolution:**
 Modified `docker-compose.yml` to dynamically read the environment variable via `${WARP_ENDPOINT_1:-162.159.192.1}`, ensuring both the host routing scripts and the container use the exact same endpoint.
 
-### 10.36. July 6, 2026: Packet Filter (pfctl) Defaulting Local LAN Rules to TCP-Only
+### 23.6 July 6, 2026: Packet Filter (pfctl) Defaulting Local LAN Rules to TCP-Only
 **Symptom:**
 Devices on the exact same local Wi-Fi network as the gateway were experiencing ~500ms latency to the gateway instead of the expected ~80ms.
 
@@ -1454,28 +1454,28 @@ Split the single implicit rule into explicit `proto tcp`, `proto udp`, and `prot
 
 ---
 
-## 15. Censorship-Resistant Transport (Shadowsocks / Obfuscation)
+## 24. Censorship-Resistant Transport (Shadowsocks / Obfuscation)
 
-### 15.1 Why this is needed
+### 24.1 Why this is needed
 
 WARP can be blocked from deployment countries with strict internet controls. The most likely cause isn't that "encrypted traffic is blocked" in general — it's that WireGuard has a recognizable handshake signature, and `WIREGUARD_ENDPOINT_IP=162.159.192.1` on `WIREGUARD_ENDPOINT_PORT=2408` is a fixed, easily-enumerable target (Cloudflare's known WARP range). That combination is exactly what IP/ASN-based and DPI-based blocking is good at catching.
 
-### 15.2 Important correction: Gluetun's `SHADOWSOCKS=on` is the wrong direction
+### 24.2 Important correction: Gluetun's `SHADOWSOCKS=on` is the wrong direction
 
 Gluetun's built-in Shadowsocks option runs a Shadowsocks **server** inside the already-connected VPN tunnel, so other LAN devices can reach out through Gluetun's *existing* connection via the SS protocol. It is not a way to make Gluetun itself connect **outbound** through a Shadowsocks server — Gluetun only speaks OpenVPN or WireGuard as its actual transport. There is no `VPN_TYPE=shadowsocks`. Confirmed against Gluetun's own maintainer/community discussion: people have asked for a "Shadowsocks-client" mode specifically to chain through Gluetun, and the standing answer is "run a separate Shadowsocks client container."
 
-### 15.3 Diagnose before building anything
+### 24.3 Diagnose before building anything
 
 The right fix depends entirely on what's actually being blocked:
 
 - Point Gluetun at a **different provider/IP/ASN** (any other Gluetun-supported WireGuard/OpenVPN provider, or a self-hosted WireGuard server) and test. If that gets through, the block is Cloudflare/WARP-specific, not a general WireGuard block — **no new component needed**, just swap `VPN_SERVICE_PROVIDER` / the endpoint.
 - If WireGuard fails regardless of endpoint, the block is protocol-level (DPI fingerprinting the handshake) — go to 15.5.
 
-### 15.4 Path A: Swap WARP for a different Gluetun-native transport
+### 24.4 Path A: Swap WARP for a different Gluetun-native transport
 
 Simplest fix, only applies if 15.3 shows the block is Cloudflare-specific. Change `VPN_SERVICE_PROVIDER` / `VPN_TYPE` / endpoint in `docker-compose.yml` and in the now-centralized `WARP_ENDPOINT_*` values in `.env`. Nothing else in the stack needs to change.
 
-### 15.5 Path B: Add an obfuscation hop
+### 24.5 Path B: Add an obfuscation hop
 
 Needed if WireGuard itself is being fingerprinted/blocked. Two ways to slot it in:
 
@@ -1485,18 +1485,18 @@ Needed if WireGuard itself is being fingerprinted/blocked. Two ways to slot it i
 
 **Recommendation: B1.** Smaller surface area, preserves the self-healing architecture already built and documented.
 
-### 15.6 Fingerprinting caveat
+### 24.6 Fingerprinting caveat
 
 Plain Shadowsocks can still be caught by active-probing DPI in more aggressive censorship environments. If plain SS gets blocked too, the next step up is an obfuscation plugin (`v2ray-plugin`, `Cloak`) or a newer protocol designed against active probing (VLESS+Reality, Hysteria2). Test plain SS first — don't over-build before confirming it's needed.
 
-### 15.7 AmneziaWG (The High-Speed Alternative)
+### 24.7 AmneziaWG (The High-Speed Alternative)
 
 If you want to maintain the bare-metal speeds of WireGuard while bypassing DPI (e.g. in Egypt or Russia), the best alternative to Shadowsocks/V2Ray is AmneziaWG. AmneziaWG is a fork of WireGuard that pads the handshake packets with randomized "junk" data, entirely destroying the 148-byte DPI signature that firewalls look for.
 
 - **Pros:** Because it runs entirely as UDP without TCP-over-TCP overhead, it completely avoids "TCP meltdown" latency spikes associated with Shadowsocks/V2Ray wrappers.
 - **Cons:** You cannot use Cloudflare WARP. Furthermore, it requires completely ripping Gluetun out of the `nullexit` stack and building a custom Docker container, meaning you lose Gluetun's built-in kill-switches and health-check logic.
 
-### 15.8 Infrastructure Costs & Privacy
+### 24.8 Infrastructure Costs & Privacy
 
 To use either Shadowsocks (Path B) or AmneziaWG, you cannot use the free Cloudflare WARP infrastructure, because Cloudflare servers only speak standard WireGuard. The software for both custom protocols is 100% free and open-source, but you must host the remote server infrastructure yourself. 
 
@@ -1505,11 +1505,11 @@ To use either Shadowsocks (Path B) or AmneziaWG, you cannot use the free Cloudfl
 
 ---
 
-## 16. TODO
+## 25. TODO
 
 
 
-### 16.1 Comparative Ping Test (Latency Benchmarking)
+### 25.1 Comparative Ping Test (Latency Benchmarking)
 
 To baseline and verify the latency overhead introduced by the `nullexit` chained gateway (Tailscale + Cloudflare WARP), perform a comparative ping test. This benchmarks the routing latency under two conditions: **without nullexit** (baseline/clear internet) and **with nullexit active** (routed through the double-encrypted mesh). Both the baseline tests and the active mesh tests will be done on the same Wi-Fi network and cellular connection.
 

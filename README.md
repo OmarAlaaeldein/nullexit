@@ -142,7 +142,7 @@ A native macOS Packet Filter (`pf`) kill-switch that enforces a strict default-d
 - **Remote-Access Safe:** Carefully designed to whitelist Tailscale's control plane (`192.200.0.0/16`), `utun*` tunnel traffic, and local LAN subnets. This guarantees that your remote SSH sessions and local AirDrop will survive even when the kill switch engages.
 - **Setup Requirement:** The toggle scripts need permission to manipulate the network and firewall in the background without prompting you for a password. You must configure your passwordless sudo config by running exactly:
   ```bash
-  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl, /usr/sbin/networksetup, /usr/bin/dscacheutil, /usr/bin/killall, /usr/bin/pkill, /bin/kill, /sbin/route, /sbin/ifconfig, /usr/bin/true, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/python3, /opt/homebrew/bin/python3, /usr/local/bin/python3" | sudo tee /etc/sudoers.d/nullexit
+  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl, /usr/sbin/networksetup, /usr/bin/dscacheutil, /usr/bin/killall, /usr/bin/pkill, /bin/kill, /sbin/route, /sbin/ifconfig, /usr/bin/true, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/python3 $PWD/scripts/dns-proxy.py, /opt/homebrew/bin/python3 $PWD/scripts/dns-proxy.py, /usr/local/bin/python3 $PWD/scripts/dns-proxy.py" | sudo tee /etc/sudoers.d/nullexit
   ```
 
 ---
@@ -247,7 +247,9 @@ GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 
 ### Cryptographic Integrity Verification
 
-nullexit uses a built-in cryptographic integrity checker to prevent malware or tampering. During setup, a 256-bit `NULLEXIT_SEED` is injected into your `.env` file. The core entrypoint scripts (`toggle.sh`, `recover.sh`, etc.) are hashed using HMAC-SHA256, and their signatures are stored in `.signatures`. 
+nullexit uses a built-in cryptographic integrity checker designed to provide tamper-*evidence* against accidental edits, logic bugs, or non-privileged malware. During setup, a 256-bit `NULLEXIT_SEED` is injected into your `.env` file. The core entrypoint scripts (`toggle.sh`, `recover.sh`, etc.) are hashed using HMAC-SHA256, and their signatures are stored in `.signatures`. 
+
+*(Note: This is not a strict boundary against an attacker who already has write access to the repo, as they could simply read the seed and re-sign the scripts. It is designed as a strict footgun-catcher).*
 
 If any script is modified without authorization, the gateway will loudly fail to boot. If you make intentional edits to the bash scripts, you must re-sign them by running:
 ```bash
