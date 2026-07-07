@@ -118,7 +118,7 @@ step "Stopping sleep prevention"
 PID_FILE="/tmp/nullexit-caffeinate.pid"
 if [ -f "$PID_FILE" ]; then
   INHIBIT_PID=$(cat "$PID_FILE")
-  if [ -n "$INHIBIT_PID" ] && kill -0 "$INHIBIT_PID" 2>/dev/null && ps -p "$INHIBIT_PID" -o comm= 2>/dev/null | grep -q systemd-inhibit; then
+  if [ -n "$INHIBIT_PID" ] && kill -0 "$INHIBIT_PID" 2>/dev/null; then
     kill "$INHIBIT_PID" 2>/dev/null || true
     ok "Sleep prevention stopped (PID $INHIBIT_PID)"
   else
