@@ -787,7 +787,17 @@ else
   else
     echo "Colima is already running."
   fi
-  # 3b. Configure swap file inside the VM to prevent OOM on low-memory limits
+
+  # 3b. Auto-detect and fix Docker Subnet Collisions (e.g. if the user travels to a 172.17.x.x Wi-Fi)
+  if [ -f "scripts/fix-docker-bridge-collision.sh" ]; then
+    if bash scripts/fix-docker-bridge-collision.sh --dry | grep -q "collision detected"; then
+      echo -e "\n[!] WARNING: Docker Subnet Collision Detected with your current Wi-Fi!"
+      echo -e "    Auto-fixing Colima config to prevent internet jitter..."
+      bash scripts/fix-docker-bridge-collision.sh --skip-toggle || true
+    fi
+  fi
+
+  # 3c. Configure swap file inside the VM to prevent OOM on low-memory limits
   # We also set vm.swappiness=10 so the Linux kernel strictly prefers physical RAM
   # and avoids unnecessarily wearing out the SSD with proactive background swapping.
   if ! run_with_timeout 15 colima ssh -- grep -q 'swapfile' /proc/swaps >> output.log 2>&1; then
