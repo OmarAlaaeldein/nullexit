@@ -193,7 +193,7 @@ See `devref.md §10.29` for the full deep dive.
 - **AirDrop / AirPlay:** Unaffected — the gateway only touches standard Wi-Fi/Ethernet interfaces, not `awdl0`.
 - **VPN coexistence:** Do **not** run a local VPN client (WARP, Mullvad, NordVPN) simultaneously with the exit node. Both fight for the default route and will blackhole your connection.
 - **Banking & financial sites:** May intermittently block logins through WARP. Banks use anti-fraud databases that flag datacenter IP ranges (like Cloudflare's `104.28.x.x`) as VPN/proxy traffic. Success fluctuates depending on which WARP IP you land on. If a site blocks you, either disable the exit node temporarily for that session or use the bank's mobile app (which often uses different fraud detection).
-- **MSS clamping:** Double-tunnelling adds ~120-160 bytes of overhead per packet. On cellular or hotspot connections (MTU 1280), set `GATEWAY_MSS=1120` in `.env` to prevent stalls. On standard Wi-Fi (MTU 1500), `GATEWAY_MSS=1180` is fine.
+- **MSS clamping (Bufferbloat):** Double-tunnelling adds ~120-160 bytes of overhead per packet. This is now automatically handled natively via the macOS `pf` firewall, which universally applies TCP MSS Clamping to all outbound packets to strictly prevent MTU fragmentation and bufferbloat. No manual `.env` configuration is required.
 
 ---
 
@@ -220,6 +220,7 @@ See `devref.md §8` for the full threat model, Snowden programme analysis, and t
 - **`output.log`** — All stderr from `toggle.sh`, `recover.sh`, `setup.sh`, and the rule-compiler is written here. The WARP Watcher (`WARP_FAIL_THRESHOLD`) and the Host Leak Probe (`HOST_LEAK_PROBE`) also write all their events here — `LEAK`, `ROTATE`, `HOST-PROBE failed`, and WARP shutdown notices. Check this first.
 - **`bash scripts/diagnose-host-leak.sh`** — One-shot host-routing diagnostic. Classifies your state into one of three known leak scenarios (SOCKS5 fallback, IPv6 leak, route-table freeze) or OK, and prints the exact fix command. Pass `--fix` to apply the remediation automatically. Pass `--watch` (or `--watch 30`) to run a full baseline diagnostic then continuously monitor warp/IPv6/default-route for leaks, alerting on any state change.
 - **`bash scripts/host-leak-probe.sh`** — Sub-second host-egress prober (enabled automatically via `HOST_LEAK_PROBE=true` in `.env`). Polls `cdn-cgi/trace` every 300ms directly from the host NIC — not via `docker exec` — so it catches flash-leaks invisible to the in-container WARP Watcher. All state changes, curl errors, and probe timeouts land in `output.log`. Grep with `grep LEAK output.log`.
+- **`bash scripts/fix-docker-bridge-collision.sh`** — One-shot fix for Docker bridge IP conflicts. If your local Wi-Fi router assigns you an IP in the `172.17.0.0/16` range, it will violently collide with Docker's default internal bridge, permanently killing your internet. This script detects the collision and auto-patches your Colima VM to use a safe subnet (e.g. `10.200.0.1/24`).
 - **`devref.md`** — Complete architecture reference, routing deep-dives, and full resolved-issues log. Read this before modifying any routing or firewall logic.
 
 > [!CAUTION]

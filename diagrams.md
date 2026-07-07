@@ -16,6 +16,7 @@ graph TB
 
     subgraph MACHOST["💻 macOS Host"]
         direction TB
+        PFFIREWALL["macOS pf Firewall\n(Kill-Switch & TCP MSS Clamping)"]
         TSDAEMON["tailscaled\n(brew service)\nhost Tailscale"]
         HOSTDNS["Host DNS\n→ Gateway IP\n(hijacked by toggle.sh)"]
         HOSTSOCKS["Host SOCKS5\n127.0.0.1:1080\n(fallback only)"]
@@ -51,7 +52,8 @@ graph TB
     PHONE -->|"WireGuard / Tailscale mesh"| TSDAEMON
     TSDAEMON -->|"exit-node route utun*"| TS
     TS -->|"FORWARD → tun0 (MASQUERADE)"| GLUETUN
-    GLUETUN -->|"WireGuard UDP"| CF
+    GLUETUN -->|"WireGuard UDP (macOS Host Egress)"| PFFIREWALL
+    PFFIREWALL -->|"TCP MSS Clamped / Kill-Switch check"| CF
 
     %% DNS
     HOSTDNS -->|"UDP:53 → TCP:5354"| ADGUARD
@@ -225,7 +227,9 @@ sequenceDiagram
     PHONE->>TS_HOST: WireGuard packet<br/>(encrypted, UDP 41641)
     TS_HOST->>TS_CONTAINER: route via utun* → tailscale0
     TS_CONTAINER->>GLUETUN: FORWARD chain<br/>(iptables MASQUERADE on tun0)
-    GLUETUN->>CF: WireGuard tunnel (tun0)<br/>re-encrypted
+    GLUETUN->>TS_HOST: WireGuard tunnel (tun0) egresses macOS Host
+    Note over TS_HOST: macOS pf Firewall applies<br/>Kill-Switch & TCP MSS Clamping
+    TS_HOST->>CF: re-encrypted UDP packet (MSS 1160)
     CF->>INTERNET: Plain HTTPS from<br/>Cloudflare IP
 
     Note over PHONE,INTERNET: DNS Resolution path
