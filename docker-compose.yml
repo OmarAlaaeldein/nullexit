@@ -87,6 +87,9 @@ services:
       # (Note: For headless/cloud deployments, you can bypass this footgun by
       # using Tailscale Ephemeral Keys which auto-clean themselves).
       - TS_AUTH_ONCE=true
+      # MTU Optimization: Force Tailscale packets to be smaller than WARP's 1280 MTU
+      # to prevent WireGuard-in-WireGuard fragmentation, completely eliminating bufferbloat
+      - TS_DEBUG_MTU=1200
       # Enable Tailscale's built-in SOCKS5 proxy to route out of the WARP tunnel
       - TS_SOCKS5_SERVER=:1080
     devices:
