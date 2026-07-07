@@ -31,7 +31,10 @@ jobs:
           python3 -m py_compile scripts/*.py
 
       - name: Install ShellCheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        run: |
+          wget -qO- https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz | tar -xJ
+          sudo mv shellcheck-v0.11.0/shellcheck /usr/local/bin/
+          rm -rf shellcheck-v0.11.0
 
       - name: Lint Shell Scripts
         run: |
