@@ -1155,20 +1155,6 @@ Generate in the Tailscale admin panel. Used once to authenticate; node disappear
 #### Pre-Shared Keys (PSKs)
 Add a WireGuard PSK between peer nodes. Adds a symmetric encryption layer that Tailscale's coordination server has no knowledge of, blinding it from reading transit content.
 
-### Censorship-Resistant Transport (Shadowsocks / Obfuscation)
-
-WARP can be blocked from deployment countries with strict internet controls. The most likely cause isn't that "encrypted traffic is blocked" in general — it's that WireGuard has a recognizable handshake signature, and `WIREGUARD_ENDPOINT_IP=162.159.192.1` on `WIREGUARD_ENDPOINT_PORT=2408` is a fixed, easily-enumerable target (Cloudflare's known WARP range). That combination is exactly what IP/ASN-based and DPI-based blocking is good at catching.
-
-**Important distinction regarding Gluetun:**
-Gluetun's built-in Shadowsocks option runs a Shadowsocks **server** inside the already-connected VPN tunnel. It is not a way to make Gluetun itself connect **outbound** through a Shadowsocks server — Gluetun only speaks OpenVPN or WireGuard as its actual transport. 
-
-**Diagnosis & Mitigation Paths:**
-If WireGuard is blocked, the right fix depends entirely on what's actually being blocked:
-
-- **Path A (Swap Provider):** Point Gluetun at a different provider/IP/ASN. If that gets through, the block is Cloudflare/WARP-specific, not a general WireGuard block. Just swap `VPN_SERVICE_PROVIDER` and the endpoint.
-- **Path B (Wrap with Sidecar):** If WireGuard itself is being fingerprinted/blocked, run a Shadowsocks (or obfs4/v2ray) client as a new sidecar container. Point Gluetun's `WIREGUARD_ENDPOINT_IP` at `127.0.0.1:<local-port>` instead of Cloudflare directly; the sidecar relays that traffic to a Shadowsocks server you run yourself abroad. This keeps Gluetun's kill-switch, healthchecks, and the entire rest of the stack untouched.
-
-Plain Shadowsocks can still be caught by active-probing DPI in more aggressive censorship environments. If plain SS gets blocked too, the next step up is an obfuscation plugin (`v2ray-plugin`, `Cloak`) or a newer protocol designed against active probing (VLESS+Reality, Hysteria2).
 
 ### Structural Limitations
 - **Traffic Analysis / Metadata:** Passive fiber tapping (UPSTREAM) can observe timestamps, data volumes, and IP ranges without reading content. Defeating traffic analysis requires mixing networks (Tor) or continuous dummy packet padding — both heavily degrade performance.
@@ -1454,117 +1440,57 @@ Split the single implicit rule into explicit `proto tcp`, `proto udp`, and `prot
 
 ---
 
-## 24. Censorship-Resistant Transport (Shadowsocks / Obfuscation)
+## 24. Censorship-Resistant Transport & Egress Compartmentalization
 
 ### 24.1 Why this is needed
-
 WARP can be blocked from deployment countries with strict internet controls. The most likely cause isn't that "encrypted traffic is blocked" in general — it's that WireGuard has a recognizable handshake signature, and `WIREGUARD_ENDPOINT_IP=162.159.192.1` on `WIREGUARD_ENDPOINT_PORT=2408` is a fixed, easily-enumerable target (Cloudflare's known WARP range). That combination is exactly what IP/ASN-based and DPI-based blocking is good at catching.
 
 ### 24.2 Important correction: Gluetun's `SHADOWSOCKS=on` is the wrong direction
-
 Gluetun's built-in Shadowsocks option runs a Shadowsocks **server** inside the already-connected VPN tunnel, so other LAN devices can reach out through Gluetun's *existing* connection via the SS protocol. It is not a way to make Gluetun itself connect **outbound** through a Shadowsocks server — Gluetun only speaks OpenVPN or WireGuard as its actual transport. There is no `VPN_TYPE=shadowsocks`. Confirmed against Gluetun's own maintainer/community discussion: people have asked for a "Shadowsocks-client" mode specifically to chain through Gluetun, and the standing answer is "run a separate Shadowsocks client container."
 
 ### 24.3 Diagnose before building anything
-
 The right fix depends entirely on what's actually being blocked:
-
 - Point Gluetun at a **different provider/IP/ASN** (any other Gluetun-supported WireGuard/OpenVPN provider, or a self-hosted WireGuard server) and test. If that gets through, the block is Cloudflare/WARP-specific, not a general WireGuard block — **no new component needed**, just swap `VPN_SERVICE_PROVIDER` / the endpoint.
-- If WireGuard fails regardless of endpoint, the block is protocol-level (DPI fingerprinting the handshake) — go to 15.5.
+- If WireGuard fails regardless of endpoint, the block is protocol-level (DPI fingerprinting the handshake) — proceed to obfuscation.
 
 ### 24.4 Path A: Swap WARP for a different Gluetun-native transport
-
-Simplest fix, only applies if 15.3 shows the block is Cloudflare-specific. Change `VPN_SERVICE_PROVIDER` / `VPN_TYPE` / endpoint in `docker-compose.yml` and in the now-centralized `WARP_ENDPOINT_*` values in `.env`. Nothing else in the stack needs to change.
+Simplest fix, only applies if 24.3 shows the block is Cloudflare-specific. Change `VPN_SERVICE_PROVIDER` / `VPN_TYPE` / endpoint in `docker-compose.yml` and in the now-centralized `WARP_ENDPOINT_*` values in `.env`. Nothing else in the stack needs to change.
 
 ### 24.5 Path B: Add an obfuscation hop
-
 Needed if WireGuard itself is being fingerprinted/blocked. Two ways to slot it in:
 
 **B1 — Wrap (recommended):** Run a Shadowsocks (or obfs4/v2ray) client as a new sidecar container. Point Gluetun's `WIREGUARD_ENDPOINT_IP` at `127.0.0.1:<local-port>` instead of Cloudflare directly; the sidecar relays that traffic to a Shadowsocks server you run yourself abroad. Keeps Gluetun's kill-switch, healthchecks, and the entire rest of the stack (Tailscale, AdGuard, ipset, `routing-fix.sh`) untouched, since none of them know the transport changed underneath `warp`.
 
-**B2 — Replace:** Swap the `warp` service entirely for a Shadowsocks-client + `tun2socks` container that owns the network namespace instead of Gluetun. More invasive — loses Gluetun's built-in kill-switch/healthcheck, which would need to be rebuilt by hand.
+**B2 — Replace:** Swap the `warp` service entirely for a Shadowsocks-client + `tun2socks` container that owns the network namespace instead of Gluetun. More invasive — loses Gluetun's built-in kill-switch/healthcheck, which would need to be rebuilt by hand (see Section 24.9 for the pluggable architecture to support this natively).
 
 **Recommendation: B1.** Smaller surface area, preserves the self-healing architecture already built and documented.
 
 ### 24.6 Fingerprinting caveat
-
 Plain Shadowsocks can still be caught by active-probing DPI in more aggressive censorship environments. If plain SS gets blocked too, the next step up is an obfuscation plugin (`v2ray-plugin`, `Cloak`) or a newer protocol designed against active probing (VLESS+Reality, Hysteria2). Test plain SS first — don't over-build before confirming it's needed.
 
 ### 24.7 AmneziaWG (The High-Speed Alternative)
-
 If you want to maintain the bare-metal speeds of WireGuard while bypassing DPI (e.g. in Egypt or Russia), the best alternative to Shadowsocks/V2Ray is AmneziaWG. AmneziaWG is a fork of WireGuard that pads the handshake packets with randomized "junk" data, entirely destroying the 148-byte DPI signature that firewalls look for.
-
 - **Pros:** Because it runs entirely as UDP without TCP-over-TCP overhead, it completely avoids "TCP meltdown" latency spikes associated with Shadowsocks/V2Ray wrappers.
 - **Cons:** You cannot use Cloudflare WARP. Furthermore, it requires completely ripping Gluetun out of the `nullexit` stack and building a custom Docker container, meaning you lose Gluetun's built-in kill-switches and health-check logic.
 
 ### 24.8 Infrastructure Costs & Privacy
-
 To use either Shadowsocks (Path B) or AmneziaWG, you cannot use the free Cloudflare WARP infrastructure, because Cloudflare servers only speak standard WireGuard. The software for both custom protocols is 100% free and open-source, but you must host the remote server infrastructure yourself. 
-
 - **Free Tier (Oracle Cloud):** You can host your remote server on Oracle Cloud's "Always Free" tier for $0. However, this routes your highly sensitive, censorship-evading traffic directly through Oracle—a massive corporate data broker. If privacy is the core objective, handing all your metadata to Oracle defeats the purpose.
 - **Paid Tier (Hetzner / Mullvad):** The recommended path is to rent a standard ~$4/month Virtual Private Server (VPS) in a free country (e.g., Hetzner in Germany, subject to strict EU GDPR privacy laws) and self-host the server. Alternatively, Mullvad VPN (€5/month) provides native v2ray/Shadowsocks bridges built into their network, allowing you to bypass censorship with a strict zero-logs policy. It is highly recommended to pay with untrackable payment methods to maintain complete anonymity, which these providers typically support without requiring local residency.
+
+### 24.9 The Future: Egress Compartmentalization (Pluggable Architecture)
+To natively support invasive replacement paths like **Path B2** or **AmneziaWG** (Section 24.7) without breaking the core `nullexit` routing and monitoring logic, the architecture must be refactored into a modular, "pluggable" design.
+
+1. **The Egress Plugin System:** Currently, WARP-specific logic (like `cdn-cgi/trace` health checks and hardcoded interface names) is scattered across `toggle.sh`, `scripts/routing-fix.sh`, and `scripts/host-leak-probe.sh`. This should be abstracted into a `scripts/plugins/` directory, where each egress method (`warp.sh`, `v2ray.sh`) implements standardized functions: `get_egress_interface()`, `check_health()`, and `get_bypass_ips()`.
+2. **Dynamic Docker Compose:** Based on an `EGRESS_TYPE` variable in `.env`, dynamic compose file generation would spin up only the required egress containers (e.g., skipping the `warp` container when `EGRESS_TYPE=v2ray` is set).
+3. **Agnostic Routing & Watchers:** `routing-fix.sh` would dynamically read the `EGRESS_INTERFACE` from the active plugin to apply `iptables` rules, and the background watchers in `toggle.sh` would become an agnostic `Egress Watcher` that invokes `check_health()` periodically.
+
+This compartmentalization transforms `nullexit` into a universal, censorship-resistant gateway where the entire egress layer can be swapped by changing a single `.env` variable and running `./toggle.sh --restart`.
 
 ---
 
 ## 25. TODO
 
+*No pending items.*
 
-
-### 25.1 Comparative Ping Test (Latency Benchmarking)
-
-To baseline and verify the latency overhead introduced by the `nullexit` chained gateway (Tailscale + Cloudflare WARP), perform a comparative ping test. This benchmarks the routing latency under two conditions: **without nullexit** (baseline/clear internet) and **with nullexit active** (routed through the double-encrypted mesh). Both the baseline tests and the active mesh tests will be done on the same Wi-Fi network and cellular connection.
-
-#### 16.2.1 Test Matrix
-
-The test compares three representative device network positions:
-1. **Cellular Device**: A remote client connected via cellular data (typically experiencing CGNAT and higher latency).
-2. **Wi-Fi Device**: A client on the same local Wi-Fi network as the gateway host.
-3. **Gateway Host**: The macOS host machine hosting the docker gateway itself.
-
-#### 16.2.2 Step-by-Step Execution
-
-##### Phase 1: Baseline Testing (Without nullexit)
-Ensure the gateway is stopped and exit-node routing is disabled on the clients.
-
-1. **Host Baseline**:
-   From the macOS host, ping a public server to establish standard internet latency:
-   ```bash
-   ping -c 10 1.1.1.1
-   ```
-2. **Wi-Fi Client Baseline**:
-   From the Wi-Fi client device (not using the exit node), ping the public server:
-   ```bash
-   ping -c 10 1.1.1.1
-   ```
-3. **Cellular Client Baseline**:
-   From the cellular device (not using the exit node), ping the public server:
-   ```bash
-   ping -c 10 1.1.1.1
-   ```
-
-##### Phase 2: Mesh Testing (With nullexit active)
-1. Turn on the gateway on the macOS host:
-   ```bash
-   ./toggle.sh
-   ```
-2. Set the client devices (cellular and Wi-Fi) to use the gateway as their **Tailscale Exit Node**.
-3. **Host Mesh Test**:
-   From the macOS host (which now intercepts and routes local egress through the tunnel), ping the public server:
-   ```bash
-   ping -c 10 1.1.1.1
-   ```
-4. **Wi-Fi Client Mesh Test**:
-   From the Wi-Fi client device (connected to the mesh and routing via the exit node), ping the public server:
-   ```bash
-   ping -c 10 1.1.1.1
-   ```
-5. **Cellular Client Mesh Test**:
-   From the cellular device (connected to the mesh and routing via the exit node), ping the public server:
-   ```bash
-   ping -c 10 1.1.1.1
-   ```
-
-#### 16.2.3 Expected Performance Analysis
-- **Host**: Latency will increase slightly due to the overhead of routing through the Colima VM network namespace and Cloudflare WARP edge.
-- **Wi-Fi Client**: Latency will be the sum of local Wi-Fi transport, Tailscale decryption on the host (negligible), and WARP exit routing.
-- **Cellular Client**: Latency will be highest due to cellular transport (often involving a Tailscale DERP relay if direct P2P cannot be established) coupled with the WARP tunnel overhead.
 
