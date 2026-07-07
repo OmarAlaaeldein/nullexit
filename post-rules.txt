@@ -20,3 +20,8 @@ ip6tables -A FORWARD -i tailscale0 -j DROP
 # Block DNS-over-TLS (Port 853) to force Android Private DNS to fallback to Port 53
 iptables -A FORWARD -i tailscale0 -p tcp --dport 853 -j REJECT --reject-with tcp-reset
 iptables -A FORWARD -i tailscale0 -p udp --dport 853 -j REJECT
+
+# Block QUIC (UDP 443) to force Facebook/Google to fallback to TCP.
+# UDP bypasses TCP MSS clamping, causing fragmentation. Over weak Wi-Fi (far from gateway), 
+# dropping a single fragment destroys the entire packet, stalling image downloads.
+iptables -A FORWARD -i tailscale0 -p udp --dport 443 -j REJECT
