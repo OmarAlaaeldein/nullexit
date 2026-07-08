@@ -252,7 +252,7 @@ start_warp_watcher() {
           # Nuclear recovery: tear down the entire gateway.
           # recover.sh resets DNS → 1.1.1.1, disconnects Tailscale,
           # stops Docker containers, flushes routes, power-cycles Wi-Fi.
-          bash \"\$recover_bin\" >> \"\$out_log\" 2>&1 || true
+          bash \"\$recover_bin\" --auto >> \"\$out_log\" 2>&1 || true
           echo \"[\$(date -u +%FT%TZ)] WARP SHUTDOWN — recover.sh completed, watcher exiting. Your IP is now your real ISP IP.\" >> \"\$out_log\"
           exit 0
         fi

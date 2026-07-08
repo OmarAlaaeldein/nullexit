@@ -20,11 +20,11 @@ setup_standard_path() {
   export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
 }
 
-step() { echo -e "\n${BLUE}${BOLD}▶ $*${NC}"; }
-ok()   { echo -e "  ${GREEN}✓ $*${NC}"; }
-warn() { echo -e "  ${YELLOW}⚠ $*${NC}"; }
-fail() { echo -e "  ${RED}✗ $*${NC}"; }
-die()  { echo -e "\n  ${RED}✗ $*${NC}\n"; exit 1; }
+step() { echo -e "\n[$(date '+%Y-%m-%d %H:%M:%S')] ${BLUE}${BOLD}▶ $*${NC}"; }
+ok()   { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')]   ${GREEN}✓ $*${NC}"; }
+warn() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')]   ${YELLOW}⚠ $*${NC}"; }
+fail() { echo -e "[$(date '+%Y-%m-%d %H:%M:%S')]   ${RED}✗ $*${NC}"; }
+die()  { echo -e "\n[$(date '+%Y-%m-%d %H:%M:%S')]   ${RED}✗ $*${NC}\n"; exit 1; }
 
 # ─── Helper Functions ────────────────────────────────────────────────────────
 

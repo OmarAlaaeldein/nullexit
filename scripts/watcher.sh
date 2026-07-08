@@ -36,7 +36,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 setup_standard_path
 
-LOG="/tmp/nullexit-watcher.log"
+LOG="$SCRIPT_DIR/../output.log"
 # Resolve our own directory; recover.sh lives one level up at the repo root.
 # This makes the daemon install-agnostic — no need to template the path
 # in launchd, no need to keep a deploy-specific hardcoded location in sync.
@@ -94,6 +94,7 @@ if [ -f "$MARKER" ]; then
   echo "[$(date -u +%FT%TZ)] watcher.sh → triggering initial post-wake (launchd resume = wake signal)"
   echo "$(date +%s)" > "$DEBOUNCE_FILE"
   bash "$RECOVER" --post-wake || true
+  echo "$(date +%s)" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] initial post-wake → exit=$?"
 fi
 
@@ -114,7 +115,9 @@ run_recover() {
   echo "$now" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] $why → bash $RECOVER --post-wake"
   bash "$RECOVER" --post-wake || true
-  echo "[$(date -u +%FT%TZ)] $why → exit=$? (now=$(date +%s))"
+  local exit_code=$?
+  echo "$(date +%s)" > "$DEBOUNCE_FILE"
+  echo "[$(date -u +%FT%TZ)] $why → exit=$exit_code (now=$(date +%s))"
 }
 
 # ─── Listener 1: WAKE events via unified log ───────────────────────────────
@@ -173,7 +176,7 @@ run_recover() {
     ) | script -q /dev/null scutil 2>/dev/null \
       | while IFS= read -r line; do
           case "$line" in
-            *n.state*|*SCEventUpdate*) run_recover "NET: $(echo "$line" | head -c 100)" ;;
+            *changedKey*|*State:/Network/Global/IPv*|*n.state*|*SCEventUpdate*) run_recover "NET: $(echo "$line" | head -c 100)" ;;
             *) ;;  # ignore informational `n.add`, `n.watch`, prompts
           esac
         done
