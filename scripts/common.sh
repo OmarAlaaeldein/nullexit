@@ -308,8 +308,8 @@ add_warp_bypass_routes() {
     sudo -n route add -host "$ep2" $routing_arg >> output.log 2>&1 || true
     
     echo -e "Adding host bypass routes for Tailscale control plane via $msg_via..."
-    sudo -n route delete -net 192.200.0.0/16 2>/dev/null || true
-    sudo -n route add -net 192.200.0.0/16 $routing_arg >> output.log 2>&1 || true
+    sudo -n route delete -net 192.200.0.0/24 2>/dev/null || true
+    sudo -n route add -net 192.200.0.0/24 $routing_arg >> output.log 2>&1 || true
 
     echo -e "Adding host bypass routes for Tailscale DERP relays via $msg_via..."
     local derp_ips
@@ -344,7 +344,7 @@ remove_warp_bypass_routes() {
     sudo -n route delete -host "$ep1" >> output.log 2>&1 || true
     sudo -n route delete -host "$ep2" >> output.log 2>&1 || true
     echo -e "Removing host bypass routes for Tailscale control plane..."
-    sudo -n route delete -net 192.200.0.0/16 >> output.log 2>&1 || true
+    sudo -n route delete -net 192.200.0.0/24 >> output.log 2>&1 || true
     if [ -f /tmp/nullexit-derp-ips.txt ]; then
       echo -e "Removing host bypass routes for Tailscale DERP relays..."
       while read -r ip; do

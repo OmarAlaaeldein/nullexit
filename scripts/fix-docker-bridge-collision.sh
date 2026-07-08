@@ -43,6 +43,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LOG_FILE="$PROJECT_ROOT/output.log"
+source "$SCRIPT_DIR/common.sh"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 COLIMA_YAML="$HOME/.colima/default/colima.yaml"
 PLATFORM="$(uname -s)"
@@ -66,17 +67,7 @@ case "${1:-}" in
     ;;
 esac
 
-# ─── Colours ────────────────────────────────────────────────────────────────
-if [ -t 1 ]; then
-  RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BOLD='\033[1m'; NC='\033[0m'
-else
-  RED=''; GREEN=''; YELLOW=''; BOLD=''; NC=''
-fi
-step()  { printf '\n%b▶ %s%b\n' "$BOLD" "$*" "$NC"; }
-ok()    { printf '  %b✓%b %s\n' "$GREEN" "$NC" "$*"; }
-warn()  { printf '  %b⚠%b %s\n' "$YELLOW" "$NC" "$*"; }
-fail()  { printf '  %b✗%b %s\n' "$RED"   "$NC" "$*"; }
-die()   { printf '\n  %b✗%b %s\n\n' "$RED" "$NC" "$*"; exit 1; }
+
 
 # Helper: print "[dry-run] $cmd" or actually run $cmd. Wraps the redirect
 # INSIDE the function so outer `>> $FILE` statements never accidentally
@@ -196,8 +187,8 @@ case "$HOST_GATEWAY" in
     ;;
 esac
 
-printf '  host address family: %s\\n' "$HOST_FAMILY"
-printf '  candidate pool:      %s\\n' "$CANDIDATES"
+printf '  host address family: %s\n' "$HOST_FAMILY"
+printf '  candidate pool:      %s\n' "$CANDIDATES"
 
 # Sanity-check the chosen pool has at least one entry that doesn't literally
 # share a /24 with the host gateway. Naive check (just /24 prefix) is fine

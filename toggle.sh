@@ -712,8 +712,7 @@ force_dns_to_gateway() {
 # during status checks, container startup, VM boot, or teardown. We *also* clear any leftover
 # `ts.net` search domain from a previous `tailscale up --accept-dns=true` run, otherwise macOS
 # would prepend it to every lookup and most public DNS queries would resolve to NXDOMAIN.
-# Capture current DNS before resetting so we can check if it was hijacked
-INITIAL_DNS=$(networksetup -getdnsservers "$ACTIVE_SERVICE" 2>> output.log || true)
+
 
 echo "Initializing DNS to 1.1.1.1 to ensure reliable internet access..."
 reset_dns
@@ -1159,6 +1158,10 @@ else
     if curl --socks5-hostname 127.0.0.1:$SOCKS_PROXY_PORT --max-time 10 -s https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "warp=on"; then
       echo "ok (warp=on)."
       echo "  All TCP traffic now encrypted through Cloudflare WARP tunnel."
+      if is_kill_switch_enabled; then
+        add_warp_bypass_routes
+        enable_killswitch
+      fi
     else
       echo "FAILED (proxy not routing through WARP)."
       echo "  Disabling SOCKS5 proxy — internet stays on direct connection."
