@@ -42,10 +42,14 @@ fi
 #              while /tmp/nullexit-gateway-active.marker is present (i.e. the
 #              gateway is currently up). See devref.md §10.29 for the why.
 POST_WAKE=false
-if [ "${1:-}" = "--post-wake" ]; then
-  POST_WAKE=true
-  shift
-fi
+AUTO_MODE=false
+for arg in "$@"; do
+  if [ "$arg" = "--post-wake" ]; then
+    POST_WAKE=true
+  elif [ "$arg" = "--auto" ] || [ "$arg" = "--non-interactive" ]; then
+    AUTO_MODE=true
+  fi
+done
 
 rm -f "$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker"
 
@@ -80,7 +84,7 @@ fi
 # would block forever waiting for a password. All post-wake commands use `sudo -n`
 # which is non-blocking and relies on /etc/sudoers.d/nullexit NOPASSWD entries.
 SUDO_KEEPER_PID=""
-if [ "$POST_WAKE" = "false" ]; then
+if [ "$POST_WAKE" = "false" ] && [ "$AUTO_MODE" = "false" ] && [ -t 0 ]; then
   echo -e "${YELLOW}${BOLD}Authentication required for network recovery...${NC}"
   sudo -v
   (
