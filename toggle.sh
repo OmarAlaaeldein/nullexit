@@ -97,6 +97,8 @@ run_gui_cmd() {
 # so a half-broken gateway never re-triggers post-wake refreshes.
 write_gateway_active_marker() {
   date -u +%FT%TZ > /tmp/nullexit-gateway-active.marker
+  # Set the watcher debounce timestamp to now to prevent a redundant post-startup recovery run.
+  date +%s > /tmp/nullexit-watcher.last-recovery 2>/dev/null || true
 }
 
 clear_gateway_active_marker() {

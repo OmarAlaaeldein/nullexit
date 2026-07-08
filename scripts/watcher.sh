@@ -90,14 +90,6 @@ echo "[$(date -u +%FT%TZ)] watcher.sh start (pid=$$ ppid=$PPID user=$(id -un) lo
 # in run_recover() make this idempotent: if the gateway isn't up or we just
 # debounced, it no-ops. Without this, the FIRST wake-after-install goes
 # unseen and the watcher appears broken until the SECOND wake.
-if [ -f "$MARKER" ]; then
-  echo "[$(date -u +%FT%TZ)] watcher.sh → triggering initial post-wake (launchd resume = wake signal)"
-  echo "$(date +%s)" > "$DEBOUNCE_FILE"
-  bash "$RECOVER" --post-wake || true
-  echo "$(date +%s)" > "$DEBOUNCE_FILE"
-  echo "[$(date -u +%FT%TZ)] initial post-wake → exit=$?"
-fi
-
 # ─── Helper: run recover.sh --post-wake if the gateway is active ──────────
 run_recover() {
   local why="$1"
@@ -119,6 +111,10 @@ run_recover() {
   echo "$(date +%s)" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] $why → exit=$exit_code (now=$(date +%s))"
 }
+
+if [ -f "$MARKER" ]; then
+  run_recover "initial post-wake (launchd resume = wake signal)"
+fi
 
 # ─── Listener 1: WAKE events via unified log ───────────────────────────────
 # Predicate picks up:
