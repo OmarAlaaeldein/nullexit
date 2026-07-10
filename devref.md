@@ -1611,7 +1611,44 @@ Without UDP STUN capability, Tailscale is forced to fall back to a slower DERP-a
 ### Fix (July 10, 2026)
 Increased the pre-flight ping retry limit from 15 to 45 attempts (45 seconds) in both `toggle.sh` and `scripts/toggle-linux.sh`. This provides sufficient time for the DERP-assisted handshake to complete on cold boots, while still passing immediately (in 1-2 seconds) on warm starts or once the path is established.
 
-## 30. TODO
+## 30. Incident Post-Mortem: Docker Image Build DNS Failures on Immediate Restart (July 10, 2026)
+
+### Symptom
+When executing `toggle.sh --restart`, the script successfully stops the gateway but then immediately fails during startup during `docker compose build` with DNS resolution errors:
+`failed to do request: Head "https://registry-1.docker.io/...": dial tcp: lookup registry-1.docker.io on 192.168.5.1:53: no such host`.
+
+### Root Cause
+A race condition between physical link negotiation and virtual machine startup. The STOP path of the restart command invokes `cleanup_network_state` which power-cycles the host's physical Wi-Fi interface (`en0`) to flush stale routing states. Immediately after, `toggle.sh` starts the gateway boot sequence. Because `toggle.sh` did not verify the status of the physical interface, it proceeded to boot Colima and build Docker containers while `en0` was still negotiating a DHCP lease. Consequently, the host (and by extension, the VM bridge) had no active internet gateway/DNS path, causing Docker's registry check to fail.
+
+### Fix (July 10, 2026)
+1. Created a unified `wait_for_dhcp_settle` helper function in `scripts/common.sh` that polls `ipconfig getpacket` and `ifconfig` until a valid IP and router are assigned. To handle typical macOS Wi-Fi reassociation and DHCP negotiation latency (which commonly takes 15-20 seconds after a power-cycle), this loop was configured to poll up to 60 times (30 seconds total).
+2. Injected a call to `wait_for_dhcp_settle` at the beginning of the `START` action in `toggle.sh` (right before checking Colima status) to block container builds until the host's physical network is online.
+3. Refactored `recover.sh` to reuse the unified `wait_for_dhcp_settle` function.
+
+## 31. Incident Post-Mortem: PF Kill-Switch Bricks Host Internet in SOCKS5 Fallback Mode (July 10, 2026)
+
+### Symptom
+When the pre-flight checks fail (e.g. because host Tailscale was unauthenticated/logged out), the script falls back to SOCKS5 proxy mode but the host immediately loses all internet connectivity and tailscaled reports `You are logged out... connect: no route to host`. Even running `sudo tailscale up` to log in fails because the connection to the control plane times out.
+
+### Root Cause
+An architectural mismatch. The macOS Packet Filter (PF) Kill-Switch works at the IP level: it blocks all outbound traffic on the physical interface (`en0`) except to explicitly whitelisted VPN endpoints, expecting all other traffic to go through the virtual VPN interface (`utun*`). 
+In SOCKS5 fallback mode, the exit-node (`utun*`) is NOT enabled; instead, only specific applications (like browsers) use the localhost SOCKS5 proxy, while all other host traffic (including the `tailscaled` daemon's UDP packets) continues to go through `en0`. Because the script still enabled the PF Kill-Switch during SOCKS5 fallback, it blocked all non-SOCKS5 traffic on `en0`, completely bricking the host's internet and locking the Tailscale daemon out of the control plane.
+
+### Fix (July 10, 2026)
+Modified `toggle.sh` to remove the `enable_killswitch` call from the SOCKS5 fallback path. The firewall kill-switch is now strictly reserved for exit-node VPN mode, ensuring SOCKS5 fallback leaves the host's direct internet route open for system daemons to authenticate.
+
+## 32. Incident Post-Mortem: Host Tailscale Logouts due to Aggressive reset Flags (July 10, 2026)
+
+### Symptom
+Every time the user runs `toggle.sh` or `recover.sh` which disconnects/reconnects the host client, the host client randomly gets logged out, forcing them to re-run `sudo tailscale up` to authenticate.
+
+### Root Cause
+An overly aggressive configuration reset. The host-side `tailscale up` calls (used in `disconnect_tailscale_host` and the startup/enable exit node paths) all passed the `--reset` flag. On macOS, `--reset` resets the entire configuration state and authentication token cache of the daemon. Since the script does not pass a `TS_AUTHKEY` to the host's commands (which are meant for the user's private interactive client), the `--reset` flag effectively logged the user out of their tailnet, requiring interactive re-login.
+
+### Fix (July 10, 2026)
+Removed the `--reset` flag from all host-side `tailscale up` invocations in `toggle.sh` and `scripts/common.sh`. This ensures that exit-node state transitions (enabling/disabling) are handled safely while preserving the host client's authenticated session.
+
+## 33. TODO
 
 *No pending items.*
 

@@ -196,10 +196,10 @@ disconnect_tailscale_host() {
     fi
 
     # Explicitly reset any exit-node so it doesn't linger.
-    if run_with_timeout 10 "$ts_bin" up --reset --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
+    if run_with_timeout 10 "$ts_bin" up --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
       echo "  [✓] Exit-node preference cleared."
     else
-      echo "  [!] tailscale up --reset didn't respond (tailscaled may be wedged)"
+      echo "  [!] tailscale up didn't respond (tailscaled may be wedged)"
     fi
     
     local ts_args=""
@@ -247,6 +247,45 @@ flush_dns_cache() {
     sudo -n killall -HUP mDNSResponder 2>> output.log || true
   else
     resolvectl flush-caches 2>> output.log || true
+  fi
+}
+
+wait_for_dhcp_settle() {
+  # Resolve physical interface (Wi-Fi or Ethernet)
+  local physical_iface
+  physical_iface=$(networksetup -listallhardwareports 2>> output.log | awk '/Hardware Port: (Wi-Fi|Ethernet)/{getline; print $2; exit}')
+  [ -z "$physical_iface" ] && physical_iface="en0"
+
+  echo -n "Waiting for physical network interface ($physical_iface) DHCP lease to settle..."
+  local settled=false
+  for attempt in {1..60}; do
+    PHYSICAL_GW=$(ipconfig getpacket "$physical_iface" 2>> output.log | awk -F'[{}]' '/router /{print $2}')
+    local local_ip
+    local_ip=$(ifconfig "$physical_iface" 2>/dev/null | awk '/inet /{print $2}')
+    
+    if [ -n "$PHYSICAL_GW" ] && [[ "$PHYSICAL_GW" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
+       [ -n "$local_ip" ] && [[ "$local_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && \
+       [[ "$local_ip" != "169.254."* ]]; then
+      echo " settled (Interface IP: $local_ip, Router IP: $PHYSICAL_GW)."
+      settled=true
+      break
+    fi
+    
+    if [ "$attempt" -gt 15 ] && [ -n "$local_ip" ] && [[ "$local_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && [[ "$local_ip" != "169.254."* ]]; then
+      local fallback_gw
+      fallback_gw=$(route get default 2>> output.log | awk '/gateway:/ {print $2}')
+      if [ -n "$fallback_gw" ] && [[ "$fallback_gw" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        PHYSICAL_GW="$fallback_gw"
+      fi
+      echo " static/settled detected (Interface IP: $local_ip, Gateway IP: ${PHYSICAL_GW:-unknown})."
+      settled=true
+      break
+    fi
+    echo -n "."
+    sleep 0.5
+  done
+  if [ "$settled" = "false" ]; then
+    echo " timed out or no active link. Proceeding anyway."
   fi
 }
 
