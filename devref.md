@@ -1724,5 +1724,56 @@ When the S24 connected to the PC hotspot, it was behind the PC's NAT. The S24 se
 ## 37. TODO
 
 * **Verify Wi-Fi Roaming:** Investigate and test whether switching Wi-Fi networks now successfully and smoothly recovers the gateway end-to-end without any tailscale flag errors or dead tunnels. (Pending user verification).
-* **Fix Diagnostic Script Check 5/8:** Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling. Update the diagnostic script or routing logic to correctly interpret macOS's Network Extension transparent routing model.
+* **Fix Diagnostic Script Check 5/8:** ~~Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling.~~ **Closed** — fixed by switching check 5 from `netstat -rn | grep default` to `route -n get 1.1.1.1`. macOS Tailscale uses interface-scoped routes and does not replace the DHCP default route entry. See §36 Known Unknowns.
 
+## 38. Observation: AdGuard Returns Two Different Sinkhole IPs (Unverified)
+
+> **Status: Observed but not formally verified. Needs a deeper audit of the rule-compiler sources to confirm.**
+
+### Observation (July 10, 2026)
+When querying AdGuard Home for blocked ad domains, some domains resolve to `0.0.0.0` and others resolve to `127.0.0.1`. Both are blocked, both cause connection failure, but the different responses were unexpected.
+
+```
+doubleclick.net             → 0.0.0.0    (blocked)
+ads.google.com              → 127.0.0.1  (blocked)
+pagead2.googlesyndication.com → 0.0.0.0  (blocked)
+scorecardresearch.com       → 127.0.0.1  (blocked)
+```
+
+### Likely Explanation (Unverified)
+There are three historical schools of thought on the "correct" DNS sinkhole response, and AdGuard faithfully preserves whichever the source blocklist used:
+
+| Sinkhole IP | Convention | Origin |
+|---|---|---|
+| `0.0.0.0` | AdBlock-style lists (`\|\|domain^`) | Modern DNS-level blocking; AdGuard's native format. Fails fast — OS doesn't attempt a TCP connection. Works for both IPv4 and IPv6 without a separate rule. |
+| `127.0.0.1` | Hosts-file-style lists (`127.0.0.1 domain`) | 90s-era `/etc/hosts` tradition. Steven Black's hosts list (500k+ domains) still uses this. |
+| `NXDOMAIN` | Purist / Pi-hole default | Returns "domain doesn't exist." Semantically most accurate but requires browsers to handle NXDOMAIN gracefully. |
+
+The dual-response behavior in this project is because `rule-compiler` pulls from both AdBlock-format sources (Hagezi, uBlock origin lists) and hosts-format sources (Spamhaus DROP, Steven Black, Feodo Tracker), and AdGuard returns whatever sinkhole IP the matching rule specifies.
+
+### To Verify
+Run `docker compose exec tailscale cat /etc/hosts` to confirm no hosts-file rules are being injected at the container level, and check which specific AdGuard rule matched each domain via the AdGuard query log at `http://100.100.21.8:3000/#logs`.
+
+## 39. Observation: AGY CLI Appears to Generate Native macOS Notification Pop-ups (Unverified)
+
+> **Status: Observed but source unverified. macOS security logs ruled out system-level origin.**
+
+### Observation (July 10, 2026)
+While running a DNS blocklist verification via the Antigravity CLI (`agy`), a command was proposed that included `malware.wicar.org` (a known-safe DNS blocklist test domain) in a `dig` loop. Shortly after, a macOS-style notification popup appeared describing a "malicious" or "blocked" event. The AGY CLI terminal session then closed.
+
+### Investigation
+- **macOS XProtect / Gatekeeper logs:** Empty. Zero events in the 30-minute window around the incident.
+- **macOS Endpoint Security / System Policy logs:** Empty.
+- **Broad `log show` search for "malicious", "malware", "blocked":** Empty.
+- **Conclusion:** macOS itself did not generate the notification. No system security subsystem fired.
+
+### Likely Explanation (Unverified)
+The notification appears to have originated from **AGY CLI's own internal safety system**. AGY CLI is a native macOS application (not just a terminal process) and has access to the macOS Notification Center API (`UNUserNotificationCenter`). When its guardrails detected a domain containing the word "malware" (`malware.wicar.org`) in a proposed shell command, it likely:
+1. Blocked the command from executing
+2. Posted a native macOS-style notification via the Notification Center
+
+This is surprising behavior for a CLI tool — most terminal programs don't send GUI notifications — but AGY CLI appears to bridge both worlds: it runs in a terminal but is packaged as a native app with full system API access. The notification would be indistinguishable from a system security alert at a glance.
+
+### Notes
+- `malware.wicar.org` is the DNS/AV equivalent of the EICAR test file — a deliberately benign domain that triggers blocklist/AV systems to verify they work. It was included in the test set to confirm the AdGuard blocklist was catching it. AGY's safety system is not aware of this distinction.
+- For future DNS blocklist testing, use only ad/tracking domains (e.g., `doubleclick.net`, `adnxs.com`) to avoid triggering AGY's guardrails.
