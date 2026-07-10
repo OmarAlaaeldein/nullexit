@@ -1588,7 +1588,18 @@ Implemented a shared lifecycle lock file (`/tmp/nullexit-toggle.lock`) across bo
 - **`recover.sh` Lock Cleanup**: Cleans up the lock file upon completion using `trap cleanup_recover EXIT` (which checks if the lock file belongs to the current PID).
 - **`toggle.sh` update**: The lock check in `toggle.sh` was updated to look for both `toggle.sh` and `recover.sh` in the running processes to enforce proper exclusion.
 
-## 28. TODO
+## 28. Incident Post-Mortem: Infinite Auto-Recovery Loop after WARP Watcher Nuclear Shutdown (July 10, 2026)
+
+### Symptom
+When the background WARP Watcher triggered a nuclear shutdown (due to a tunnel outage), it successfully executed `recover.sh` (nuclear). However, immediately after the teardown completed, the system started spawning `recover.sh --post-wake` and rebuilding the containers again. This created an infinite loop of tearing down and auto-restarting the gateway, keeping the host's internet route permanently wedged.
+
+### Root Cause
+An active-state marker file leak. The LaunchAgent-based network watcher (`watcher.sh`) only fires `recover.sh --post-wake` when `/tmp/nullexit-gateway-active.marker` is present on disk. While `toggle.sh` (STOP path) correctly deleted this marker, the nuclear `recover.sh` script did not. When the WARP Watcher ran `recover.sh` (nuclear), the containers were stopped but the active-state marker was left on disk. The network changes from the teardown then triggered `watcher.sh`, which saw the marker, believed the gateway was still supposed to be active, and triggered `--post-wake` to start it back up.
+
+### Fix (July 10, 2026)
+Modified the start of `recover.sh` to explicitly delete `/tmp/nullexit-gateway-active.marker` if `POST_WAKE` is `false` (nuclear mode). This ensures that any subsequent network configuration changes made during the teardown are correctly ignored by `watcher.sh` because the marker file is gone.
+
+## 29. TODO
 
 *No pending items.*
 
