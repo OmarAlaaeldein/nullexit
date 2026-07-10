@@ -298,6 +298,7 @@ if [[ "${WRITE_ENV:-0}" == "1" ]]; then
     EXISTING_THRESH="6"
     EXISTING_KILL="false"
     EXISTING_BLOCKED="kp il"
+    EXISTING_HOST_MTU="1200"
     
     if [[ -f ".env" ]]; then
         [[ -n "$(read_env_var GATEWAY_RULE_PROFILE)" ]] && EXISTING_PROFILE=$(read_env_var GATEWAY_RULE_PROFILE)
@@ -307,6 +308,7 @@ if [[ "${WRITE_ENV:-0}" == "1" ]]; then
         [[ -n "$(read_env_var WARP_FAIL_THRESHOLD)" ]] && EXISTING_THRESH=$(read_env_var WARP_FAIL_THRESHOLD)
         [[ -n "$(read_env_var KILL_SWITCH)" ]] && EXISTING_KILL=$(read_env_var KILL_SWITCH)
         [[ -n "$(read_env_var BLOCKED_COUNTRIES)" ]] && EXISTING_BLOCKED=$(read_env_var BLOCKED_COUNTRIES)
+        [[ -n "$(read_env_var HOST_MTU)" ]] && EXISTING_HOST_MTU=$(read_env_var HOST_MTU)
     fi
 
     cat > .env <<EOF
@@ -317,6 +319,8 @@ TS_AUTHKEY=${TS_AUTHKEY}
 GATEWAY_RULE_PROFILE=${EXISTING_PROFILE}
 # Safe MSS for double-tunneled traffic (Tailscale + WARP). Change to 1180 if you experience slow speeds and have a healthy path.
 GATEWAY_MSS=${EXISTING_MSS}
+# Lower the host Tailscale MTU to 1200 to prevent fragmentation when passing through the 1280-byte WARP tunnel.
+HOST_MTU=${EXISTING_HOST_MTU}
 # Set to false to run as a 'Headless Server' (Docker acts as an exit node, but the host Mac/Linux's own internet is NOT hijacked).
 GATEWAY_HIJACK_HOST=${EXISTING_HIJACK}
 GATEWAY_USE_EXIT_NODE=${EXISTING_EXIT}

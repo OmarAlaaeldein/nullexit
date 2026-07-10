@@ -169,6 +169,7 @@ Optional `.env` settings:
 - `GATEWAY_HIJACK_HOST=false` — skip DNS hijacking on the host (provides VPN/adblocking only to external Tailscale peers).
 - `GATEWAY_MSS=1360` — override TCP Maximum Segment Size for the tunnel (default is calculated automatically).
 - `HOST_LEAK_PROBE=false` — disable background host-egress leak prober (default: true).
+- `HOST_MTU=1200` — override the host Tailscale interface MTU. Defaults to 1200 to fit inside the 1280-byte WARP tunnel.
 - `KILL_SWITCH=true` — enforce strict network lock that breaks SSH if the VPN fails.
 - `STOP_COLIMA_ON_EXIT=true` — fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts).
 - `TAILSCALE_ALLOW_LAN_P2P=true` — allow direct Tailscale LAN P2P connections between devices on the same network.
@@ -205,7 +206,7 @@ See `devref.md §11.16` for the full deep dive.
 - **AirDrop / AirPlay:** Unaffected — the gateway only touches standard Wi-Fi/Ethernet interfaces, not `awdl0`.
 - **VPN coexistence:** Do **not** run a local VPN client (WARP, Mullvad, NordVPN) simultaneously with the exit node. Both fight for the default route and will blackhole your connection.
 - **Banking & financial sites:** May intermittently block logins through WARP. Banks use anti-fraud databases that flag datacenter IP ranges (like Cloudflare's `104.28.x.x`) as VPN/proxy traffic. Success fluctuates depending on which WARP IP you land on. If a site blocks you, either disable the exit node temporarily for that session or use the bank's mobile app (which often uses different fraud detection).
-- **MSS clamping (Bufferbloat):** Double-tunnelling adds ~120-160 bytes of overhead per packet. This is now automatically handled natively via the macOS `pf` firewall, which universally applies TCP MSS Clamping to all outbound packets to strictly prevent MTU fragmentation and bufferbloat. No manual `.env` configuration is required. Additionally, the host's Tailscale interface MTU is explicitly lowered to 1200 to guarantee packets fit inside the container's WARP tunnel without fragmenting.
+- **MSS clamping (Bufferbloat):** Double-tunnelling adds ~120-160 bytes of overhead per packet. This is now automatically handled natively via the macOS `pf` firewall, which universally applies TCP MSS Clamping to all outbound packets to strictly prevent MTU fragmentation and bufferbloat. No manual `.env` configuration is required. Additionally, the host's Tailscale interface MTU is explicitly lowered to 1200 (configurable via `HOST_MTU` in `.env`) to guarantee packets fit inside the container's WARP tunnel without fragmenting.
 
 ---
 

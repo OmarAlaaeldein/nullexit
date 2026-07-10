@@ -5,7 +5,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 IGNORE_DIRS = {'.git', '.github', 'adguard', '__pycache__', 'Recover Gateway.app', 'Toggle Gateway.app'}
 IGNORE_FILES = {'.env', 'nullexit_unified.tex', 'nullexit_unified.pdf', 'output.log', 'blocked.log', '.DS_Store', '.lan_p2p_detected', '.signatures', 'ADGUARD_IP.txt', 'TUNNEL_FAILED_CLOSED.marker'}
-IGNORE_EXTS = {'.pdf', '.tex', '.png', '.jpg', '.jpeg', '.zip', '.tar', '.gz'}
+IGNORE_EXTS = {'.pdf', '.tex', '.png', '.jpg', '.jpeg', '.zip', '.tar', '.gz', '.log', '.aux', '.fls', '.fdb_latexmk', '.out', '.toc', '.xdv', '.synctex(busy)'}
 
 # Exclude from code block inclusion, but keep in tree
 SKIP_CONTENT_FILES = {'LICENSE'}
@@ -97,7 +97,9 @@ def main():
     showtabs=false,                  
     tabsize=2,
     frame=single,
-    rulecolor=\color{codegray}
+    rulecolor=\color{codegray},
+    extendedchars=true,
+    literate={─}{-}1 {═}{=}1 {✅}{{OK}}2 {—}{-}1 {│}{|}1 {┌}{+}1 {┐}{+}1 {└}{+}1 {┘}{+}1 {├}{+}1 {┤}{+}1 {┬}{+}1 {┴}{+}1 {┼}{+}1 {▾}{v}1
 }
 \lstset{style=mystyle}
 
@@ -149,7 +151,19 @@ nullexit/
             lang_attr = f"[language={lang}]" if lang else ""
             
             f.write(f"\\section{{{escape_tex(relpath)}}}\n")
-            f.write(f"\\lstinputlisting{lang_attr}{{{relpath}}}\n\n")
+            f.write(f"\\begin{{lstlisting}}{lang_attr}\n")
+            try:
+                with open(os.path.join(PROJECT_ROOT, relpath), 'r', encoding='utf-8', errors='ignore') as src:
+                    content = src.read()
+                    import re
+                    # Strip all non-ASCII characters (emojis, box drawings, em dashes, etc)
+                    content = re.sub(r'[^\x00-\x7F]+', '', content)
+                    f.write(content)
+                    if not content.endswith('\n'):
+                        f.write('\n')
+            except Exception as e:
+                f.write(f"Error reading file: {e}\n")
+            f.write("\\end{lstlisting}\n\n")
                     
         f.write("\\end{document}\n")
 
