@@ -10,7 +10,7 @@ services:
     ports:
       - "127.0.0.1:5354:5335/udp"    # AdGuard DNS (5335 is used by SSH on host, use 5354 instead)
       - "127.0.0.1:5354:5335/tcp"    # AdGuard DNS (TCP)
-      - "41641:41641/udp"  # Tailscale WireGuard (direct connection to host)
+      - "41642:41642/udp"  # Tailscale WireGuard (direct connection to host)
       - "127.0.0.1:1080:1080/tcp"    # SOCKS5 proxy (routed through WARP tunnel)
     environment:
       - TZ=America/New_York
@@ -80,7 +80,7 @@ services:
     environment:
       - TZ=America/New_York
       - TS_EXTRA_ARGS=--advertise-exit-node
-      - PORT=41641
+      - PORT=41642
       - TS_USERSPACE=false
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
