@@ -1572,7 +1572,23 @@ This network map propagation and route establishment takes a few seconds. Runnin
 ### Fix (July 10, 2026)
 Upgraded pre-flight Check 1 in both `toggle.sh` and `scripts/toggle-linux.sh` to use a 5-attempt retry loop with a 1-second delay between checks. This allows up to 5 seconds for local tailnet routing paths to settle, ensuring the gateway is correctly reached and a pong is received before deciding whether to enable exit-node routing.
 
-## 27. TODO
+## 27. Incident Post-Mortem: Concurrency Collision between Nuclear Teardown and Post-Wake (July 10, 2026)
+
+### Symptom
+When the background WARP Watcher triggers a nuclear shutdown (due to a real or simulated tunnel failure), the gateway is completely torn down. However, the network configuration changes made during the teardown trigger a `State:/Network/Global/IPv4` network change event. The LaunchAgent-based network watcher (`watcher.sh`) intercepts this event and concurrently spawns `recover.sh --post-wake` to heal/restore the gateway. This causes `docker compose down` (from nuclear teardown) and `docker compose up` (from post-wake) to run in parallel, resulting in container errors like `dependency failed to start: container warp exited (0)` and the gateway becoming wedged.
+
+### Root Cause
+A lack of coordination/locking between the lifecycle control scripts. While `toggle.sh` used `/tmp/nullexit-toggle.lock` to prevent concurrent `toggle.sh` runs, `recover.sh` (both nuclear and `--post-wake` modes) did not utilize or check any lock files. 
+
+### Fix (July 10, 2026)
+Implemented a shared lifecycle lock file (`/tmp/nullexit-toggle.lock`) across both scripts:
+- **`recover.sh` (all modes)**: Checks `/tmp/nullexit-toggle.lock` at startup. If the lock is held by another running lifecycle script (`toggle.sh` or `recover.sh`):
+  - In `--post-wake` mode, it logs a skip message to `output.log` and exits cleanly (`exit 0`). This safely prevents the auto-recovery agent from recreating containers during a teardown.
+  - In nuclear recovery mode, it exits with an error.
+- **`recover.sh` Lock Cleanup**: Cleans up the lock file upon completion using `trap cleanup_recover EXIT` (which checks if the lock file belongs to the current PID).
+- **`toggle.sh` update**: The lock check in `toggle.sh` was updated to look for both `toggle.sh` and `recover.sh` in the running processes to enforce proper exclusion.
+
+## 28. TODO
 
 *No pending items.*
 
