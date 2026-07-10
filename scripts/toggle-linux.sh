@@ -1,5 +1,5 @@
 #!/bin/bash
-# toggle.sh — nullexit gateway toggle script for macOS
+# toggle-linux.sh — nullexit gateway toggle script for Linux
 # Automatically handles Docker containers, Colima, DNS hijacking, and Tailscale exit node routing.
 
 set -e
@@ -32,21 +32,6 @@ CURRENT_BG_PID=""
 # Source common bash functions
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-# Helper function to run a GUI command as the logged-in console user
-# (Prevents permission failures if the script is run with sudo)
-run_gui_cmd() {
-  local console_user
-  console_user=$(stat -f '%Su' /dev/console 2>> output.log || echo "$SUDO_USER")
-  if [ -z "$console_user" ] || [ "$console_user" = "root" ]; then
-    console_user=$(logname 2>> output.log || echo "$USER")
-  fi
-
-  if [ -n "$console_user" ] && [ "$console_user" != "root" ] && [ "$EUID" -eq 0 ]; then
-    sudo -u "$console_user" "$@"
-  else
-    "$@"
-  fi
-}
 
 PID_FILE="/tmp/nullexit-caffeinate.pid"
 
@@ -422,7 +407,6 @@ start_local_dns_proxy() {
     fi
     resolvectl dns "$ACTIVE_SERVICE" 127.0.0.1 2>/dev/null || true
     sudo -n resolvectl flush-caches 2>/dev/null || true
-    sudo -n killall -HUP mDNSResponder 2>/dev/null || true
 
     # Verify DNS actually works through the proxy
     echo -n "  Verifying DNS resolution... "
@@ -519,14 +503,7 @@ if is_gateway_active; then
   echo "Stopping Docker containers..."
   docker compose down -t 5
   
-  # Only stop Colima if the user explicitly opted in (false by default) to prevent breaking their other Docker dev projects
-  STOP_COLIMA=$(read_env_var STOP_COLIMA_ON_EXIT | tr '[:upper:]' '[:lower:]')
-  if [[ "$STOP_COLIMA" == "true" ]]; then
-    echo -e "\nStopping Colima VM to free up host RAM and battery..."
-    echo "Native Docker does not require VM shutdown."
-  else
-    echo -e "\nLeaving Colima running. (Set STOP_COLIMA_ON_EXIT=true in .env to change this)"
-  fi
+  echo -e "\nDocker daemon handles container teardown automatically."
 
   # The host's DNS was hijacked to the gateway IP during ENABLE; now that the
   # gateway is down, restore DNS to 1.1.1.1 immediately so subsequent lookups
@@ -554,21 +531,7 @@ else
   # 1. Prevent host exit-node deadlock during VM / Container startup
   disconnect_tailscale_host
 
-  # 3. Boot Colima VM if it is not already running
-  echo -e "\nChecking Colima VM status..."
-  if ! run_with_timeout 15 colima status >> output.log 2>&1; then
-    echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address, bridged)..."
-    run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged
-  else
-    echo "Colima is already running."
-  fi
-  # 3b. Configure swap file inside the VM to prevent OOM on low-memory limits
-  # We also set vm.swappiness=10 so the Linux kernel strictly prefers physical RAM
-  # and avoids unnecessarily wearing out the SSD with proactive background swapping.
-  if ! run_with_timeout 15 colima ssh -- grep -q 'swapfile' /proc/swaps >> output.log 2>&1; then
-    echo "Configuring 400MB swap file inside the VM to prevent OOM..."
-    run_with_timeout 30 colima ssh -- sudo sh -c "if [ ! -f /swapfile ]; then dd if=/dev/zero of=/swapfile bs=1M count=400 status=none && mkswap /swapfile; fi && swapon /swapfile && sysctl vm.swappiness=10" >> output.log 2>&1 || echo "Warning: Failed to enable swap file inside the VM."
-  fi
+  echo -e "\nUsing native Linux Docker..."
 
   # 4. Clean up corrupted AdGuardHome configurations
   if [ -f "adguard/conf/AdGuardHome.yaml" ] && [ ! -s "adguard/conf/AdGuardHome.yaml" ]; then

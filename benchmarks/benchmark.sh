@@ -66,7 +66,7 @@ echo "============================================="
 echo "   PHASE 3: Testing with Gateway OFF"
 echo "============================================="
 # 1. Run raw Python download test
-python3 test_load.py
+python3 benchmarks/test_load.py
 
 # 2. Run Lighthouse HTML render test
 echo ""
