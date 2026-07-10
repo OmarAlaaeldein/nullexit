@@ -27,6 +27,7 @@ echo "routing-fix: Setting up routing for SOCKS5 proxy through WARP (tun0)..."
 DOCKER_NET=$(ip route show dev eth0 | grep -v default | head -1 | awk '{print $1}')
 DOCKER_GW=$(ip route show default | head -1 | awk '{print $3}')
 WARP_ENDPOINT="${WARP_ENDPOINT}"
+TAILSCALE_ALLOW_LAN_P2P="${TAILSCALE_ALLOW_LAN_P2P:-false}"
 IP_BLOCKLIST_FILE="/userfilters/ip_blocklist.ipset"
 LAST_IP_MTIME=""
 echo "routing-fix: Docker network: ${DOCKER_NET}, gateway: ${DOCKER_GW}"
@@ -70,7 +71,37 @@ add_fwd_related_established
 # If these go out tun0 (WARP), Cloudflare's strict NAT drops the returning
 # hole-punch packets, causing Tailscale to fail P2P and fall back to DERP relays (high latency).
 # We mark packets originating from port 41642 and force them out the main table (eth0).
+#
+# LAN P2P is controlled by two sources (in priority order):
+#   1. /app/.lan_p2p_detected — written by watcher.sh on macOS on every network change
+#      using airport -I (802.1x detection) + AP isolation probe. Overrides .env.
+#   2. TAILSCALE_ALLOW_LAN_P2P env var (from .env) — static fallback.
+# When disabled, we explicitly DROP local RFC1918-destined Tailscale UDP so the
+# phone cleanly falls back to DERP rather than getting poisoned by macOS gvproxy SNAT.
 add_tailscale_p2p_bypass() {
+  # Dynamic override from watcher.sh (network auto-detection) takes priority over .env
+  local allow_p2p="${TAILSCALE_ALLOW_LAN_P2P:-false}"
+  if [ -f "/app/.lan_p2p_detected" ]; then
+    allow_p2p=$(cat "/app/.lan_p2p_detected" 2>/dev/null | tr -d '[:space:]')
+  fi
+
+  if [ "${allow_p2p}" != "true" ]; then
+    # Drop Tailscale UDP packets destined for local subnets to prevent macOS gvproxy SNAT
+    # endpoint poisoning. When disabled (campus/enterprise WPA2-Enterprise with AP isolation),
+    # dropping these forces the S24 to use DERP relays reliably.
+    for subnet in "192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12"; do
+      if ! iptables -t mangle -C OUTPUT -p udp --sport 41642 -d "$subnet" -j DROP 2>/dev/null; then
+        iptables -t mangle -A OUTPUT -p udp --sport 41642 -d "$subnet" -j DROP 2>/dev/null || true
+      fi
+    done
+  else
+    # Remove DROP rules if they exist (switching from restricted to allowed)
+    for subnet in "192.168.0.0/16" "10.0.0.0/8" "172.16.0.0/12"; do
+      while iptables -t mangle -D OUTPUT -p udp --sport 41642 -d "$subnet" -j DROP 2>/dev/null; do :; done
+    done
+  fi
+
+  # Bypass STUN and P2P packets to public IPs (DERP relays and remote peers) out eth0
   if ! iptables -t mangle -C OUTPUT -p udp --sport 41642 -j MARK --set-mark 0x8888 2>/dev/null; then
     iptables -t mangle -A OUTPUT -p udp --sport 41642 -j MARK --set-mark 0x8888 2>/dev/null || true
   fi

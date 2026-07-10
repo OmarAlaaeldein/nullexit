@@ -34,6 +34,14 @@ GATEWAY_HIJACK_HOST=true
 GATEWAY_USE_EXIT_NODE=true
 WARP_FAIL_THRESHOLD=6              # consecutive warp=off polls before auto-shutdown (default 6 = 30s)
 KILL_SWITCH=false                  # enforce strict PF lock that breaks SSH if VPN fails
+# On campus/enterprise networks (WPA2-Enterprise / 802.1x), AP Client Isolation blocks direct
+# LAN traffic between devices. Tailscale attempts a local P2P upgrade anyway, which causes
+# macOS gvproxy to SNAT-mangle the reply's source port — poisoning the phone's WireGuard
+# endpoint and blackholing 100% of its traffic. Setting this to false drops those local
+# hole-punch packets so the phone safely falls back to Tailscale DERP relays.
+# watcher.sh auto-detects 802.1x and AP isolation on every Wi-Fi change and overrides
+# this setting automatically — you only need to set this manually if auto-detection fails.
+TAILSCALE_ALLOW_LAN_P2P=false     # auto-managed; true only on trusted hotspots/home networks
 ADGUARD_PASSWORD=nullexit
 BLOCKED_COUNTRIES="kp il"          # dynamically block country IP ranges via ipdeny.com
 ```
@@ -163,6 +171,10 @@ Optional `.env` settings:
 - `HOST_LEAK_PROBE=false` — disable background host-egress leak prober (default: true).
 - `KILL_SWITCH=true` — enforce strict network lock that breaks SSH if the VPN fails.
 - `STOP_COLIMA_ON_EXIT=true` — fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts).
+- `TAILSCALE_ALLOW_LAN_P2P=true` — allow direct Tailscale LAN P2P connections between devices on the same network.
+  - **Default: `false`.** On campus or enterprise Wi-Fi (WPA2-Enterprise / 802.1x), AP Client Isolation blocks local device-to-device traffic. When Tailscale still attempts a local P2P upgrade, macOS's `gvproxy` layer SNAT-mangles the reply's source port. WireGuard's endpoint roaming treats this as a legitimate address change and updates the phone's outbound path to the newly-mangled port — which has no listener. This blackholes 100% of the phone's traffic while the DERP relay path is abandoned. Setting this to `false` preemptively drops all RFC1918-destined Tailscale UDP from the gateway so the phone receives a clean failure and safely falls back to DERP.
+  - **Auto-managed:** `watcher.sh` automatically detects WPA2-Enterprise via `airport -I` and probes for AP isolation using a gateway ping on every network change. It writes the detected value to `.lan_p2p_detected` in the repo root, which `routing-fix.sh` re-reads every 30 seconds — **no restart required.** Only set this manually if auto-detection fails.
+  - Set to `true` on trusted home networks or Windows/mobile hotspots (no AP isolation) for a faster, lower-latency direct path.
 - `WARP_FAIL_THRESHOLD=3` — number of consecutive failed checks before forcing a gateway teardown (default: 6 checks = 30s).
 - `WARP_ENDPOINT_1` / `WARP_ENDPOINT_2` — override the Cloudflare WARP WireGuard endpoints.
 

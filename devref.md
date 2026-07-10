@@ -1684,18 +1684,42 @@ Migrated all specific preference changes in `toggle.sh` and `scripts/common.sh` 
 1. `tailscale up` (with no flags) — to safely ensure the interface is brought up using the current authenticated state.
 2. `tailscale set --exit-node=...` — to modify the specific target preference cleanly without triggering the missing flags error or requiring `--reset`.
 
-## 36. Incident Post-Mortem: Enterprise Wi-Fi AP Isolation & Tailscale Port Collisions (July 10, 2026)
+## 36. Incident Post-Mortem: macOS SNAT Endpoint Poisoning & The P2P Blackhole (July 10, 2026)
 
 ### Symptom
-When a Tailscale client (like an Android phone) was connected to the exact same WPA2-Enterprise (802.1x) campus Wi-Fi network as the macOS gateway host, it completely lost internet connectivity. However, if the client walked 80 meters away (staying on the same Wi-Fi) OR connected to a Windows PC's hotspot, the tunnel worked flawlessly. The `diagnose-host-leak.sh` script confirmed the gateway was perfectly healthy.
+When a Tailscale client (like an S24) connected to the exact same Wi-Fi network as the macOS gateway, it completely lost internet connectivity. However, if the S24 connected to a Windows PC's hotspot on the same network, the tunnel worked flawlessly.
 
 ### Root Cause
-This was a combination of an Enterprise WLAN controller anomaly and a Docker/macOS NAT port collision:
-1. **AP Client Isolation Anomalies:** Enterprise Wi-Fi networks use AP Client Isolation to drop direct P2P traffic between devices. When both the gateway and the phone were in the same room, they were associated to the *exact same physical Access Point (AP)*. The AP strictly dropped their direct local LAN Tailscale packets. When the phone walked 80 meters away, it roamed to a *different* AP. The enterprise WLAN controller failed to enforce Client Isolation across different APs, accidentally allowing local P2P to succeed.
-2. **Tailscale Port Collision:** When AP Isolation successfully blocked the local connection (in the same room), the phone's Tailscale client gracefully attempted to fall back to the public DERP relays. However, both the gateway's Docker container AND the macOS host's native Tailscale daemon were trying to bind to the default Tailscale UDP port `41641`. The resulting port collision caused the macOS NAT and Docker userland proxy to mangle the DERP fallback states, meaning the phone's encrypted packets arrived at the Mac but were intercepted by the wrong Tailscale daemon.
+Claude's critique correctly dismantled the port collision theory: the gateway daemon wasn't failing to bind, and macOS wasn't load-balancing ports. The real culprit was **macOS SNAT Source Port Mangling poisoning Tailscale's path discovery**.
 
-### Fix (July 10, 2026)
-Moved the gateway Docker container's Tailscale port to `41642` across the entire networking stack (`docker-compose.yml`, `post-rules.txt`, and the mangle bypass marks in `scripts/routing-fix.sh`). This completely separated the gateway's traffic from the Mac's native Tailscale daemon, allowing DERP fallback to succeed seamlessly whenever AP isolation blocks local P2P.
+Here is the exact step-by-step of the "infinite loop" blackhole:
+1. **The P2P Handshake:** The S24 and the Mac are on the same Wi-Fi (`192.168.1.x`). The S24 discovers the Mac's local IP and sends a UDP hole-punch packet to `192.168.1.5:41641`. Colima successfully forwards this to the gateway container.
+2. **The Bypass Rule:** The gateway replies. Because `routing-fix.sh` forces all Tailscale UDP traffic out `eth0` to bypass WARP, the reply goes to the macOS host.
+3. **macOS SNAT Mangling:** macOS routes the reply out `en0` to the S24. Because the packet crosses from the Colima VM bridge to the Wi-Fi interface, macOS applies Source NAT (SNAT). Critically, macOS **randomizes the source port** (e.g., changes it from `41641` to `58291`).
+4. **Endpoint Poisoning:** The S24 receives the authenticated Tailscale packet from `192.168.1.5:58291`. Tailscale's `magicsock` is designed to handle NAT dynamically, so it assumes the Mac has roamed to port `58291`! The S24 updates its endpoint and starts sending all its encrypted internet traffic to `192.168.1.5:58291`.
+5. **The Blackhole:** macOS has no port forward for `58291`. It drops 100% of the S24's outbound data packets. The connection is completely dead.
+
+### Why did the Hotspot work?
+When the S24 connected to the PC hotspot, it was behind the PC's NAT. The S24 sent the packet, PC NATted it, and the Mac replied (mangled to `58291`). When the reply hit the PC, the PC's strict NAT dropped it because the source port (`58291`) didn't match the destination port it originally sent to (`41641`). Because the mangled packet was dropped, the S24 never poisoned its endpoint! It safely gave up on P2P, fell back to the 100% reliable TCP DERP relay, and the internet worked perfectly.
+
+### Fix & Resolution (July 10, 2026)
+
+**Phase 1 — Port disambiguation:** Changed the gateway container's Tailscale listen port from the default `41641` to `41642` across `docker-compose.yml`, `post-rules.txt`, and `routing-fix.sh`. This prevents any bind conflict with the macOS host's native Tailscale daemon.
+
+**Phase 2 — RFC1918 DROP rules:** Updated `routing-fix.sh`'s `add_tailscale_p2p_bypass()` to explicitly drop all outgoing Tailscale UDP packets destined for private subnets (`192.168.0.0/16`, `10.0.0.0/8`, `172.16.0.0/12`) when `TAILSCALE_ALLOW_LAN_P2P=false`. This surgically kills the local P2P hole-punch attempt *before* it can trigger the macOS gvproxy SNAT mangling. The S24 receives a clean failure and immediately locks onto the public DERP relay with 0% packet loss.
+
+**Phase 3 — Automatic network detection:** Because `TAILSCALE_ALLOW_LAN_P2P=false` breaks P2P on trusted hotspots that genuinely don't have AP isolation, a `.env` toggle and a full auto-detection system were implemented:
+
+- **`.env` toggle:** `TAILSCALE_ALLOW_LAN_P2P=true/false` — static fallback, used only if auto-detection cannot run.
+- **`watcher.sh` auto-detection (`detect_lan_p2p_mode`):** On every network change, `watcher.sh` runs two checks:
+  1. **WPA2-Enterprise detection:** `airport -I` is used to read the current Wi-Fi `link auth` field. If the auth type does not contain `-psk` (e.g., it is plain `wpa2` = 802.1x), the network is classified as enterprise and P2P is forced off.
+  2. **AP Isolation probe:** For WPA2-Personal networks, a short `ping` is sent to the default gateway. If the gateway responds (it always should on a real home/hotspot network), P2P is allowed. If not, AP isolation is inferred and P2P is forced off.
+  - The result (`true` or `false`) is written to `.lan_p2p_detected` in the repo root.
+- **`routing-fix.sh` dynamic reading:** `add_tailscale_p2p_bypass()` re-reads `.lan_p2p_detected` on every 30-second loop iteration and atomically adds or removes the RFC1918 DROP rules. **No container restart is needed when switching networks.**
+
+### Known Unknowns (Pending Verification)
+- The gvproxy SNAT source port mangling theory is mechanistically sound and backed by observed behavior (gvproxy's UDP proxy changelog has documented edge cases in this exact code path), but has not yet been confirmed via `tcpdump -i en0 udp portrange 40000-60000` while triggering a P2P handshake from the phone. A packet capture cross-referenced with `tailscale ping` endpoint reports on the phone side would confirm the theory definitively.
+- Claude's recommendation: run `tcpdump -i en0 udp port 41642 or portrange 40000-60000` on the Mac while triggering the handshake from the phone to see whether the reply leaves with a different source port than `41642`.
 
 ## 37. TODO
 
