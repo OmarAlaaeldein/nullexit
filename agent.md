@@ -349,6 +349,9 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 | `recover-linux.sh` | L89-90 | Broken escaping: `ts_args=\"\"` and `grep -iq \"^KILL_SWITCH=true\"` have literal backslash-quotes |
 | `setup-linux.sh` | L54 | Uses `grep -oP` (Perl regex) — may not work with all grep versions |
 | `benchmark.sh` | L69 | References `test_load.py` (root) instead of `benchmarks/test_load.py` |
+| ~~`scripts/watcher.sh`~~ | ~~L109-110~~ | ~~`exit_code` always 0 — captures `true`'s exit code not recover.sh's~~ **Fixed** |
+| ~~`README.md`~~ | ~~§7~~ | ~~"No host ports are exposed" — false; `41642/udp` bound on `0.0.0.0` for Tailscale hole-punching~~ **Fixed** |
+| ~~`scripts/crypto.sh`~~ | ~~L26~~ | ~~`pf.conf`, `post-rules.txt`, `docker-compose.yml` outside tamper-evidence signing~~ **Fixed** |
 
 ### 🟡 Stale Code
 
