@@ -71,6 +71,13 @@ if [ -f "$LOCK_FILE" ]; then
 fi
 echo "$$" > "$LOCK_FILE"
 
+# Clear the active-state marker in nuclear recovery mode since the gateway is being
+# completely torn down. This prevents scripts/watcher.sh from triggering post-wake
+# recoveries in response to network changes caused by the teardown itself.
+if [ "$POST_WAKE" = "false" ]; then
+  rm -f "/tmp/nullexit-gateway-active.marker"
+fi
+
 # WARP Watcher inhibit marker: written immediately in --post-wake mode so the
 # background WARP Watcher (in toggle.sh) skips failure counting while we are
 # intentionally tearing down / recreating the warp container. Without this, the
