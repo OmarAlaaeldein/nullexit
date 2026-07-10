@@ -34,3 +34,9 @@ nullexit_unified.tex
 nullexit_unified.txt
 
 nullexit_unified.synctex.gz
+
+# Runtime state files
+.host_ips
+.lan_p2p_detected
+.signatures
+TUNNEL_FAILED_CLOSED.marker
