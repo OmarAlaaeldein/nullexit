@@ -110,7 +110,7 @@ run_recover() {
   local exit_code=$?
   echo "$(date +%s)" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] $why → exit=$exit_code (now=$(date +%s))"
-  return $exit_code || true
+  return $exit_code
 }
 
 if [ -f "$MARKER" ]; then
