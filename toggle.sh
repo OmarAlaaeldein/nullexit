@@ -1261,7 +1261,7 @@ if [ "$START_GATEWAY" = "true" ] && command -v docker >/dev/null 2>&1; then
   fi
 fi
 
-echo -e "\n──────────────────────────────────────────────"
+rm -f "${LOCK_FILE:-/tmp/nullexit-toggle.lock}"
 if [ -t 0 ]; then
   read -rp "Press [r] and Enter to instantly reverse state, or just press Enter to exit: " USER_CHOICE
   if [[ "${USER_CHOICE}" == "r" || "${USER_CHOICE}" == "R" ]]; then
@@ -1270,5 +1270,4 @@ if [ -t 0 ]; then
   fi
 fi
 
-rm -f "${LOCK_FILE:-/tmp/nullexit-toggle.lock}"
 echo -e "\nYou can close this terminal window now."
