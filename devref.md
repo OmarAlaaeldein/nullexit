@@ -1648,7 +1648,18 @@ An overly aggressive configuration reset. The host-side `tailscale up` calls (us
 ### Fix (July 10, 2026)
 Removed the `--reset` flag from all host-side `tailscale up` invocations in `toggle.sh` and `scripts/common.sh`. This ensures that exit-node state transitions (enabling/disabling) are handled safely while preserving the host client's authenticated session.
 
-## 33. TODO
+## 33. Incident Post-Mortem: Discarded Docker Exec Errors in logs (July 10, 2026)
+
+### Symptom
+When the `warp` container is stopped, dead, or failing to connect to its endpoints, the `toggle.sh` and `recover.sh` connectivity health checks fail, but no details are printed to `output.log`. The logs only show generic `FAIL` outputs, making it hard to see if the failure was a network timeout, Docker daemon error, or a missing binary.
+
+### Root Cause
+Overly broad error silencing. The `docker compose exec` commands in the health checks (Check 3 in `toggle.sh` and the traffic check in `recover.sh`) both redirected stderr to `/dev/null` (`&>/dev/null` and `2>/dev/null` respectively), completely throwing away any diagnostic error messages produced by Docker or `wget`.
+
+### Fix (July 10, 2026)
+Redirected stderr of the `docker compose exec` check commands to `output.log` (`2>> output.log`). This ensures that any command execution failures or connection timeout details are logged.
+
+## 34. TODO
 
 *No pending items.*
 
