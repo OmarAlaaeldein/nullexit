@@ -53,6 +53,23 @@ done
 
 rm -f "$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker"
 
+# WARP Watcher inhibit marker: written immediately in --post-wake mode so the
+# background WARP Watcher (in toggle.sh) skips failure counting while we are
+# intentionally tearing down / recreating the warp container. Without this, the
+# watcher accumulates 6 consecutive warp=off readings during force-recreate (~35s)
+# and fires nuclear recover.sh, killing a gateway that would have been healthy.
+WARP_INHIBIT_FILE="/tmp/nullexit-warp-inhibit.marker"
+if [ "$POST_WAKE" = "true" ]; then
+  touch "$WARP_INHIBIT_FILE"
+  echo "[$(date -u +%FT%TZ)] POST-WAKE started — WARP Watcher inhibited to prevent spurious shutdown during warp recreate." >> output.log
+fi
+
+# Ensure the inhibit marker is always removed when the script exits (success or error)
+cleanup_inhibit() {
+  rm -f "$WARP_INHIBIT_FILE"
+}
+trap cleanup_inhibit EXIT
+
 # Source common formatting and helper functions
 source "$SCRIPT_DIR/scripts/common.sh"
 
@@ -533,6 +550,10 @@ reset_sharing_services
 echo ""
 if [ "$POST_WAKE" = "true" ]; then
   echo -e "${YELLOW}${BOLD}Post-wake refresh complete.${NC}"
+  # Remove the WARP Watcher inhibit marker now that the gateway is fully healthy.
+  # The watcher will resume normal liveness monitoring on its next 5s poll.
+  rm -f "$WARP_INHIBIT_FILE"
+  echo "[$(date -u +%FT%TZ)] POST-WAKE complete — WARP Watcher inhibit released." >> output.log
 else
   echo -e "${GREEN}${BOLD}Recovery complete.${NC}"
 fi

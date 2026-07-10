@@ -229,7 +229,19 @@ start_warp_watcher() {
     trigger_file='$trigger_file'
     out_log='$PWD/output.log'
     recover_bin='$PWD/recover.sh'
+    inhibit_file='/tmp/nullexit-warp-inhibit.marker'
     while true; do
+      # ── Inhibit check ─────────────────────────────────────────────────
+      # recover.sh --post-wake writes this marker while force-recreating the
+      # warp container. During that window, the container is intentionally
+      # down — don't count it as a failure or we'll fire nuclear recover.sh
+      # and kill a gateway that was in the process of healing itself.
+      if [ -f \"\$inhibit_file\" ]; then
+        consec_off=0
+        sleep 5
+        continue
+      fi
+
       state='off'
       if docker compose exec -T warp wget -qO- --timeout=5 \
            https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
