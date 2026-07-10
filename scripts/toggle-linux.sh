@@ -765,7 +765,17 @@ else
     # ("direct connection not established") even though the pong was received.
     # We check for 'pong' in the output (stderr discarded) to accept relayed connections.
     echo -n "  [1/3] Gateway reachable via Tailscale... "
-    if $TS_BIN ping --until-direct=false -c 3 --timeout 5s "$TS_IP" 2>/dev/null | grep -q "pong"; then
+    ping_ok=false
+    # The host tailscaled needs a few seconds to propagate the new network map and
+    # establish a connection route after 'tailscale up --reset'. We retry up to 5 times.
+    for attempt in {1..5}; do
+      if $TS_BIN ping --until-direct=false -c 2 --timeout 2s "$TS_IP" 2>/dev/null | grep -q "pong"; then
+        ping_ok=true
+        break
+      fi
+      sleep 1
+    done
+    if [ "$ping_ok" = "true" ]; then
       echo "PASS"
     else
       echo "FAIL"

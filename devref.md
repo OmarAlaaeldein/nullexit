@@ -1560,7 +1560,19 @@ Added a **WARP Watcher inhibit marker** (`/tmp/nullexit-warp-inhibit.marker`):
 
 The marker file path is hardcoded to `/tmp/nullexit-warp-inhibit.marker` in both `toggle.sh` and `recover.sh`.
 
-## 26. TODO
+## 26. Incident Post-Mortem: Startup Pre-Flight Check Tailscale Race (July 10, 2026)
+
+### Symptom
+Immediately after startup via `toggle.sh`, the pre-flight connectivity check `[1/3] Gateway reachable via Tailscale` returned `FAIL`, forcing `toggle.sh` to skip the full exit-node activation and fall back to SOCKS5/local DNS proxy mode. 
+
+### Root Cause
+A timing race condition during startup. In `toggle.sh`, the host joins the mesh using `tailscale up --reset` (Phase A) right before performing the pre-flight check. Because `tailscale up` resets and reconfigures the host's `tailscaled` daemon, the local daemon must fetch the latest netmap asynchronously from the coordination servers. 
+This network map propagation and route establishment takes a few seconds. Running `tailscale ping` immediately after `tailscale up` returns (with no delay) causes the check to fail because the local daemon has not yet discovered the gateway node `100.100.21.8`.
+
+### Fix (July 10, 2026)
+Upgraded pre-flight Check 1 in both `toggle.sh` and `scripts/toggle-linux.sh` to use a 5-attempt retry loop with a 1-second delay between checks. This allows up to 5 seconds for local tailnet routing paths to settle, ensuring the gateway is correctly reached and a pong is received before deciding whether to enable exit-node routing.
+
+## 27. TODO
 
 *No pending items.*
 
