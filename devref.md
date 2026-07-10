@@ -1684,7 +1684,20 @@ Migrated all specific preference changes in `toggle.sh` and `scripts/common.sh` 
 1. `tailscale up` (with no flags) — to safely ensure the interface is brought up using the current authenticated state.
 2. `tailscale set --exit-node=...` — to modify the specific target preference cleanly without triggering the missing flags error or requiring `--reset`.
 
-## 36. TODO
+## 36. Incident Post-Mortem: Enterprise Wi-Fi AP Isolation & Tailscale Port Collisions (July 10, 2026)
+
+### Symptom
+When a Tailscale client (like an Android phone) was connected to the exact same WPA2-Enterprise (802.1x) campus Wi-Fi network as the macOS gateway host, it completely lost internet connectivity. However, if the client walked 80 meters away (staying on the same Wi-Fi) OR connected to a Windows PC's hotspot, the tunnel worked flawlessly. The `diagnose-host-leak.sh` script confirmed the gateway was perfectly healthy.
+
+### Root Cause
+This was a combination of an Enterprise WLAN controller anomaly and a Docker/macOS NAT port collision:
+1. **AP Client Isolation Anomalies:** Enterprise Wi-Fi networks use AP Client Isolation to drop direct P2P traffic between devices. When both the gateway and the phone were in the same room, they were associated to the *exact same physical Access Point (AP)*. The AP strictly dropped their direct local LAN Tailscale packets. When the phone walked 80 meters away, it roamed to a *different* AP. The enterprise WLAN controller failed to enforce Client Isolation across different APs, accidentally allowing local P2P to succeed.
+2. **Tailscale Port Collision:** When AP Isolation successfully blocked the local connection (in the same room), the phone's Tailscale client gracefully attempted to fall back to the public DERP relays. However, both the gateway's Docker container AND the macOS host's native Tailscale daemon were trying to bind to the default Tailscale UDP port `41641`. The resulting port collision caused the macOS NAT and Docker userland proxy to mangle the DERP fallback states, meaning the phone's encrypted packets arrived at the Mac but were intercepted by the wrong Tailscale daemon.
+
+### Fix (July 10, 2026)
+Moved the gateway Docker container's Tailscale port to `41642` across the entire networking stack (`docker-compose.yml`, `post-rules.txt`, and the mangle bypass marks in `scripts/routing-fix.sh`). This completely separated the gateway's traffic from the Mac's native Tailscale daemon, allowing DERP fallback to succeed seamlessly whenever AP isolation blocks local P2P.
+
+## 37. TODO
 
 * **Verify Wi-Fi Roaming:** Investigate and test whether switching Wi-Fi networks now successfully and smoothly recovers the gateway end-to-end without any tailscale flag errors or dead tunnels. (Pending user verification).
 * **Fix Diagnostic Script Check 5/8:** Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling. Update the diagnostic script or routing logic to correctly interpret macOS's Network Extension transparent routing model.
