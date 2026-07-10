@@ -24,7 +24,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ## Part 1: macOS Main Scripts
 
-### toggle.sh (1249 lines, 54KB)
+### toggle.sh (1281 lines, 56KB)
 
 **Functions (27 total):**
 
@@ -78,7 +78,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ---
 
-### recover.sh (484 lines, 20KB)
+### recover.sh (566 lines, 23KB)
 
 **Functions (7 total):**
 
@@ -221,7 +221,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ## Part 3: Utility Scripts
 
-### scripts/diagnose-host-leak.sh (726 lines, 38KB)
+### scripts/diagnose-host-leak.sh (722 lines, 38KB)
 
 **Purpose:** Comprehensive host-routing diagnostic. 8 checks classify host IP leaks. Supports `--fix` and `--watch` modes.
 
@@ -263,7 +263,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 - Color codes + logging functions
 - System Extension detection logic (similar to diagnose-host-leak.sh)
 
-### scripts/routing-fix.sh (232 lines, 9.7KB)
+### scripts/routing-fix.sh (266 lines, 10.5KB)
 
 **Purpose:** Runs INSIDE warp container. Maintains routing table 200, FORWARD rules, country blocking, IP blocklists, tunnel health checks.
 
@@ -272,9 +272,16 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 - WARP health check via cdn-cgi/trace (another instance)
 - iptables dual-backend pattern (for-loop over `iptables iptables-legacy`)
 
-### scripts/watcher.sh (212 lines, 11KB)
+### scripts/watcher.sh (269 lines, 13KB)
 
 **Purpose:** Long-running launchd daemon for post-wake/post-roam recovery.
+
+**Key function — `detect_lan_p2p_mode()`:**
+Added July 10, 2026. Called on startup and on every network state change (Listener 2 NET: events). Determines whether the current Wi-Fi network safely allows direct Tailscale LAN P2P connections:
+1. **WPA2-Enterprise check:** `system_profiler SPAirPortDataType` → reads the `Security:` field for the current association. Enterprise = 802.1x = always AP-isolated → sets `allow=false`.
+2. **AP isolation probe:** `route -n get 1.1.1.1` → finds default gateway IP, then `ping -c 3 -t 1 -q "$gw"` → if 0 responses on a non-empty network, AP isolation is active → sets `allow=false`.
+3. **Output:** Writes `'true'` or `'false'` to `.lan_p2p_detected` in the repo root.
+4. **Consumer:** `routing-fix.sh` reads this file every 30 seconds and enforces/relaxes the RFC1918 DROP rule accordingly — no restart required.
 
 **Duplicated logic:**
 - PATH export (similar to toggle.sh/recover.sh)
@@ -349,7 +356,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 | `recover-linux.sh` | L89-90 | Broken escaping: `ts_args=\"\"` and `grep -iq \"^KILL_SWITCH=true\"` have literal backslash-quotes |
 | `setup-linux.sh` | L54 | Uses `grep -oP` (Perl regex) — may not work with all grep versions |
 | `benchmark.sh` | L69 | References `test_load.py` (root) instead of `benchmarks/test_load.py` |
-| ~~`scripts/watcher.sh`~~ | ~~L109-110~~ | ~~`exit_code` always 0 — captures `true`'s exit code not recover.sh's~~ **Fixed** |
+| ~~`scripts/watcher.sh`~~ | ~~L109-110~~ | ~~`exit_code` always 0 — captures `true`'s exit code not recover.sh's~~ **Partially Fixed** (exit code now captured and logged, but `return $exit_code \|\| true` still suppresses propagation to caller) |
 | ~~`README.md`~~ | ~~§7~~ | ~~"No host ports are exposed" — false; `41642/udp` bound on `0.0.0.0` for Tailscale hole-punching~~ **Fixed** |
 | ~~`scripts/crypto.sh`~~ | ~~L26~~ | ~~`pf.conf`, `post-rules.txt`, `docker-compose.yml` outside tamper-evidence signing~~ **Fixed** |
 
