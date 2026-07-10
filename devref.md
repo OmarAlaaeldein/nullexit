@@ -1686,5 +1686,6 @@ Migrated all specific preference changes in `toggle.sh` and `scripts/common.sh` 
 
 ## 36. TODO
 
-* Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling. Update the diagnostic script or routing logic to correctly interpret macOS's Network Extension transparent routing model.
+* **Verify Wi-Fi Roaming:** Investigate and test whether switching Wi-Fi networks now successfully and smoothly recovers the gateway end-to-end without any tailscale flag errors or dead tunnels. (Pending user verification).
+* **Fix Diagnostic Script Check 5/8:** Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling. Update the diagnostic script or routing logic to correctly interpret macOS's Network Extension transparent routing model.
 
