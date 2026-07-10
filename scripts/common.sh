@@ -196,7 +196,8 @@ disconnect_tailscale_host() {
     fi
 
     # Explicitly reset any exit-node so it doesn't linger.
-    if run_with_timeout 10 "$ts_bin" up --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
+    "$ts_bin" up >> output.log 2>&1 || true
+    if run_with_timeout 10 "$ts_bin" set --ssh=true --accept-dns=false --exit-node= >> output.log 2>&1; then
       echo "  [✓] Exit-node preference cleared."
     else
       echo "  [!] tailscale up didn't respond (tailscaled may be wedged)"
