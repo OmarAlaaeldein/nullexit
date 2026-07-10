@@ -878,6 +878,7 @@ else
   fi
 
   # 5. Start compose services
+  write_host_ips
   echo -e "\nStarting Docker containers..."
   docker compose up -d --build
   

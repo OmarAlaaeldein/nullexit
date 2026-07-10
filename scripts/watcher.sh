@@ -165,6 +165,7 @@ detect_lan_p2p_mode() {
 
   echo "[$(date -u +%FT%TZ)] P2P detect: security='${security:-none}' → allow=${allow} (reason: ${reason})"
   echo "$allow" > "$P2P_OVERRIDE_FILE"
+  write_host_ips
 }
 
 # Run once on startup

@@ -523,3 +523,16 @@ disable_killswitch() {
   fi
 }
 
+
+write_host_ips() {
+  # Gather all active IPv4 addresses on the host and write to .host_ips
+  # routing-fix.sh will read this file to explicitly whitelist them for direct Tailscale P2P
+  local repo_dir
+  repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    ifconfig | awk '/inet /{print $2}' | grep -v '127.0.0.1' > "$repo_dir/.host_ips" 2>/dev/null || true
+  else
+    ip -4 addr show 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | grep -v '127.0.0.1' > "$repo_dir/.host_ips" 2>/dev/null || true
+  fi
+}

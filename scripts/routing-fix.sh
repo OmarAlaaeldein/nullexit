@@ -96,6 +96,19 @@ add_tailscale_p2p_bypass() {
       iptables -t mangle -I OUTPUT 1 -p udp --sport 41642 -d "${default_gw}/32" -j RETURN 2>/dev/null || true
     fi
   fi
+  
+  # Also explicitly whitelist all physical IPs of the host Mac (e.g. 172.17.52.223).
+  # The Tailscale control plane registers the Mac using its physical IP, so the
+  # container will attempt P2P handshakes using that physical IP instead of the
+  # Docker bridge IP. If this physical IP falls within 172.16.0.0/12, it would be dropped.
+  if [ -f "/app/.host_ips" ]; then
+    while IFS= read -r host_ip; do
+      [ -z "$host_ip" ] && continue
+      if ! iptables -t mangle -C OUTPUT -p udp --sport 41642 -d "${host_ip}/32" -j RETURN 2>/dev/null; then
+        iptables -t mangle -I OUTPUT 1 -p udp --sport 41642 -d "${host_ip}/32" -j RETURN 2>/dev/null || true
+      fi
+    done < "/app/.host_ips"
+  fi
 
   if [ "${allow_p2p}" != "true" ]; then
     # Drop Tailscale UDP packets destined for local subnets to prevent macOS gvproxy SNAT
