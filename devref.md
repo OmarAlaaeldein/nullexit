@@ -1671,7 +1671,20 @@ When your Mac disconnects from one Wi-Fi and associates with another, `nullexit`
 3. **Bypass Routing**: The script dynamically resolves the new physical network's IP gateway (e.g. `192.168.137.1`), cleans up stale bypass routes from the previous network, and adds static bypass routes pointing to Cloudflare's WARP endpoints and the Tailscale control plane directly via the new gateway. This allows the VPN client to negotiate its handshake outside of the tunnel.
 4. **Hole-Punching / NAT Re-negotiation**: The script runs a target check on the `warp` container's tunnel. If the WireGuard connection is wedged by the network switch, it force-recreates the container to establish a fresh NAT binding to Cloudflare, restoring connection in ~15 seconds.
 
-## 35. TODO
+## 35. Incident Post-Mortem: macOS Tailscale Flag Requirement Abort (July 10, 2026)
 
-*No pending items.*
+### Symptom
+When the `toggle.sh` stop trap or the roaming watcher triggered, the gateway failed to shut down or disconnect properly. The `output.log` showed the error: `Error: changing settings via 'tailscale up' requires mentioning all non-default flags. To proceed, either re-run your command with --reset...`
+
+### Root Cause
+In a previous attempt to stop host-side logouts (Section 32), we removed the `--reset` flag from all `tailscale up` invocations. However, if the Tailscale daemon on macOS is already running with non-default flags (like `--ssh` or `--accept-routes`), invoking `tailscale up` with only a subset of flags (like `--exit-node=`) triggers a strict safety check in the Tailscale CLI that aborts the command completely. Because the command aborted, exit-node routing remained stuck.
+
+### Fix (July 10, 2026)
+Migrated all specific preference changes in `toggle.sh` and `scripts/common.sh` from `tailscale up` to a two-step sequence:
+1. `tailscale up` (with no flags) — to safely ensure the interface is brought up using the current authenticated state.
+2. `tailscale set --exit-node=...` — to modify the specific target preference cleanly without triggering the missing flags error or requiring `--reset`.
+
+## 36. TODO
+
+* Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling. Update the diagnostic script or routing logic to correctly interpret macOS's Network Extension transparent routing model.
 
