@@ -53,6 +53,24 @@ done
 
 rm -f "$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker"
 
+# Prevent concurrent execution of lifecycle scripts (toggle.sh / recover.sh)
+LOCK_FILE="/tmp/nullexit-toggle.lock"
+if [ -f "$LOCK_FILE" ]; then
+  LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+  if [ -n "$LOCK_PID" ] && [ "$LOCK_PID" != "$$" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
+    if ps -p "$LOCK_PID" -o args= 2>/dev/null | grep -q -E "toggle\.sh|recover\.sh"; then
+      if [ "$POST_WAKE" = "true" ]; then
+        echo "[$(date -u +%FT%TZ)] POST-WAKE skipped: another lifecycle script (PID $LOCK_PID) is running." >> output.log
+        exit 0
+      else
+        echo "Error: Another instance of toggle.sh or recover.sh (PID $LOCK_PID) is already running." >&2
+        exit 1
+      fi
+    fi
+  fi
+fi
+echo "$$" > "$LOCK_FILE"
+
 # WARP Watcher inhibit marker: written immediately in --post-wake mode so the
 # background WARP Watcher (in toggle.sh) skips failure counting while we are
 # intentionally tearing down / recreating the warp container. Without this, the
@@ -64,11 +82,14 @@ if [ "$POST_WAKE" = "true" ]; then
   echo "[$(date -u +%FT%TZ)] POST-WAKE started — WARP Watcher inhibited to prevent spurious shutdown during warp recreate." >> output.log
 fi
 
-# Ensure the inhibit marker is always removed when the script exits (success or error)
-cleanup_inhibit() {
+# Ensure the inhibit marker and lock file are always removed when the script exits (success or error)
+cleanup_recover() {
   rm -f "$WARP_INHIBIT_FILE"
+  if [ -f "$LOCK_FILE" ] && [ "$(cat "$LOCK_FILE" 2>/dev/null)" = "$$" ]; then
+    rm -f "$LOCK_FILE"
+  fi
 }
-trap cleanup_inhibit EXIT
+trap cleanup_recover EXIT
 
 # Source common formatting and helper functions
 source "$SCRIPT_DIR/scripts/common.sh"

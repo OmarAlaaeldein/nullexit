@@ -61,13 +61,13 @@ CURRENT_BG_PID=""
 # Source common bash functions
 source "$SCRIPT_DIR/scripts/common.sh"
 
-# Prevent concurrent execution of toggle.sh
+# Prevent concurrent execution of lifecycle scripts (toggle.sh / recover.sh)
 LOCK_FILE="/tmp/nullexit-toggle.lock"
 if [ -f "$LOCK_FILE" ]; then
   LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
   if [ -n "$LOCK_PID" ] && [ "$LOCK_PID" != "$$" ] && kill -0 "$LOCK_PID" 2>/dev/null; then
-    if ps -p "$LOCK_PID" -o args= 2>/dev/null | grep -q "toggle\.sh"; then
-      die "Another instance of toggle.sh (PID $LOCK_PID) is already running."
+    if ps -p "$LOCK_PID" -o args= 2>/dev/null | grep -q -E "toggle\.sh|recover\.sh"; then
+      die "Another instance of toggle.sh or recover.sh (PID $LOCK_PID) is already running."
     fi
   fi
 fi
