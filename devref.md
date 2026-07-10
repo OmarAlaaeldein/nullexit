@@ -1,6 +1,6 @@
 # nullexit — Development Reference & Resolved Issues
 
-> **Last updated:** July 5, 2026
+> **Last updated:** July 10, 2026
 > **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
 > **Diagrams:** See [`diagrams.md`](./diagrams.md) for system architecture, toggle.sh flowcharts, monitoring layer, traffic sequence, recover.sh decision tree, and the full failure→self-healing map.
 
@@ -54,7 +54,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `toggle.sh` | ~1211 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
+| `toggle.sh` | ~1265 | **Main script.** Detects state, toggles gateway ON/OFF. Handles DNS hijacking, Tailscale exit node, SOCKS proxy, sleep prevention, timeouts, cleanup. |
 | `setup.sh` | 406 | **One-time setup.** Installs deps (Docker, Tailscale, wgcf), generates WARP keys, writes `.env`, configures AdGuard via API, starts containers. |
 | `docker-compose.yml` | 194 | Service definitions for all 5 containers. |
 | `scripts/routing-fix.sh` | 201 | Maintains routing tables (table 200 for SOCKS5, table 52 for CGNAT) and FORWARD iptables rules in both nftables and legacy backends. Loads and enforces the IP blocklist via `ipset`. Runs in a 30-second loop. |
@@ -63,7 +63,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `scripts/dns-proxy.py` | 91 | Local DNS proxy. UDP:53 → TCP:5354 with proper 2-byte length prefix. Fallback when exit node is unavailable. |
 | `scripts/rule-compiler/` | ~800 | Unified threat compiler (ported to Go from Python). **DNS pipeline:** fetches remote blocklists, deduplicates against AdGuard native filters, optimizes subdomains (~50% reduction), compiles to AdGuard syntax. **IP pipeline:** fetches threat-intel feeds (Spamhaus, Feodo, ET, CINS), strips private/Tailscale ranges, outputs atomic `ipset` restore file. Built dynamically in Docker multi-stage build. |
 | **`adguard/work/`** | — | **Bind-mounted container data folder. Off-limits from outside Docker — READ-ONLY-EXCEPT-VIA-`sync-rules`. See README §6.** |
-| `recover.sh` | 538 | Nuclear recovery script (gain: use `--post-wake` for non-destructive refresh after sleep/wake or Wi-Fi roam — keeps the gateway live while still re-hijacking DNS + refreshing Tailscale exit-node + force-recreating warp if unhealthy). Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. Cryptographically verified. |
+| `recover.sh` | ~557 | Nuclear recovery script (gain: use `--post-wake` for non-destructive refresh after sleep/wake or Wi-Fi roam — keeps the gateway live while still re-hijacking DNS + refreshing Tailscale exit-node + force-recreating warp if unhealthy). Resets DNS on ALL services, disables proxies, flushes routes, stops containers, kills sleep prevention, power-cycles Wi-Fi. Cryptographically verified. |
 | `scripts/diagnose-host-leak.sh` | 580+ | **One-shot host-routing diagnostic.** Runs 7 checks (Tailscale, SOCKS5, CDN-cgi/trace, IPv6 leak, default route, output.log hints, gateway IP), classifies into ONE of three known leak scenarios (A=SOCKS5 fallback, B=IPv6 leak, C=route freeze) or OK, writes a timestamped report to `host-leak-diagnostic-<UTC>.txt`, and prints a ready-to-run fix on stdout. Pass `--fix` to apply the matched remediation and re-verify egress. Pass `--watch` (or `--watch 30`) to run a full baseline then continuously monitor warp/IPv6/default-route every N seconds, alerting on any state change. See §10.30. |
 | `scripts/host-leak-probe.sh` | ~110 | **Continuous sub-second host-egress prober.** Launched automatically by `toggle.sh` when `HOST_LEAK_PROBE=true` in `.env` (default). Polls `cdn-cgi/trace` every 300ms directly from the host NIC via `curl` — not via `docker compose exec` — so it detects flash-leaks invisible to the in-container WARP Watcher. Logs only on state change (`LEAK`, `ROTATE`, `HOST-PROBE failed/timeout`) to `output.log`. curl errors (`2>>output.log`) also land there. Stopped gracefully (SIGTERM) by `toggle.sh` STOP path, `cleanup_handler`, and `recover.sh`. See §10.30.1. |
 | `scripts/fix-docker-bridge-collision.sh` | ~290 | **One-shot fix for §9.13.** Detects Docker's `172.17.0.0/16` bridge colliding with the host Wi-Fi subnet (the symptom that produces `default 172.17.0.1 UGScg en0` in `netstat -rn`), picks a non-colliding `docker.bip` from a small candidate set, idempotently edits `~/.colima/default/colima.yaml` with a timestamped backup, restarts Colima, rebinds Wi-Fi DHCP, verifies the new default route is no longer Docker's bridge, and re-runs `toggle.sh` + `scripts/diagnose-host-leak.sh`. Supports `--dry` and `--skip-toggle`. |
@@ -95,7 +95,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 ### START Path (gateway OFF → ON)
 1. **Reset DNS to 1.1.1.1** — Prevents deadlocks during startup
 2. **Disconnect host Tailscale** — `tailscale down` (prevents exit-node routing during container boot)
-3. **Compile DNS rules** — `python3 scripts/sync-rules.py`
+3. **Compile DNS rules** — `docker compose run --rm rule-compiler` (Go binary inside multi-stage Docker build)
 4. **Boot Colima VM** — `colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged` if not running
    - **Why Bridged Networking?** The `--network-mode bridged` and `--network-address` flags are critical. By default, Colima creates an isolated network. Bridged mode forces the VM to receive its own IP address directly from your local router's DHCP server, placing it on the same physical subnet as your host machine. This bypasses macOS network isolation and is absolutely required for peer-to-peer (P2P) connections, mDNS, and local LAN service discovery to function properly across the container boundary.
 5. **Configure VM swap** — 400MB swap file inside the VM to prevent OOM
@@ -207,11 +207,20 @@ Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the 
 | `WIREGUARD_PUBLIC_KEY` | WARP WireGuard public key |
 | `WIREGUARD_ADDRESSES` | WARP WireGuard address (e.g., `172.16.0.2/32`) |
 | `TS_AUTHKEY` | Tailscale auth key for the container |
+| `NULLEXIT_SEED` | 256-bit seed for HMAC-SHA256 script integrity signing (generated by `setup.sh`) |
 | `GATEWAY_RULE_PROFILE` | Rule compilation tier: `light`, `medium`, `heavy` |
 | `GATEWAY_BYPASS_PING` | (Optional) `true` to proceed even if pre-flight checks fail |
 | `GATEWAY_USE_EXIT_NODE` | (Optional) `false` to skip exit node, DNS-only mode |
+| `GATEWAY_HIJACK_HOST` | (Optional) `false` to skip DNS hijacking on the host (VPN/adblocking for Tailscale peers only) |
 | `GATEWAY_MSS` | (Optional) TCP MSS clamp value (default 1120); 1180 for speed on healthy paths |
-| `WARP_FAIL_THRESHOLD` | (Optional) Consecutive warp=off polls before auto-shutdown (default 6 = 30s; 3 = 15s) |
+| `WARP_FAIL_THRESHOLD` | (Optional) Consecutive `warp=off` polls before auto-shutdown (default 6 = 30s; 3 = 15s) |
+| `WARP_ENDPOINT_1` | (Optional) Override Cloudflare WARP WireGuard endpoint IP 1 (default `162.159.192.1`) |
+| `WARP_ENDPOINT_2` | (Optional) Override Cloudflare WARP WireGuard endpoint IP 2 (default `162.159.193.1`) |
+| `KILL_SWITCH` | (Optional) `true` to enforce strict PF lock — drops all host traffic if VPN fails. Breaks SSH if VPN dies. |
+| `HOST_LEAK_PROBE` | (Optional) `false` to disable the 300ms host-egress leak prober (default: `true`) |
+| `STOP_COLIMA_ON_EXIT` | (Optional) `true` to fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts) |
+| `ADGUARD_PASSWORD` | AdGuard Home web UI password (default: `nullexit`; username always `admin`) |
+| `BLOCKED_COUNTRIES` | Space-separated 2-letter ISO codes to block via ipdeny.com CIDR ranges (e.g. `"kp il cn ru"`) |
 
 ---
 
@@ -1072,6 +1081,8 @@ Or, if WARP self-recovers before the threshold:
 
 Reflects the current branch's state. Each entry one line + commit hash; read the commit message for detail.
 
+- **July 10, 2026 — `fix(race): suppress WARP Watcher during post-wake force-recreate`** — Fixed a race condition where switching Wi-Fi caused the host IP to leak as the raw ISP IP (`132.x`) on every network roam. `recover.sh --post-wake` force-recreating the warp container (~35s) caused the background WARP Watcher to accumulate 6 consecutive `warp=off` readings and fire nuclear `recover.sh`, killing a gateway that was healing itself. Fixed by adding a `/tmp/nullexit-warp-inhibit.marker`: `recover.sh` writes it at startup in `--post-wake` mode (with `trap ... EXIT` for guaranteed cleanup); the WARP Watcher loop in `toggle.sh` checks it first and resets `consec_off=0` while it exists. See §25 for full post-mortem.
+
 - **July 6, 2026 — `fix: resolve edge-case vulnerabilities and system state leaks`** — Addressed a suite of subtle but critical edge cases identified in security review:
   1. **DNS Watcher Interface Independence:** Fixed `start_dns_watcher` in `toggle.sh` to dynamically detect the active interface via `get_active_service()` rather than hardcoding a `grep` for "Wi-Fi", ensuring roaming on Ethernet/Thunderbolt stays protected.
   2. **Robust Lock Verification:** Upgraded the `toggle.sh` lock-file logic to use `ps -p` verification, preventing permanent lockouts if a crashed script's PID is recycled.
@@ -1514,8 +1525,42 @@ This compartmentalization transforms `nullexit` into a universal, censorship-res
 
 ---
 
-## 25. TODO
+## 25. Incident Post-Mortem: WARP Watcher Race vs Post-Wake (July 10, 2026)
+
+### Symptom
+After switching Wi-Fi networks, the host IP appeared as the raw ISP IP (`132.x.x.x`) instead of a Cloudflare/WARP IP. The gateway appeared to complete post-wake recovery successfully in the logs, but nuclear shutdown fired immediately after and killed everything.
+
+### Root Cause
+A fatal race condition between two concurrent processes:
+
+1. **Wi-Fi roam** → `watcher.sh` fires `recover.sh --post-wake`
+2. **Post-wake** finds the `warp` container missing/dead → calls `docker compose up -d --force-recreate` (~35 seconds)
+3. **In parallel**, the WARP Watcher (running as a child of `toggle.sh`) polls the warp container every 5s during failures
+4. While the container is being recreated it returns `warp=off` for those 35 seconds → 7 consecutive failures → **WARP SHUTDOWN fires**, calling nuclear `recover.sh`
+5. Nuclear `recover.sh` tears down Tailscale, resets DNS to 1.1.1.1, stops all containers → **gateway dead, IP exposed**
+6. The post-wake `docker compose up` finishes at ~35s mark, container healthy — but the gateway is already gone
+
+The evidence in `output.log`:
+```
+[2026-07-10T06:07:27Z] NET: ... → bash recover.sh --post-wake
+[2026-07-10T06:07:47Z] WARP DOWN — cdn-cgi/trace reports warp=off   ← watcher starts counting
+...
+add net 0.0.0.0: gateway utun5   ← post-wake successfully re-routes at 02:08:22
+...
+[2026-07-10T06:09:04Z] WARP SHUTDOWN — 6 consecutive failures        ← watcher fires nuclear
+```
+
+### Fix (July 10, 2026)
+Added a **WARP Watcher inhibit marker** (`/tmp/nullexit-warp-inhibit.marker`):
+
+- `recover.sh --post-wake` writes the marker at startup **before** any container operations
+- The WARP Watcher loop checks for the marker at the top of every iteration; if present it resets `consec_off=0` and sleeps 5s (skips the poll entirely)
+- `recover.sh` removes the marker at the very end (on both success and failure via `trap cleanup_inhibit EXIT`)
+- This guarantees the watcher never counts failures during the intentional container-down window of a post-wake force-recreate
+
+The marker file path is hardcoded to `/tmp/nullexit-warp-inhibit.marker` in both `toggle.sh` and `recover.sh`.
+
+## 26. TODO
 
 *No pending items.*
-
 
