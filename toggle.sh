@@ -482,6 +482,10 @@ setup_exit_node_routing() {
   
   if [ -n "$ts_iface" ]; then
     echo "Re-routing default gateway to $ts_iface using 0.0.0.0/1 split..."
+    # Lower the host Tailscale MTU to 1200 to prevent fragmentation when passing
+    # through the container's WARP tunnel (which also has an MTU of 1280).
+    sudo -n ifconfig "$ts_iface" mtu 1200 >> output.log 2>&1 || true
+
     # DO NOT delete the physical default route! It crashes Colima.
     # Use the /1 trick to mathematically override the default route.
     sudo -n route delete -net 0.0.0.0/1 >> output.log 2>&1 || true
