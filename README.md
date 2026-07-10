@@ -241,13 +241,21 @@ See `devref.md §8` for the full threat model, Snowden programme analysis, and t
 
 ---
 
-## 10. Acknowledgements
+## 10. Unified Project Document (Quine)
+
+The project includes a `generate_tex.py` script that compiles the entire source code, configurations, and documentation into a single, unified LaTeX document (`nullexit_unified.tex` / `.pdf`).
+
+Funnily enough, this document acts as a "project-level quine." It encapsulates the entirety of its own source code, its documentation, and the exact Python code required to generate itself. It serves as a self-contained, long-term archiving strategy—providing everything needed to reconstruct and understand the `nullexit` system from a single file.
+
+---
+
+## 11. Acknowledgements
 - **[SyameimaruKoa](https://github.com/SyameimaruKoa):** Dual-stack TCP MSS clamping, `SIGHUP` state-tracking in the routing sidecar, and `TS_AUTH_ONCE` integration.
 
-## 11. License
+## 12. License
 GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 
-## 12. Changelog
+## 13. Changelog
 
 - **July 10, 2026** — **Bug fixes:** 
   1. Resolved a race condition where Wi-Fi roaming caused the host IP to leak as the raw ISP IP (`132.x`) after every network switch. The WARP Watcher was firing nuclear shutdown while `recover.sh --post-wake` was still intentionally recreating the warp container. Fixed by adding a `/tmp/nullexit-warp-inhibit.marker` that pauses the watcher's failure counter during post-wake recovery. See `devref.md §25`.

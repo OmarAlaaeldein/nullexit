@@ -1720,6 +1720,7 @@ When the S24 connected to the PC hotspot, it was behind the PC's NAT. The S24 se
 ### Known Unknowns (Pending Verification)
 - The gvproxy SNAT source port mangling theory is mechanistically sound and backed by observed behavior (gvproxy's UDP proxy changelog has documented edge cases in this exact code path), but has not yet been confirmed via `tcpdump -i en0 udp portrange 40000-60000` while triggering a P2P handshake from the phone. A packet capture cross-referenced with `tailscale ping` endpoint reports on the phone side would confirm the theory definitively.
 - Claude's recommendation: run `tcpdump -i en0 udp port 41642 or portrange 40000-60000` on the Mac while triggering the handshake from the phone to see whether the reply leaves with a different source port than `41642`.
+- **Client-Side VPN Cycling (Roaming Recovery):** An observation (July 10, 2026) suggests that when a hung DNS probe state is triggered by roaming between Access Points (APs) on a WPA2-Enterprise network, simply toggling the VPN connection (Tailscale) off and on locally on the client phone immediately resolves the issue. You do not need to cycle the phone's physical Wi-Fi. This reinforces the theory that roaming on Enterprise networks leaves a stale/poisoned P2P endpoint in the phone's Tailscale magicsock state, which gets instantly flushed upon a local VPN restart. (Status: Possible but not formally verified).
 
 ## 37. TODO
 
