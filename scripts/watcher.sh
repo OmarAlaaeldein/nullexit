@@ -126,25 +126,30 @@ fi
 # Writes 'true' or 'false' to .lan_p2p_detected in the repo root.
 # routing-fix.sh reads this file dynamically every 30s loop iteration.
 P2P_OVERRIDE_FILE="$SCRIPT_DIR/../.lan_p2p_detected"
-AIRPORT=/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport
+
 
 detect_lan_p2p_mode() {
   local reason="unknown" allow="false"
 
-  # Step 1: WPA2-Enterprise (802.1x) detection via airport
-  local link_auth
-  link_auth=$("$AIRPORT" -I 2>/dev/null | awk '/link auth/{print $NF}')
-  if [ -z "$link_auth" ]; then
-    # Not connected to Wi-Fi or airport unavailable — be safe
+  # Step 1: Detect Wi-Fi security type via system_profiler (airport binary removed in macOS 15+)
+  # SPAirPortDataType lists all known networks; the first "Security:" line is the current association.
+  local security
+  security=$(system_profiler SPAirPortDataType 2>/dev/null \
+    | awk '/Current Network Information:/{found=1} found && /Security:/{print $NF; exit}')
+
+  if [ -z "$security" ]; then
+    # Not on Wi-Fi or system_profiler unavailable — fail safe
     reason="no-wifi" allow="false"
-  elif echo "$link_auth" | grep -qi "wpa2-psk\|wpa3-psk\|wpa-psk\|none\|open"; then
-    # WPA2/WPA3 Personal or open — could be home/hotspot; probe for AP isolation
-    # Step 2: AP Isolation probe
-    local iface gw subnet
-    iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
-    gw=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
-    if [ -n "$iface" ] && [ -n "$gw" ]; then
-      # Broadcast ping: -b on Linux, omitted on macOS (macOS pings subnet broadcast via -t 1)
+  elif echo "$security" | grep -qi "Enterprise"; then
+    # WPA2/WPA3 Enterprise = 802.1x — always AP isolated
+    reason="802.1x-enterprise" allow="false"
+  elif echo "$security" | grep -qi "Personal\|None\|Open"; then
+    # WPA2/WPA3 Personal or open — probe for AP isolation
+    local gw
+    gw=$(route -n get 1.1.1.1 2>/dev/null | awk '/gateway:/{print $2}')
+    if [ -z "$gw" ]; then
+      reason="no-default-route" allow="false"
+    else
       local responses
       responses=$(ping -c 3 -t 1 -q "$gw" 2>/dev/null | awk '/packets transmitted/{print $4}')
       if [ "${responses:-0}" -gt 0 ]; then
@@ -152,15 +157,13 @@ detect_lan_p2p_mode() {
       else
         reason="wpa-personal-ap-isolated" allow="false"
       fi
-    else
-      reason="no-default-route" allow="false"
     fi
   else
-    # WPA2-Enterprise (802.1x) — always AP isolated
-    reason="802.1x-enterprise" allow="false"
+    # Unknown security type — fail safe
+    reason="unknown-security-type" allow="false"
   fi
 
-  echo "[$(date -u +%FT%TZ)] P2P detect: link_auth='${link_auth:-none}' → allow=${allow} (reason: ${reason})"
+  echo "[$(date -u +%FT%TZ)] P2P detect: security='${security:-none}' → allow=${allow} (reason: ${reason})"
   echo "$allow" > "$P2P_OVERRIDE_FILE"
 }
 
