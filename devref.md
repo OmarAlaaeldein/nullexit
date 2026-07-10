@@ -1777,3 +1777,33 @@ This is surprising behavior for a CLI tool — most terminal programs don't send
 ### Notes
 - `malware.wicar.org` is the DNS/AV equivalent of the EICAR test file — a deliberately benign domain that triggers blocklist/AV systems to verify they work. It was included in the test set to confirm the AdGuard blocklist was catching it. AGY's safety system is not aware of this distinction.
 - For future DNS blocklist testing, use only ad/tracking domains (e.g., `doubleclick.net`, `adnxs.com`) to avoid triggering AGY's guardrails.
+
+## 40. Apple Silently Removed the `airport` Binary in macOS Sonoma 14.4 (March 2024)
+
+### What happened
+`watcher.sh`'s `detect_lan_p2p_mode()` was written to use the `airport` CLI tool at:
+```
+/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport
+```
+This path returned `exit 127: no such file or directory`. The function silently fell back to `reason="no-wifi"` even while the Mac was actively connected to WPA2 Enterprise Wi-Fi.
+
+### Why Apple removed it
+`airport` was never a real public binary — it lived inside a **private framework** and was always technically unsupported. Apple deprecated it quietly years ago and finally removed it in **macOS Sonoma 14.4 (March 2024)**. The removal is part of a broader privacy clampdown on Wi-Fi metadata:
+- Starting in **macOS 14.5**, BSSIDs and other Wi-Fi association details are **redacted** (`<redacted>`) in most tools, including the official replacement `wdutil`
+- Apple's official recommendation is to use the **CoreWLAN framework** (Swift/Objective-C) with proper entitlements — useless for a bash script
+- The official CLI replacement `wdutil` requires `sudo` for most useful output — also useless for a background LaunchAgent
+
+### Fix
+Replaced `airport -I | awk '/link auth/'` with:
+```bash
+system_profiler SPAirPortDataType | awk '/Current Network Information:/{found=1} found && /Security:/{print $NF; exit}'
+```
+This returns human-readable strings like `WPA2 Enterprise`, `WPA2 Personal`, or `None` for the currently associated network — without `sudo`, and without any removed private binary.
+
+**Confirmed working output on this machine:**
+```
+P2P detect: security='Enterprise' → allow=false (reason: 802.1x-enterprise)
+```
+
+### ⚠️ Risk: `system_profiler` may not survive forever either
+`system_profiler SPAirPortDataType` still works as of macOS Sequoia (15.x) without sudo and without redaction. However, given Apple's trajectory on Wi-Fi privacy, this could be locked down in a future release. If `security` comes back empty on a future macOS version while the Mac is actively on Wi-Fi, the function will silently fall back to `allow=false` (safe default), but the detection will be broken again. The long-term fix would be a small Swift helper using CoreWLAN that we compile once and bundle in the repo.
