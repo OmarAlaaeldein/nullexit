@@ -10,6 +10,7 @@
 - Docker and Docker Compose installed.
 - A Tailscale account.
 - **macOS:** Install the standalone Tailscale CLI via Homebrew (`brew install tailscale`) and register `tailscaled` as a system service (`brew services start tailscale`). No `.app` GUI install required.
+- **OS & Python:** Developed and tested against **macOS 26.5.2**. The project has zero external Python dependencies (no `requirements.txt`) and explicitly targets the default Apple-provided **Python 3.9.6** (`/usr/bin/python3`). While the scripts could function on newer versions, `nullexit` explicitly avoids experimenting with or modifying the built-in system Python environment to prevent unexpected OS-level side effects.
 
 ## 2. Installation & Setup
 

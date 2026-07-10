@@ -113,15 +113,6 @@ if ($isGatewayActive) {
     Write-Host "Gateway is currently STOPPED. Enabling now..." -ForegroundColor Yellow
     Write-Host ""
 
-    # Run Rules Compiler if python is available
-    Get-Command python -ErrorAction SilentlyContinue >$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "Compiling DNS blocklists..." -ForegroundColor Cyan
-        python scripts/sync-rules.py
-    } else {
-        Write-Host "Python not found in PATH. Skipping rule pre-compilation." -ForegroundColor Yellow
-    }
-
     # Clean up corrupted AdGuardHome configurations
     $confFile = "adguard\conf\AdGuardHome.yaml"
     if (Test-Path $confFile) {
