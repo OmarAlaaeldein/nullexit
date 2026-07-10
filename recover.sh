@@ -371,7 +371,6 @@ if [ "$POST_WAKE" = "true" ]; then
     warn "warp container is missing — leaving gateway containers alone (full relaunch requires \"$SCRIPT_DIR/toggle.sh\")"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container missing from Docker engine. Requires full toggle.sh launch." >> output.log
   else
-    local tmp_err
     tmp_err=$(mktemp)
     if docker compose exec -T warp wget -qO- --timeout=3 https://www.cloudflare.com/cdn-cgi/trace 2>"$tmp_err" | grep -q "warp=on"; then
       ok "warp container is healthy and actively tunneling traffic (no recreate needed)"
@@ -380,7 +379,6 @@ if [ "$POST_WAKE" = "true" ]; then
       warn "warp container tunnel is dead (Docker status: $WARP_STATE) — force-recreating all gateway containers to restore network namespace"
       echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] warp container is DEAD or STUCK. Forcing recreation of gateway stack..." >> output.log
       if [ -s "$tmp_err" ]; then
-        local err_msg
         err_msg=$(cat "$tmp_err" | tr -d '\r')
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Docker/Colima] Healthcheck failure details: $err_msg" >> output.log
       fi

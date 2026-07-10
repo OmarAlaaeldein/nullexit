@@ -1114,14 +1114,12 @@ else
     
     # Check 3: Does the WARP container have external internet?
     echo -n "  [3/3] WARP container internet... "
-    local tmp_err
     tmp_err=$(mktemp)
     if docker compose exec -T warp wget -qO- --timeout=5 https://www.cloudflare.com/cdn-cgi/trace >/dev/null 2>"$tmp_err"; then
       echo "PASS"
     else
       echo "FAIL"
       if [ -s "$tmp_err" ]; then
-        local err_msg
         err_msg=$(cat "$tmp_err" | tr -d '\r')
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Check 3] WARP container check failed: $err_msg" >> output.log
       fi
