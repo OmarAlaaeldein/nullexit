@@ -404,20 +404,30 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "5/8  Host default route (should be utun*, NOT 192.168.x.x)"
+section "5/8  Host egress route for real traffic (route -n get 1.1.1.1)"
 # ═══════════════════════════════════════════════════════════════════════════
-DEFAULT_ROUTE=$(netstat -rn 2>> "$LOG_FILE" | awk '/^default/ {print $0; exit}')
-if [ -z "$DEFAULT_ROUTE" ]; then
-  warn "no default route detected"
+# WHY NOT 'netstat -rn | grep default':
+# On macOS, Tailscale does NOT replace the physical default route installed by
+# DHCP. Instead it adds a second interface-scoped route bound to the utun
+# interface that the kernel prefers for real traffic forwarding. The literal
+# "default" entry (192.168.x.x via en0) is left untouched in the table as a
+# BSD routing quirk — it's not lying, it's just answering a different question.
+# The correct question is: "where does a real destination actually resolve?"
+# `route -n get 1.1.1.1` asks the kernel's forwarding logic directly.
+ROUTE_GET=$(route -n get 1.1.1.1 2>/dev/null)
+ROUTE_IFACE=$(echo "$ROUTE_GET" | awk '/interface:/{print $2}')
+ROUTE_GATEWAY=$(echo "$ROUTE_GET" | awk '/gateway:/{print $2}')
+if [ -z "$ROUTE_IFACE" ]; then
+  warn "route -n get 1.1.1.1 returned no interface — routing table may be empty"
 else
-  line "  $DEFAULT_ROUTE"
-  if printf '%s' "$DEFAULT_ROUTE" | grep -qE 'utun[0-9]+'; then
-    ok "default route goes via utun* → Tailscale is owning the egress route"
+  line "  interface: $ROUTE_IFACE  gateway: ${ROUTE_GATEWAY:-n/a}"
+  if echo "$ROUTE_IFACE" | grep -qE '^utun[0-9]+'; then
+    ok "1.1.1.1 resolves via $ROUTE_IFACE → Tailscale interface-scoped route is winning"
     DEFAULT_VIA_UTUN=true
-  elif printf '%s' "$DEFAULT_ROUTE" | grep -qE '^(default|0\.0\.0\.0).*\b192\.168\.'; then
-    fail "default route goes via physical Wi-Fi (192.168.x.x) — Tailscale route assertion failed"
+  elif echo "$ROUTE_IFACE" | grep -qE '^en[0-9]+'; then
+    fail "1.1.1.1 resolves via $ROUTE_IFACE (physical Wi-Fi) — exit-node interface route not active"
   else
-    warn "default route has unexpected shape: $DEFAULT_ROUTE"
+    warn "1.1.1.1 resolves via unexpected interface: $ROUTE_IFACE"
   fi
 fi
 
