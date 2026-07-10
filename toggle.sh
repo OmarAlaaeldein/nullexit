@@ -149,7 +149,8 @@ start_sleep_prevention() {
       sudo -n networksetup -setsecurewebproxystate \"$ACTIVE_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       sudo -n networksetup -setsecurewebproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       if command -v tailscale >/dev/null 2>&1; then
-        tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
+        tailscale up >> \"$PWD/output.log\" 2>&1 || true
+        tailscale set --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 || true
         TS_DOWN_ARGS=\"\"
         if [ \"\$KILL_SWITCH\" = \"true\" ]; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
         tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
@@ -1038,7 +1039,8 @@ else
 
       # ── Phase A: Join mesh without exit node ───────────────────────────
       echo "Connecting host to Tailscale mesh (no exit node yet)..."
-      if $TS_BIN up --ssh=true --accept-dns=false --accept-routes=true --exit-node=; then
+      if $TS_BIN up; then
+        $TS_BIN set --ssh=true --accept-dns=false --accept-routes=true --exit-node= || true
         HOST_ON_MESH=true
         echo "Host is on Tailscale mesh."
       else
@@ -1130,7 +1132,8 @@ else
     # Act based on check results
     if [ "$SKIP_EXIT_NODE" != "true" ]; then
       echo -e "\nAll checks passed. Enabling exit node $TS_IP..."
-      if $TS_BIN up --ssh=true --accept-dns=false --accept-routes=true --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
+      $TS_BIN up || true
+      if $TS_BIN set --ssh=true --accept-dns=false --accept-routes=true --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
         echo "Exit node enabled."
         add_warp_bypass_routes
         setup_exit_node_routing
