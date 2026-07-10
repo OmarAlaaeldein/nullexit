@@ -1807,3 +1807,45 @@ P2P detect: security='Enterprise' → allow=false (reason: 802.1x-enterprise)
 
 ### ⚠️ Risk: `system_profiler` may not survive forever either
 `system_profiler SPAirPortDataType` still works as of macOS Sequoia (15.x) without sudo and without redaction. However, given Apple's trajectory on Wi-Fi privacy, this could be locked down in a future release. If `security` comes back empty on a future macOS version while the Mac is actively on Wi-Fi, the function will silently fall back to `allow=false` (safe default), but the detection will be broken again. The long-term fix would be a small Swift helper using CoreWLAN that we compile once and bundle in the repo.
+
+## 41. Fixed: Watcher.sh Suppressed Exit Code Bug
+
+### Observation
+The `scripts/watcher.sh` script is a long-running daemon that invokes `recover.sh --post-wake` when it detects system wake or network roam events. Previously, it contained the following bug:
+```bash
+  bash "$RECOVER" --post-wake
+  local exit_code=$?
+  ...
+  return $exit_code || true
+```
+The `|| true` mistakenly swallowed the actual `$exit_code` returned by `recover.sh`, causing `run_recover()` to always return `0` (success), masking any underlying failures in the wake recovery process.
+
+### Fix
+The `|| true` statement was removed from the return line:
+```bash
+  return $exit_code
+```
+Since `watcher.sh` explicitly omits `set -e` (to prevent pipe breakages from killing the daemon), removing `|| true` safely allows the underlying exit code to propagate without risking daemon termination. The watcher daemon was then reloaded (`launchctl kickstart -k`) to pick up the script changes in memory.
+## 42. Network Readiness Race Condition on `--restart` (Fixed)
+
+**Problem:** When running `./toggle.sh --restart`, the script tears down the gateway and immediately begins the startup sequence. On systems with Wi-Fi (or any wireless interface), the OS takes a moment to re-associate with the network after the teardown's DNS/routing changes. If the startup sequence ran before the OS had a default route, `get_active_service` would return nothing, routing bypass targets would be wrong, and DNS/WARP setup would silently fail — resulting in a partially configured gateway that self-heals only once the `watcher.sh` re-runs.
+
+**Root cause:** The original code had no gate before the first network-dependent call (`ACTIVE_SERVICE=$(get_active_service)` at the top of the start branch). This was a pure timing race.
+
+**First fix (Wi-Fi specific):** A polling loop on `ipconfig getifaddr en0` was added to wait for an IPv4 address on `en0` before proceeding. This worked but was brittle — it only handled Wi-Fi and would fail for Ethernet, USB-C adapters, or iPhone USB tethering.
+
+**Generalized fix:** Replaced the `en0` check with `route get default | grep 'gateway:'`. This detects a valid default gateway on *any* interface, covering all connection types. The loop polls every 2 seconds with a 60-second hard timeout (then proceeds with a warning rather than hanging forever). The output prints the detected gateway IP so failures are easy to diagnose in logs.
+
+```bash
+# In toggle.sh, before ACTIVE_SERVICE=$(get_active_service)
+while true; do
+  if route get default 2>/dev/null | grep -q 'gateway:'; then
+    _gw=$(route get default 2>/dev/null | awk '/gateway:/{print $2}')
+    echo "  Network ready (default gateway: $_gw)."
+    break
+  fi
+  ...
+done
+```
+
+**Why not ping?** Pinging an IP (e.g. `1.1.1.1`) during restart is unreliable because DNS may still be hijacked from the previous session, and the exit node routing may not yet be cleared, causing the ping to loop back through the tunnel. `route get default` is a pure local kernel query — no packets sent.

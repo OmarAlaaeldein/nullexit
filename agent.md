@@ -11,6 +11,7 @@
 - **NEVER execute any `sudo` commands (especially `sudo route`, `sudo dscacheutil`, or any network-modifying commands) without explicitly explaining to the user what the command does and why it is needed FIRST. Do not assume implicit permission. Wait for the user's approval before running it.**
 - **When fixing an error and using logs to debug, always show the user the reasoning and the specific logs that support this theory.**
 - **When the user tells you to "push", this means read git diffs and prepare commit messages that correspond to these changes (do not ignore any changes). If the changes can be atomized into multiple commits for easier understanding, do so.**
+- **When the user says "latex this", it means you should run `python3 scripts/generate_tex.py` to regenerate the unified LaTeX document.**
 
 ## 🔬 How to Verify Gateway is Working
 Whenever modifications are made to the gateway scripts, routing, or containers, execute these verification checks in order:
@@ -341,33 +342,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 
 ---
 
-## Part 5: Bugs & Stale Code
 
-### 🔴 Bugs
-
-| File | Line | Issue |
-|------|------|-------|
-| `toggle-linux.sh` | L2 | Comment says "for macOS" — should say Linux |
-| `toggle-linux.sh` | L57-69 | `run_gui_cmd()` uses macOS-only `stat -f '%Su' /dev/console` — dead code on Linux |
-| `toggle-linux.sh` | L325 | Calls `dscacheutil` (macOS tool) — doesn't exist on Linux |
-| `toggle-linux.sh` | L325 | Calls `killall -HUP mDNSResponder` — doesn't exist on Linux |
-| `toggle-linux.sh` | L330 | Calls `route -n flush` — Linux uses `ip route flush cache` |
-| `recover-linux.sh` | L148 | PID file path `/tmp/nullexit-systemd-inhibit.pid` but toggle-linux writes to `/tmp/nullexit-caffeinate.pid` — **MISMATCH** |
-| `recover-linux.sh` | L89-90 | Broken escaping: `ts_args=\"\"` and `grep -iq \"^KILL_SWITCH=true\"` have literal backslash-quotes |
-| `setup-linux.sh` | L54 | Uses `grep -oP` (Perl regex) — may not work with all grep versions |
-| `benchmark.sh` | L69 | References `test_load.py` (root) instead of `benchmarks/test_load.py` |
-| ~~`scripts/watcher.sh`~~ | ~~L109-110~~ | ~~`exit_code` always 0 — captures `true`'s exit code not recover.sh's~~ **Partially Fixed** (exit code now captured and logged, but `return $exit_code \|\| true` still suppresses propagation to caller) |
-| ~~`README.md`~~ | ~~§7~~ | ~~"No host ports are exposed" — false; `41642/udp` bound on `0.0.0.0` for Tailscale hole-punching~~ **Fixed** |
-| ~~`scripts/crypto.sh`~~ | ~~L26~~ | ~~`pf.conf`, `post-rules.txt`, `docker-compose.yml` outside tamper-evidence signing~~ **Fixed** |
-
-### 🟡 Stale Code
-
-| File | Issue |
-|------|-------|
-| `toggle-linux.sh` | `run_gui_cmd()` is macOS-specific dead code — never called on Linux |
-| `toggle-linux.sh` | Colima memory/swap constants present but Colima isn't used on Linux |
-
----
 
 ## Part 6: Constant Duplication Map
 
