@@ -39,9 +39,6 @@ if [[ -n "${TS_IP:-}" ]]; then
     echo ""
 fi
 
-echo -e "${BOLD}To update your block/allow rules:${NC}"
-echo "  python3 scripts/sync-rules.py"
-echo ""
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
 echo "  macOS:   double-click the 'Toggle Gateway' app icon!"
 echo "  Windows: double-click Toggle-Gateway.bat"

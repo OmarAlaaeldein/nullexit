@@ -53,9 +53,6 @@ if [[ -n "${TS_IP:-}" ]]; then
     echo ""
 fi
 
-echo -e "${BOLD}To update your block/allow rules:${NC}"
-echo "  python3 scripts/sync-rules.py"
-echo ""
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
 echo "  Linux: double-click the 'Toggle Gateway' desktop icon!"
 echo "  (or run ./scripts/toggle-linux.sh in terminal)"

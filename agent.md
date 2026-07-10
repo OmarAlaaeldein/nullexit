@@ -292,13 +292,6 @@ Added July 10, 2026. Called on startup and on every network state change (Listen
 
 ### scripts/logger.py (144 lines, 5.9KB) — ✅ Clean, standalone
 
-### scripts/sync-rules.py (666 lines, 29KB)
-
-**Internal duplication:**
-- `fetch_remote_domains()` and `fetch_remote_ips()` are structurally identical (fetch → cache → sanity check → stale fallback). Should be a single `fetch_with_cache(url, parser_fn, cache_dir)`.
-- `.env` parsing — custom hand-rolled reader duplicates bash scripts' `grep/sed` approach
-- AdGuard credentials `admin:nullexit` hardcoded (also in AdGuardHome.yaml as bcrypt hash)
-
 ---
 
 ## Part 4: Cross-Cutting Issues
@@ -332,7 +325,6 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 1. `write_gateway_active_marker()` / `clear_gateway_active_marker()`
 2. `restart_tailscaled_daemon()`
 3. `start_warp_watcher()` / `stop_warp_watcher()` — WARP liveness monitor
-4. `start_host_leak_probe()` / `stop_host_leak_probe()` — host egress leak prober
 5. `add_warp_bypass_routes()` / `remove_warp_bypass_routes()` / `setup_exit_node_routing()`
 6. `LOG_FILE` structured logging (timestamps to output.log)
 7. MSS clamping injection (step 4c)
@@ -354,7 +346,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 | `41642` (Tailscale WireGuard) | docker-compose.yml, routing-fix.sh, post-rules.txt |
 | `1080` (SOCKS5 port) | docker-compose.yml, toggle.sh |
 | `1120` (MSS clamp) | post-rules.txt, .env |
-| `admin:nullexit` (AdGuard creds) | AdGuardHome.yaml (bcrypt), sync-rules.py (plaintext) |
+| `admin:nullexit` (AdGuard creds) | AdGuardHome.yaml (bcrypt) |
 | `10.200.1.0/24` (Docker subnet) | (Fixed) no longer duplicated |
 | `America/New_York` (timezone) | docker-compose.yml (×4 services) |
 | `/tmp/nullexit-caffeinate.pid` | (Fixed) centralized in common.sh |

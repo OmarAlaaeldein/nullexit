@@ -199,7 +199,7 @@ zee.cws.conviva.com
 # *.googlevideo.com, image hosts on *.ytimg.com, profile thumbnails on
 # *.ggpht.com, etc.) is automatically allowlisted via the AdGuard '||domain^'
 # wildcard. The specific s.youtube.com / manifest.googlevideo.com entries
-# above are kept for clarity but will be optimized away by sync-rules.py
+# above are kept for clarity but will be optimized away by rule-compiler
 # because their parents are now in this list.
 youtube.com
 googlevideo.com
