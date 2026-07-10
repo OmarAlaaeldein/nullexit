@@ -366,7 +366,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 | `162.159.192.1` (WARP endpoint) | docker-compose.yml, routing-fix.sh (now dynamically loaded via .env/common.sh!) |
 | `5335` (AdGuard DNS port) | docker-compose.yml, AdGuardHome.yaml, post-rules.txt |
 | `5354` (mapped DNS port) | docker-compose.yml, dns-proxy.py |
-| `41641` (Tailscale WireGuard) | docker-compose.yml, routing-fix.sh, post-rules.txt |
+| `41642` (Tailscale WireGuard) | docker-compose.yml, routing-fix.sh, post-rules.txt |
 | `1080` (SOCKS5 port) | docker-compose.yml, toggle.sh |
 | `1120` (MSS clamp) | post-rules.txt, .env |
 | `admin:nullexit` (AdGuard creds) | AdGuardHome.yaml (bcrypt), sync-rules.py (plaintext) |
