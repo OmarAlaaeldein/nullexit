@@ -126,6 +126,7 @@ services:
       - TZ=America/New_York
       - WARP_ENDPOINT=${WARP_ENDPOINT_1:-162.159.192.1}
       - BLOCKED_COUNTRIES=${BLOCKED_COUNTRIES}
+      - TAILSCALE_ALLOW_LAN_P2P=${TAILSCALE_ALLOW_LAN_P2P:-false}
     volumes:
       - ./scripts/routing-fix.sh:/routing-fix.sh:ro
       # SECURITY: ./adguard/work/ is bind-mounted into this container.

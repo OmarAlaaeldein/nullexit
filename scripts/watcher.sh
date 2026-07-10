@@ -116,6 +116,56 @@ if [ -f "$MARKER" ]; then
   run_recover "initial post-wake (launchd resume = wake signal)"
 fi
 
+# ─── LAN P2P Auto-Detection ────────────────────────────────────────────────
+# Detects whether the current network allows safe Tailscale LAN P2P by:
+#   1. Checking WPA2-Enterprise (802.1x) via airport -I — always forces P2P=false
+#      because enterprise networks almost universally have AP Client Isolation.
+#   2. AP Isolation probe — sends a broadcast ping and checks if ANY LAN host responds.
+#      If no LAN hosts respond on a non-empty network, AP Isolation is active.
+# Writes 'true' or 'false' to .lan_p2p_detected in the repo root.
+# routing-fix.sh reads this file dynamically every 30s loop iteration.
+P2P_OVERRIDE_FILE="$SCRIPT_DIR/../.lan_p2p_detected"
+AIRPORT=/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport
+
+detect_lan_p2p_mode() {
+  local reason="unknown" allow="false"
+
+  # Step 1: WPA2-Enterprise (802.1x) detection via airport
+  local link_auth
+  link_auth=$("$AIRPORT" -I 2>/dev/null | awk '/link auth/{print $NF}')
+  if [ -z "$link_auth" ]; then
+    # Not connected to Wi-Fi or airport unavailable — be safe
+    reason="no-wifi" allow="false"
+  elif echo "$link_auth" | grep -qi "wpa2-psk\|wpa3-psk\|wpa-psk\|none\|open"; then
+    # WPA2/WPA3 Personal or open — could be home/hotspot; probe for AP isolation
+    # Step 2: AP Isolation probe
+    local iface gw subnet
+    iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
+    gw=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+    if [ -n "$iface" ] && [ -n "$gw" ]; then
+      # Broadcast ping: -b on Linux, omitted on macOS (macOS pings subnet broadcast via -t 1)
+      local responses
+      responses=$(ping -c 3 -t 1 -q "$gw" 2>/dev/null | awk '/packets transmitted/{print $4}')
+      if [ "${responses:-0}" -gt 0 ]; then
+        reason="wpa-personal-lan-reachable" allow="true"
+      else
+        reason="wpa-personal-ap-isolated" allow="false"
+      fi
+    else
+      reason="no-default-route" allow="false"
+    fi
+  else
+    # WPA2-Enterprise (802.1x) — always AP isolated
+    reason="802.1x-enterprise" allow="false"
+  fi
+
+  echo "[$(date -u +%FT%TZ)] P2P detect: link_auth='${link_auth:-none}' → allow=${allow} (reason: ${reason})"
+  echo "$allow" > "$P2P_OVERRIDE_FILE"
+}
+
+# Run once on startup
+detect_lan_p2p_mode
+
 # ─── Listener 1: WAKE events via unified log ───────────────────────────────
 # Predicate picks up:
 #   * "didWake"             — regular kernel wake events (lid open, RTC alarm)
@@ -172,8 +222,11 @@ fi
     ) | script -q /dev/null scutil 2>/dev/null \
       | while IFS= read -r line; do
           case "$line" in
-            *changedKey*|*State:/Network/Global/IPv*|*n.state*|*SCEventUpdate*) run_recover "NET: $(echo "$line" | head -c 100)" ;;
-            *) ;;  # ignore informational `n.add`, `n.watch`, prompts
+            *changedKey*|*State:/Network/Global/IPv*|*n.state*|*SCEventUpdate*)
+              detect_lan_p2p_mode
+              run_recover "NET: $(echo "$line" | head -c 100)"
+              ;;
+            *) ;;
           esac
         done
     echo "[$(date -u +%FT%TZ)] scutil pipe exited; reconnecting in 5s"
