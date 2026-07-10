@@ -1073,8 +1073,8 @@ else
     echo -n "  [1/3] Gateway reachable via Tailscale... "
     ping_ok=false
     # The host tailscaled needs a few seconds to propagate the new network map and
-    # establish a connection route after 'tailscale up --reset'. We retry up to 15 times.
-    for attempt in {1..15}; do
+    # establish a connection route after 'tailscale up --reset'. We retry up to 45 times.
+    for attempt in {1..45}; do
       if $TS_BIN ping --until-direct=false -c 2 --timeout 2s "$TS_IP" 2>/dev/null | grep -q "pong"; then
         ping_ok=true
         break
