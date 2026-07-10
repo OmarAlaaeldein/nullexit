@@ -1599,7 +1599,19 @@ An active-state marker file leak. The LaunchAgent-based network watcher (`watche
 ### Fix (July 10, 2026)
 Modified the start of `recover.sh` to explicitly delete `/tmp/nullexit-gateway-active.marker` if `POST_WAKE` is `false` (nuclear mode). This ensures that any subsequent network configuration changes made during the teardown are correctly ignored by `watcher.sh` because the marker file is gone.
 
-## 29. TODO
+## 29. Incident Post-Mortem: Pre-Flight Check False Negatives due to VPN Firewall STUN Blocks (July 10, 2026)
+
+### Symptom
+Immediately after a cold boot or full restart of the gateway, the pre-flight connectivity check `[1/3] Gateway reachable via Tailscale` failed, causing `toggle.sh` to skip the full exit-node configuration and fall back to SOCKS5/local DNS proxy mode. However, manually running `tailscale ping 100.100.21.8` immediately after startup succeeded in 1ms.
+
+### Root Cause
+An asynchronous Tailscale handshake delay caused by firewall restrictions. Inside the container network namespace, the `warp` container (gluetun) implements a strict firewall that blocks all outbound UDP traffic to the public internet except to the designated WireGuard endpoint. Because of this, the `tailscale` container's STUN requests to public STUN servers are blocked, causing the local daemon to report `UDP is blocked, trying HTTPS`. 
+Without UDP STUN capability, Tailscale is forced to fall back to a slower DERP-assisted handshake (relayed via HTTPS/TCP). This negotiation and direct-path punch-through takes roughly 30 to 35 seconds to establish on cold boots (after a full `tailscale up --reset`). Since the pre-flight check only waited 15 seconds (15 attempts with 1-second sleeps), the check timed out and aborted before the path completed.
+
+### Fix (July 10, 2026)
+Increased the pre-flight ping retry limit from 15 to 45 attempts (45 seconds) in both `toggle.sh` and `scripts/toggle-linux.sh`. This provides sufficient time for the DERP-assisted handshake to complete on cold boots, while still passing immediately (in 1-2 seconds) on warm starts or once the path is established.
+
+## 30. TODO
 
 *No pending items.*
 
