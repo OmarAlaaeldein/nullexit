@@ -106,10 +106,11 @@ run_recover() {
   fi
   echo "$now" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] $why → bash $RECOVER --post-wake"
-  bash "$RECOVER" --post-wake || true
+  bash "$RECOVER" --post-wake
   local exit_code=$?
   echo "$(date +%s)" > "$DEBOUNCE_FILE"
   echo "[$(date -u +%FT%TZ)] $why → exit=$exit_code (now=$(date +%s))"
+  return $exit_code || true
 }
 
 if [ -f "$MARKER" ]; then

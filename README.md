@@ -200,7 +200,7 @@ See `devref.md §11.16` for the full deep dive.
 
 ## 7. Networking Notes
 
-- **Port conflicts:** None. Tailscale uses dynamic UDP ports; WARP uses outbound UDP:2408. No host ports are exposed.
+- **Port conflicts:** None. Tailscale uses dynamic UDP ports; WARP uses outbound UDP:2408. The gateway binds `0.0.0.0:41642/udp` on the host for Tailscale's WireGuard listener — this is intentional and required to receive inbound hole-punch packets from peers on the internet. All other internal ports (AdGuard :5335, SOCKS5 :1080) are bound to `127.0.0.1` only and are not reachable from the LAN.
 - **Tailscale P2P vs DERP:** On the same Wi-Fi, Tailscale establishes a fast P2P connection. On cellular (CGNAT), it always falls back to a DERP relay (~80-200ms). See `devref.md §5.1`.
 - **AirDrop / AirPlay:** Unaffected — the gateway only touches standard Wi-Fi/Ethernet interfaces, not `awdl0`.
 - **VPN coexistence:** Do **not** run a local VPN client (WARP, Mullvad, NordVPN) simultaneously with the exit node. Both fight for the default route and will blackhole your connection.
