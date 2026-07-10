@@ -85,6 +85,18 @@ add_tailscale_p2p_bypass() {
     allow_p2p=$(cat "/app/.lan_p2p_detected" 2>/dev/null | tr -d '[:space:]')
   fi
 
+  # Always allow P2P directly to the Docker host gateway (the Mac running this container).
+  # The gateway container is always co-located with the host Mac on the same machine,
+  # so direct Tailscale P2P via the Docker bridge is always safe and avoids DERP overhead.
+  # This RETURN rule must be inserted BEFORE the general DROP rules so it takes priority.
+  local default_gw
+  default_gw=$(ip route show default | awk '{print $3}')
+  if [ -n "$default_gw" ]; then
+    if ! iptables -t mangle -C OUTPUT -p udp --sport 41642 -d "${default_gw}/32" -j RETURN 2>/dev/null; then
+      iptables -t mangle -I OUTPUT 1 -p udp --sport 41642 -d "${default_gw}/32" -j RETURN 2>/dev/null || true
+    fi
+  fi
+
   if [ "${allow_p2p}" != "true" ]; then
     # Drop Tailscale UDP packets destined for local subnets to prevent macOS gvproxy SNAT
     # endpoint poisoning. When disabled (campus/enterprise WPA2-Enterprise with AP isolation),

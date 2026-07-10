@@ -1849,3 +1849,17 @@ done
 ```
 
 **Why not ping?** Pinging an IP (e.g. `1.1.1.1`) during restart is unreliable because DNS may still be hijacked from the previous session, and the exit node routing may not yet be cleared, causing the ping to loop back through the tunnel. `route get default` is a pure local kernel query — no packets sent.
+
+## 43. Low Gateway Throughput (DERP Relay & MTU Fragmentation) Fixed
+
+**Problem:** The host Mac's internet throughput through the gateway dropped significantly (e.g., from 34Mbps raw to 2.1Mbps via gateway). This was caused by a combination of two bottlenecks:
+
+**1. Tailscale DERP Relay Bottleneck:**
+Because the host Mac and the Docker container operate behind the same public IP, standard hole-punching for Tailscale P2P failed, forcing traffic through Tailscale's NYC DERP relay. Normally, `routing-fix.sh` explicitly drops container Tailscale UDP packets destined for local subnets (when `TAILSCALE_ALLOW_LAN_P2P=false` in `.env` or auto-detected). We nuke these P2P connections on purpose to prevent the severe macOS `gvproxy` SNAT endpoint poisoning issue we faced earlier (see `devref.md §36`). However, this strict policy unintentionally blocked direct communication between the container and the Mac host itself via the Docker bridge network.
+
+**Fix:** In `routing-fix.sh`, a `RETURN` rule was inserted *before* the general local subnet `DROP` rules. This rule dynamically fetches the Docker bridge gateway IP (`ip route show default`) and permits Tailscale UDP port 41642 traffic directly to it. This allows the container and host to establish a direct P2P link over the local bridge (bypassing the DERP relay entirely), while still safely dropping P2P traffic to other LAN devices (like phones) to prevent the §36 SNAT poisoning bug.
+
+**2. MTU Double-Encapsulation Fragmentation:**
+The host's Tailscale interface (`utun5`) defaulted to an MTU of 1280. The WARP tunnel inside the container also uses an MTU of 1280. When a full 1280-byte Tailscale packet from the host entered the container and was encapsulated by WARP (adding ~60 bytes of overhead), the resulting packet exceeded 1280 bytes, leading to severe fragmentation and performance degradation.
+
+**Fix:** In `toggle.sh`'s `setup_exit_node_routing` function, the host's Tailscale `utun` interface MTU is now explicitly lowered to `1200`. This ensures that host-originated packets can comfortably fit inside the container's WARP tunnel encapsulation without fragmenting.
