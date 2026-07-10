@@ -1,7 +1,7 @@
 iptables -A FORWARD -i tailscale0 -o tun0 -j ACCEPT
 iptables -A FORWARD -i tun0 -o tailscale0 -j ACCEPT
 iptables -A INPUT -i tailscale0 -j ACCEPT
-iptables -A INPUT -i eth0 -p udp --dport 41641 -j ACCEPT
+iptables -A INPUT -i eth0 -p udp --dport 41642 -j ACCEPT
 iptables -t nat -A POSTROUTING -o tun0 -j MASQUERADE
 # Clamp MSS to 1120. With Tailscale overhead on top of WARP (each WireGuard encapsulation adds ~60 bytes),
 # the safe MSS for double-tunneled traffic is 1120 to prevent strict-MSS endpoints from stalling.
