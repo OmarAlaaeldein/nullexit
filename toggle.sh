@@ -431,6 +431,32 @@ fi
 # ERR trap) so that any failure before the main logic can still tear down Tailscale.
 
 
+# ─── Wait for Network Readiness ─────────────────────────────────────────────
+# On --restart, the gateway tears down while the host network interface may
+# still be reconnecting (Wi-Fi, Ethernet, USB tethering, etc.). If we proceed
+# too early, get_active_service returns nothing, routing targets the wrong
+# interface, and DNS/WARP setup silently fails.
+#
+# We use `route get default` to detect a valid default gateway rather than
+# checking a specific interface (e.g. en0) — this generalizes across all
+# connection types: Wi-Fi, Ethernet, USB-C adapters, iPhone tethering, etc.
+# The moment the OS has any routable default gateway, we proceed.
+_net_wait_secs=0
+_net_timeout=60
+echo "Waiting for network connectivity before starting..."
+while true; do
+  if route get default 2>/dev/null | grep -q 'gateway:'; then
+    _gw=$(route get default 2>/dev/null | awk '/gateway:/{print $2}')
+    echo "  Network ready (default gateway: $_gw)."
+    break
+  fi
+  if [ "$_net_wait_secs" -ge "$_net_timeout" ]; then
+    echo "  [Warning] No default gateway after ${_net_timeout}s — proceeding anyway."
+    break
+  fi
+  sleep 2
+  _net_wait_secs=$((_net_wait_secs + 2))
+done
 
 ACTIVE_SERVICE=$(get_active_service)
 
