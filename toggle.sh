@@ -149,7 +149,7 @@ start_sleep_prevention() {
       sudo -n networksetup -setsecurewebproxystate \"$ACTIVE_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       sudo -n networksetup -setsecurewebproxystate \"$EN0_SERVICE\" off >> \"$PWD/output.log\" 2>&1 || true
       if command -v tailscale >/dev/null 2>&1; then
-        tailscale up --reset --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
+        tailscale up --accept-dns=false --exit-node= >> \"$PWD/output.log\" 2>&1 &
         TS_DOWN_ARGS=\"\"
         if [ \"\$KILL_SWITCH\" = \"true\" ]; then TS_DOWN_ARGS=\"--accept-risk=lose-ssh\"; fi
         tailscale down \$TS_DOWN_ARGS >> \"$PWD/output.log\" 2>&1 &
@@ -794,6 +794,9 @@ else
     disconnect_tailscale_host
   fi
 
+  # 2. Wait for physical DHCP lease to settle (crucial for restarts/wake-up/roaming)
+  wait_for_dhcp_settle
+
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
@@ -1035,7 +1038,7 @@ else
 
       # ── Phase A: Join mesh without exit node ───────────────────────────
       echo "Connecting host to Tailscale mesh (no exit node yet)..."
-      if $TS_BIN up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node=; then
+      if $TS_BIN up --ssh=true --accept-dns=false --accept-routes=true --exit-node=; then
         HOST_ON_MESH=true
         echo "Host is on Tailscale mesh."
       else
@@ -1121,7 +1124,7 @@ else
     # Act based on check results
     if [ "$SKIP_EXIT_NODE" != "true" ]; then
       echo -e "\nAll checks passed. Enabling exit node $TS_IP..."
-      if $TS_BIN up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
+      if $TS_BIN up --ssh=true --accept-dns=false --accept-routes=true --exit-node="$TS_IP" --exit-node-allow-lan-access=true; then
         echo "Exit node enabled."
         add_warp_bypass_routes
         setup_exit_node_routing
@@ -1182,10 +1185,6 @@ else
     if curl --socks5-hostname 127.0.0.1:$SOCKS_PROXY_PORT --max-time 10 -s https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -q "warp=on"; then
       echo "ok (warp=on)."
       echo "  All TCP traffic now encrypted through Cloudflare WARP tunnel."
-      if is_kill_switch_enabled; then
-        add_warp_bypass_routes
-        enable_killswitch
-      fi
     else
       echo "FAILED (proxy not routing through WARP)."
       echo "  Disabling SOCKS5 proxy — internet stays on direct connection."
