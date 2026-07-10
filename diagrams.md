@@ -39,7 +39,7 @@ graph TB
         end
 
         subgraph LAUNCHD["⏰ launchd (always-on)"]
-            WATCHER["scripts/watcher.sh\n(sleep/wake + Wi-Fi roam)"]
+            WATCHER["scripts/watcher.sh\n(sleep/wake + Wi-Fi roam\n+ LAN P2P auto-detection)"]
         end
     end
 
@@ -71,6 +71,7 @@ graph TB
     WARPWATCH -->|"≥6 consecutive warp=off"| RECOVER
     WATCHER -->|"sleep/wake / roam"| RECOVERPOST
     RECOVERPOST -->|"if gateway unhealthy"| RECOVER
+    WATCHER -->|"writes .lan_p2p_detected"| ROUTINGFIX
 
     style MONITORS fill:#1a1a2e,color:#e0e0ff
     style COLIMAVM fill:#0d2137,color:#e0e0ff
@@ -182,7 +183,7 @@ graph LR
         end
 
         subgraph D2["🔁 DNS Watcher"]
-            DNSW["Polls networksetup every ~15s\nPID: /tmp/nullexit-dns-watcher.pid\n\nIf DNS drifts from gateway IP\n→ re-hijacks automatically\n→ output.log"]
+            DNSW["Polls networksetup every ~30s\nPID: /tmp/nullexit-dns-watcher.pid\n\nIf DNS drifts from gateway IP\n→ re-hijacks automatically\n→ output.log"]
         end
 
         subgraph D3["🔭 WARP Watcher"]
@@ -309,7 +310,7 @@ flowchart LR
     subgraph DETECTORS["Detector"]
         D1["WARP Watcher\n(30s poll, docker exec)"]
         D2["scripts/watcher.sh\n(launchd, always on)"]
-        D3["DNS Watcher\n(15s poll, networksetup)"]
+        D3["DNS Watcher\n(30s poll, networksetup)"]
         D4["cleanup_handler\n(ERR/INT/TERM/HUP trap)"]
         D5["Host Leak Probe\n(300ms poll, HOST curl)"]
         D6["routing-fix.sh\n(30s curl over tun0)"]
