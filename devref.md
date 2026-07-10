@@ -1659,7 +1659,19 @@ Overly broad error silencing. The `docker compose exec` commands in the health c
 ### Fix (July 10, 2026)
 Redirected stderr of the `docker compose exec` check commands to `output.log` (`2>> output.log`). This ensures that any command execution failures or connection timeout details are logged.
 
-## 34. TODO
+## 34. Architectural Design: How nullexit Mimics Commercial VPNs during Roaming
+
+The `nullexit` roaming/network recovery subsystem replicates the exact engineering mechanics used by commercial, premium VPN clients (like Mullvad or NordVPN) to transition across Wi-Fi networks safely and seamlessly.
+
+### The 4-Step Transition Cycle
+When your Mac disconnects from one Wi-Fi and associates with another, `nullexit` coordinates the following events:
+
+1. **Firewall Lock (Kill-Switch)**: The macOS Packet Filter (PF) anchor `com.apple/nullexit` remains locked on the physical interface (`en0`), blocking all direct outbound IPv4 and IPv6 traffic. This guarantees that your real ISP IP or unencrypted DNS requests **never leak** onto the new network while the connection is rebuilding.
+2. **System Event Interception**: A launchd LaunchAgent (`watcher.sh`) listens to the macOS System Configuration framework for the `State:/Network/Global/IPv4` key changes, spawning `recover.sh --post-wake` in under 500ms when a change is detected.
+3. **Bypass Routing**: The script dynamically resolves the new physical network's IP gateway (e.g. `192.168.137.1`), cleans up stale bypass routes from the previous network, and adds static bypass routes pointing to Cloudflare's WARP endpoints and the Tailscale control plane directly via the new gateway. This allows the VPN client to negotiate its handshake outside of the tunnel.
+4. **Hole-Punching / NAT Re-negotiation**: The script runs a target check on the `warp` container's tunnel. If the WireGuard connection is wedged by the network switch, it force-recreates the container to establish a fresh NAT binding to Cloudflare, restoring connection in ~15 seconds.
+
+## 35. TODO
 
 *No pending items.*
 
