@@ -1970,3 +1970,19 @@ Because the host Mac and the Docker container operate behind the same public IP,
 The host's Tailscale interface (`utun5`) defaulted to an MTU of 1280. The WARP tunnel inside the container also uses an MTU of 1280. When a full 1280-byte Tailscale packet from the host entered the container and was encapsulated by WARP (adding ~60 bytes of overhead), the resulting packet exceeded 1280 bytes, leading to severe fragmentation and performance degradation.
 
 **Fix:** In `toggle.sh`'s `setup_exit_node_routing` function, the host's Tailscale `utun` interface MTU is explicitly lowered to `1200` (configurable via `HOST_MTU` in `.env`). This ensures that host-originated packets can comfortably fit inside the container's WARP tunnel encapsulation without fragmenting.
+
+## 44. Architectural Limitation: Chrome Remote Desktop Performance (UDP NAT)
+
+### Observation (July 11, 2026)
+When the user connects to their host Mac using Chrome Remote Desktop (CRD) while `nullexit` is active, the connection suffers from massive latency, lag, and degraded video quality. AdGuard Home's `blocked.log` shows zero blocked DNS requests for Google, WebRTC, or `chromoting` endpoints, indicating this is not a DNS sinkhole issue.
+
+### Root Cause
+This is a fundamental limitation of tunneling all host traffic through a strict commercial NAT (Cloudflare WARP).
+1. Chrome Remote Desktop attempts to use **STUN (UDP hole-punching)** to establish a lightning-fast, direct peer-to-peer WebRTC connection between the client device and the host Mac.
+2. Because all non-Tailscale traffic is forcefully routed through the `warp` container, the STUN packets exit the network from a Cloudflare IP.
+3. Cloudflare's enterprise NAT infrastructure strictly drops unsolicited inbound UDP packets. The UDP hole-punch fails.
+4. Because a direct P2P connection cannot be established, CRD falls back to **Relay Mode** (TURN), bouncing all video data back and forth through Google's cloud servers instead of sending it directly over the local or mesh network. This relaying introduces massive latency.
+
+### Workaround / Fix
+This lag is the accepted "tax" for maintaining absolute cryptographic anonymity; the only way to restore CRD speed would be to leak its UDP traffic outside the tunnel (violating zero-trust).
+To achieve low-latency remote access, users should bypass CRD entirely and use macOS's built-in **Screen Sharing (VNC)** directly over the Tailscale IP. Tailscale's sophisticated custom DERP/WireGuard architecture successfully UDP hole-punches through strict NATs, providing a direct, encrypted, high-speed connection without relying on external cloud relays.
