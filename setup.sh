@@ -45,6 +45,15 @@ echo "  Windows: double-click Toggle-Gateway.bat"
 echo ""
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
+    # LuLu localhost filtering check
+    if [ -d "/Applications/LuLu.app" ] || systemextensionsctl list 2>/dev/null | grep -q "com.objective-see.lulu"; then
+        echo -e "${YELLOW}${BOLD}LuLu Firewall Detected:${NC}"
+        echo "  LuLu's localhost (loopback) filtering is OFF by default. To properly protect the"
+        echo "  local nullexit proxy ports from malicious local processes, you must manually enable"
+        echo "  'Allow Loopback' (or block it selectively) in LuLu's Preferences -> Rules."
+        echo ""
+    fi
+
     echo -e "${YELLOW}${BOLD}Note on macOS Tailscale Sandboxing:${NC}"
     echo "  The Tailscale GUI app (tailscale-app) installed on macOS is sandboxed."
     echo "  While you cannot run a Tailscale SSH server on this Mac host, you can"

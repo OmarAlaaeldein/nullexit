@@ -453,10 +453,16 @@ if [ "$POST_WAKE" = "true" ]; then
 
   GATEWAY_OK=false
   if command -v dig >> output.log 2>&1; then
-    # AdGuard is exposed at localhost:5354. If this resolves, the warp tunnel
-    # is alive AND DNSCache has picked up the post-wake reset.
-    if dig +tcp @127.0.0.1 -p 5354 google.com +short +timeout=5 >> output.log 2>&1; then
-      ok "Gateway DNS (AdGuard via localhost:5354) works"
+    # Source procedural ports if available
+    if [ -f "/tmp/nullexit-ports.env" ]; then
+      source "/tmp/nullexit-ports.env"
+    fi
+    DNS_PORT=${DNS_PROXY_PORT:-5354}
+    
+    # AdGuard is exposed at localhost:${DNS_PORT}. If this resolves, the warp tunnel
+    # is functioning properly because AdGuard routes upstream to warp.
+    if dig +tcp @127.0.0.1 -p "$DNS_PORT" google.com +short +timeout=5 >> output.log 2>&1; then
+      ok "Gateway DNS (AdGuard via localhost:${DNS_PORT}) works"
       GATEWAY_OK=true
     else
       warn "Gateway DNS not responding yet"
