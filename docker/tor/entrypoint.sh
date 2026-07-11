@@ -20,7 +20,8 @@ if [ "${TOR_USE_BRIDGES:-false}" = "true" ]; then
         if [ -w "/output.log" ]; then
             echo "$MSG" >> /output.log
         fi
-        exit 1
+        # Sleep indefinitely to prevent docker-compose 'unless-stopped' from triggering a crash loop
+        exec sleep infinity
     fi
     
     echo "UseBridges 1" >> $TORRC

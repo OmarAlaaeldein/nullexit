@@ -235,10 +235,10 @@ export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
 # Uses a Python DNS proxy (handles TCP wire format correctly).
 # Python3 is built into macOS — no external dependencies.
 DNS_PROXY_BIN=""
-if command -v python3 >> output.log 2>&1; then
-  DNS_PROXY_BIN="python3"
-elif command -v python >> output.log 2>&1; then
-  DNS_PROXY_BIN="python"
+if command -v python3 >/dev/null 2>&1; then
+  DNS_PROXY_BIN="python3 -I"
+elif command -v python >/dev/null 2>&1; then
+  DNS_PROXY_BIN="python -I"
 fi
 
 # Path to the DNS proxy script (sibling of this script)
