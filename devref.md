@@ -1217,6 +1217,24 @@ When `TOR_USE_BRIDGES=true` is set:
 - **Limitations:** `obfs4` is highly effective against passive DPI, but it is not guaranteed to defeat active-probing-resistant detection by a highly sophisticated state-level adversary.
 
 > **Architecture Rule:** The `nullexit` gateway deliberately does NOT bundle, hardcode, or automatically fetch bridge lines. Bridge lines are highly sensitive and expire. Users must obtain their own bridge lines from `https://bridges.torproject.org` and manually populate the `tor-bridges.txt` file. If bridges are enabled but the file is missing or empty, the Tor container will intentionally crash and fail to start rather than silently falling back to public guard relays.
+
+**The Bootstrapping Paradox (Out-of-Band Key Exchange)**
+Automating the bridge acquisition process (e.g., scripting the gateway to log into the Telegram `@GetBridgesBot` via MTProto API) introduces catastrophic OPSEC flaws:
+1. **Identity Leaks:** Baking a Telegram session into the container explicitly links the "anonymous" gateway to a real-world physical phone number.
+2. **The Chicken & Egg Deadlock:** In heavily censored regimes, Telegram itself is usually blocked. If the container requires Telegram to fetch bridges to bypass the firewall, it will fail because it cannot bypass the firewall to reach Telegram.
+3. **Bridge Exhaustion & CAPTCHAs:** Automated scraping behaves identically to state-sponsored scrapers, triggering Tor's anti-bot CAPTCHAs which leads to silent proxy failures and exhausts the limited public bridge pool.
+
+Instead, users should rely on a less secure layer to manually reach Telegram, obtain the bridges, and populate `tor-bridges.txt`. This can be done via the standard `nullexit` WARP tunnel, a mobile phone on cellular data, Mullvad VPN, or a secure remote VPS. *(Note: We plan on fully integrating Mullvad and VPS architectures directly into `nullexit` in the future, but have not had the time to build it yet).* This intentionally "air-gaps" the cryptographic key exchange from the proxy infrastructure, leaving zero API tokens and zero network traces for an adversary to exploit.
+
+### OPSEC: Python Runtime Airgap (Isolated Mode)
+`nullexit` explicitly relies on the host's native system Python 3 runtime for critical components like `scripts/dns-proxy.py`. Because this script runs with elevated privileges (`sudo -n`) to bind to the privileged UDP/53 socket, modifying or polluting this Python environment is strictly forbidden.
+
+**The Zero-Dependency Rule & Isolated Mode (`-I`)**
+You must **NEVER** install third-party `pip` packages (e.g., `requests`, `pyyaml`) into the system Python environment that `nullexit` uses. 
+- All Python scripts in this repository must be written using *only* the Python Standard Library (`socket`, `urllib`, `json`, `ssl`).
+- Third-party packages introduce a massive supply-chain attack vector. A compromised `pip` package installed globally could allow local malware to hook into the Python runtime and exploit the `sudo` privilege of the DNS proxy to gain full root access.
+- To enforce strict immunity against user-installed malicious packages, `toggle.sh` explicitly invokes the proxy using **Python's Isolated Mode** (`python3 -I`). This flag forces the interpreter to completely ignore `PYTHONPATH`, `PYTHONHOME`, and the user's `site-packages` directory, executing exclusively from the read-only, Apple-signed system framework.
+
 ### Recommended Upgrades
 
 | Layer | Default | Upgraded |

@@ -430,9 +430,9 @@ setup_standard_path
 # Python3 is built into macOS — no external dependencies.
 DNS_PROXY_BIN=""
 if command -v python3 >> output.log 2>&1; then
-  DNS_PROXY_BIN="python3"
+  DNS_PROXY_BIN="python3 -I"
 elif command -v python >> output.log 2>&1; then
-  DNS_PROXY_BIN="python"
+  DNS_PROXY_BIN="python -I"
 fi
 
 # Path to the DNS proxy script (sibling of this script)

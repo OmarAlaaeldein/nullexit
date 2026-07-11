@@ -169,7 +169,7 @@ A native macOS Packet Filter (`pf`) kill-switch that enforces a strict default-d
 - **Remote-Access Safe:** Carefully designed to whitelist Tailscale's control plane (`192.200.0.0/24`), `utun*` tunnel traffic, and local LAN subnets. This guarantees that your remote SSH sessions and local AirDrop will survive even when the kill switch engages.
 - **Setup Requirement:** The toggle scripts need permission to manipulate the network and firewall in the background without prompting you for a password. You must configure your passwordless sudo config by running exactly:
   ```bash
-  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl, /usr/sbin/networksetup, /usr/bin/dscacheutil, /usr/bin/killall, /usr/bin/pkill, /bin/kill, /sbin/route, /sbin/ifconfig, /usr/bin/true, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/python3 $PWD/scripts/dns-proxy.py, /opt/homebrew/bin/python3 $PWD/scripts/dns-proxy.py, /usr/local/bin/python3 $PWD/scripts/dns-proxy.py" | sudo tee /etc/sudoers.d/nullexit
+  echo "$USER ALL=(root) NOPASSWD: /sbin/pfctl, /usr/sbin/networksetup, /usr/bin/dscacheutil, /usr/bin/killall, /usr/bin/pkill, /bin/kill, /sbin/route, /sbin/ifconfig, /usr/bin/true, /opt/homebrew/bin/brew, /usr/local/bin/brew, /usr/bin/python3 -I $PWD/scripts/dns-proxy.py, /opt/homebrew/bin/python3 -I $PWD/scripts/dns-proxy.py, /usr/local/bin/python3 -I $PWD/scripts/dns-proxy.py" | sudo tee /etc/sudoers.d/nullexit
   ```
 
 ---
@@ -242,6 +242,9 @@ For higher security, the gateway supports these drop-in upgrades:
 | Coordination | Tailscale (US) | Headscale (self-hosted) |
 | Auth | Persistent OAuth keys | Ephemeral auth keys |
 | Content | WireGuard asymmetric | WireGuard + Pre-Shared Keys (PSK) |
+
+#### Python Runtime Airgap (Isolated Mode)
+**Never** install third-party `pip` packages (like `requests` or `pyyaml`) into the Python environment that `nullexit` uses. All python scripts in this project (e.g., the `dns-proxy.py` daemon) are strictly engineered to run on the zero-dependency Python Standard Library. To strictly isolate the environment from supply-chain attacks, `nullexit` executes these scripts using **Python's Isolated Mode** (`python3 -I`). This deliberately blinds the execution environment to any malicious user-installed `pip` packages on the host, permanently air-gapping the gateway from PyPI.
 
 See `devref.md §8` for the full threat model, Snowden programme analysis, and trust assumptions.
 
