@@ -189,7 +189,7 @@ services:
       - .:/app
 
   tor:
-    image: dperson/torproxy
+    build: ./docker/tor
     container_name: tor
     network_mode: service:warp
     depends_on:
@@ -197,6 +197,12 @@ services:
         condition: service_healthy
     environment:
       - TZ=America/New_York
+      - TOR_USE_BRIDGES=${TOR_USE_BRIDGES:-false}
+      - TOR_BRIDGE_LINES_FILE=${TOR_BRIDGE_LINES_FILE:-./tor-bridges.txt}
+    working_dir: /nullexit
+    volumes:
+      - ./:/nullexit:ro
+      - ./output.log:/output.log:rw
     restart: unless-stopped
     logging:
       driver: "json-file"

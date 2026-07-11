@@ -1,2 +1,3 @@
 # Environment variables and secrets
 .env
+tor-bridges.txt
