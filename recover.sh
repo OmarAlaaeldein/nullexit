@@ -347,6 +347,23 @@ fi
 
 # ─── 6. Stop gateway Docker containers (default) / Force-recreate warp if unhealthy (post-wake) ─
 if [ "$POST_WAKE" = "true" ]; then
+  # ─── 6a. Check for Roaming Network Mismatch (Bridged vs Enterprise Wi-Fi) ─
+  if [ -f "/tmp/nullexit_colima_mode.txt" ] && [ -f "$SCRIPT_DIR/../.lan_p2p_detected" ]; then
+    current_colima_mode=$(cat /tmp/nullexit_colima_mode.txt)
+    p2p_allowed=$(cat "$SCRIPT_DIR/../.lan_p2p_detected")
+    required_colima_mode="bridged"
+    [ "$p2p_allowed" == "false" ] && required_colima_mode="shared"
+    
+    if [ "$current_colima_mode" != "$required_colima_mode" ]; then
+      warn "Network roaming mismatch detected!"
+      warn "Colima is running in '$current_colima_mode' mode but new network requires '$required_colima_mode'."
+      warn "Executing full gateway restart to protect against MAC-spoofing deauthentication..."
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Roam] Mismatch ($current_colima_mode vs $required_colima_mode). Triggering toggle.sh --restart." >> output.log
+      nohup bash "$SCRIPT_DIR/../toggle.sh" --restart >/dev/null 2>&1 &
+      exit 0
+    fi
+  fi
+
   step "Checking Colima VM state"
   colima_status=$(colima status 2>&1)
   if echo "$colima_status" | grep -qi "running"; then
