@@ -1559,6 +1559,20 @@ Split the single implicit rule into explicit `proto tcp`, `proto udp`, and `prot
 - **Prevented Infinite Loops:** Modified `scripts/watcher.sh` to write the **completion** timestamp of `recover.sh` to `DEBOUNCE_FILE` (instead of only the start timestamp). This ensures all buffered network config events generated during route reconstruction are evaluated against the end-of-run timestamp and successfully debounced, breaking the infinite loop.
 - **Centralized & Timestamped Logs:** Redirected `watcher.sh` stdout/stderr from `/tmp/nullexit-watcher.log` to the repository's main `output.log` and updated `scripts/common.sh`'s `step`, `ok`, `warn`, `fail`, and `die` helpers to prefix logs with a local `[YYYY-MM-DD HH:MM:SS]` timestamp.
 
+### 23.8 July 11, 2026: Tor Container Hardening & obfs4proxy Restoration
+**Symptom:**
+1. The Tor container entered a fatal crash loop upon boot, throwing `exec: "obfs4proxy": executable file not found in $PATH` when `TOR_USE_BRIDGES=true`.
+2. When the user pasted Tor bridge lines containing comments (`#`) or blank lines into `tor-bridges.txt`, the container failed to validate the file properly and crashed.
+
+**Root Cause:**
+- **Bug 1 (Missing Pluggable Transports):** The Tor Dockerfile was built on `debian:bullseye-slim`, which had silently dropped or failed to resolve the `obfs4proxy` package in its latest apt repositories.
+- **Bug 2 (Fragile Validation):** The `entrypoint.sh` bridge validation check merely checked `[ -s tor-bridges.txt ]` (file size > 0). It did not verify if the file actually contained valid, uncommented bridge lines. Passing empty lines or comments tricked the validation script into appending invalid `Bridge` directives to the `torrc`, causing the Tor daemon to instantly exit.
+
+**Resolution:**
+- **Upgraded Base Image:** Shifted the Tor Dockerfile base image to `debian:bookworm-slim`, restoring access to the `obfs4proxy` pluggable transport package.
+- **Robust Bridge Validation:** Replaced the fragile `[ -s ]` check with a strict `grep -vE '^\s*(#|$)'` command that strips comments and empty lines. If no valid lines remain, the container safely falls back to standard public guard relays instead of crashing, ensuring Tor remains available even with a misconfigured bridge file.
+- **Image Pinning:** Explicitly pinned `image: nullexit-tor:v1.0.0` in `docker-compose.yml` to prevent arbitrary local builds from drifting to `:latest`.
+
 ---
 
 ## 24. Censorship-Resistant Transport & Egress Compartmentalization
