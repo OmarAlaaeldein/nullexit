@@ -835,8 +835,18 @@ else
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
-    echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address, bridged)..."
-    run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode bridged
+    colima_network_mode="bridged"
+    security_type=""
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      security_type=$(system_profiler SPAirPortDataType 2>/dev/null | awk '/Current Network Information:/{found=1} found && /Security:/{print $NF; exit}')
+      if echo "$security_type" | grep -qi "Enterprise"; then
+        echo -e "\n  [!] WPA2-Enterprise Wi-Fi detected! Bridged mode will cause MAC-spoofing deauthentication."
+        echo "      Falling back to '--network-mode shared' for Colima."
+        colima_network_mode="shared"
+      fi
+    fi
+    echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address, $colima_network_mode)..."
+    run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode "$colima_network_mode"
   else
     echo "Colima is already running."
   fi
