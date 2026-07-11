@@ -104,7 +104,7 @@ flowchart TD
     S7["7. Poll tailscale status\n(wait for 'offers exit node'\nup to 60s)"]
     TSREADY{"container\nTailscale ready?"}
     ABORT(["❌ ABORT\n→ cleanup_handler"])
-    S8["8. Resolve gateway Tailscale IP\n(ADGUARD_IP.txt or docker exec)"]
+    S8["8. Resolve gateway Tailscale IP\n(.gateway_ip or docker exec)"]
     S9["9. Verify tailscaled running\n(auto-start if needed)"]
     S10["10. tailscale up --reset\n--exit-node=\n--accept-routes=true\n--ssh=true --accept-dns=false"]
 

@@ -17,7 +17,7 @@ wgcf
 
 # AdGuard Home persistent state
 adguard/
-ADGUARD_IP.txt
+.gateway_ip
 logs.txt
 
 # 

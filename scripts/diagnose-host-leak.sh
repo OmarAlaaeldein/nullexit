@@ -298,8 +298,8 @@ EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>> "$LOG_FILE" \
 
 # Resolve the gateway's Tailscale IP.
 GATEWAY_TS_IP=""
-if [ -f "$PROJECT_ROOT/ADGUARD_IP.txt" ]; then
-  GATEWAY_TS_IP=$(cat "$PROJECT_ROOT/ADGUARD_IP.txt" 2>> "$LOG_FILE" \
+if [ -f "$PROJECT_ROOT/.gateway_ip" ]; then
+  GATEWAY_TS_IP=$(cat "$PROJECT_ROOT/.gateway_ip" 2>> "$LOG_FILE" \
                   | tr -d '\r' | awk 'NR==1{print $1; exit}')
 fi
 if [ -z "$GATEWAY_TS_IP" ] && command -v docker >> "$LOG_FILE" 2>&1 \
@@ -455,7 +455,7 @@ if [ -n "$GATEWAY_TS_IP" ]; then
   ok "gateway Tailscale IP: $GATEWAY_TS_IP"
 else
   warn "could not resolve gateway Tailscale IP"
-  line "  (looked in ADGUARD_IP.txt and tried docker compose exec tailscale ip -4)"
+  line "  (looked in .gateway_ip and tried docker compose exec tailscale ip -4)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -581,7 +581,7 @@ case "$SCENARIO" in
     echo "  Likely causes:"
     echo "    - tailscaled is logged out / expired (see Section 1)"
     echo "    - Docker is not running (gateway containers down)"
-    echo "    - ADGUARD_IP.txt missing AND docker compose exec failed"
+    echo "    - .gateway_ip missing AND docker compose exec failed"
     echo "  Inspect the report at: $REPORT_FILE"
     ;;
 esac

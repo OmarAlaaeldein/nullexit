@@ -166,11 +166,11 @@ if ($isGatewayActive) {
         Write-Host "Gateway has been successfully STARTED." -ForegroundColor Green
     } else {
         Write-Host "Warning: Could not resolve gateway Tailscale IP. DNS hijacking skipped." -ForegroundColor Red
-        # Fallback to ADGUARD_IP.txt if it exists
-        if (Test-Path "ADGUARD_IP.txt") {
-            $fallbackIP = Get-Content "ADGUARD_IP.txt" -TotalCount 1
+        # Fallback to .gateway_ip if it exists
+        if (Test-Path ".gateway_ip") {
+            $fallbackIP = Get-Content ".gateway_ip" -TotalCount 1
             if (-not [string]::IsNullOrWhiteSpace($fallbackIP)) {
-                Write-Host "[Fallback] Using static IP from ADGUARD_IP.txt: $fallbackIP" -ForegroundColor Yellow
+                Write-Host "[Fallback] Using static IP from .gateway_ip: $fallbackIP" -ForegroundColor Yellow
                 Hijack-HostDNS $fallbackIP
                 Write-Host "Gateway STARTED (with static fallback IP)." -ForegroundColor Green
             }

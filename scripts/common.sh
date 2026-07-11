@@ -297,8 +297,8 @@ reset_sharing_services() {
 }
 
 read_adguard_ip() {
-  if [ -f "ADGUARD_IP.txt" ]; then
-    tr -d '\r' < "ADGUARD_IP.txt" | awk 'NR==1{print $1;exit}'
+  if [ -f ".gateway_ip" ]; then
+    tr -d '\r' < ".gateway_ip" | awk 'NR==1{print $1;exit}'
   fi
 }
 

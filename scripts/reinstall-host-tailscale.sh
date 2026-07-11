@@ -48,7 +48,7 @@ After this script completes cleanly, you still must (MANUALLY):
 
   2. Re-engage the tailnet + exit node:
          sudo tailscale up --ssh=true --accept-dns=false \
-           --exit-node="$(cat ADGUARD_IP.txt | tr -d '\r' | awk 'NR==1{print $1; exit}')" \
+           --exit-node="$(cat .gateway_ip | tr -d '\r' | awk 'NR==1{print $1; exit}')" \
            --exit-node-allow-lan-access=true
 
   3. Re-run ./toggle.sh from the project root.
@@ -722,7 +722,7 @@ cat <<'DONE'
 
     2. ⇨ Re-engage the tailnet + exit node:
            sudo tailscale up --ssh=true --accept-dns=false \
-             --exit-node="$(cat ADGUARD_IP.txt | tr -d '\r' | awk 'NR==1{print $1; exit}')" \
+             --exit-node="$(cat .gateway_ip | tr -d '\r' | awk 'NR==1{print $1; exit}')" \
              --exit-node-allow-lan-access=true
 
     3. ⇨ Re-run: ./toggle.sh

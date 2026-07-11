@@ -17,7 +17,7 @@
 Whenever modifications are made to the gateway scripts, routing, or containers, execute these verification checks in order:
 1. **Container Health:** Run `docker compose ps` to ensure all containers (`warp`, `adguardhome`, `routing-fix`, `tailscale`) are `running` and `healthy`.
 2. **DNS Hijacking Status:** Run `networksetup -getdnsservers "Wi-Fi"` (or appropriate network service) and ensure it is set exclusively to the gateway's Tailscale static IP (typically `100.100.21.8`).
-3. **DNS Query Interception:** Run `dig @100.100.21.8 google.com` (using the gateway static IP from `ADGUARD_IP.txt`) to ensure AdGuard Home is active, intercepting, and resolving queries.
+3. **DNS Query Interception:** Run `dig @100.100.21.8 google.com` (using the gateway static IP from `.gateway_ip`) to ensure AdGuard Home is active, intercepting, and resolving queries.
 4. **Double-Tunnel Egress:** Run `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp` to verify the egress is routed through Cloudflare WARP (`warp=on`).
 5. **Host Leak Monitoring:** Run `tail -n 30 output.log` and verify the background watchers and host leak prober are reporting healthy status without `LEAK` warnings.
 
@@ -120,7 +120,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 - Sharing services reset — L586 (same as toggle L642)
 - PID file stop pattern — L387-399, L407-419, L423-435 (same as toggle L157-167, L193-203, L312-322)
 - KILL_SWITCH check — L194 (same as toggle L141, L469)
-- ADGUARD_IP.txt reading — L138-142, L209-213 (same pattern as toggle L1080)
+- .gateway_ip reading — L138-142, L209-213 (same pattern as toggle L1080)
 
 ---
 
@@ -232,7 +232,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 - Color codes — RED/GREEN/YELLOW/BOLD/NC with tty detection
 - WARP check via `cloudflare.com/cdn-cgi/trace`
 - `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"`
-- ADGUARD_IP.txt reading pattern
+- .gateway_ip reading pattern
 
 ### scripts/fix-docker-bridge-collision.sh (402 lines, 18KB)
 

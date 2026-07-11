@@ -80,7 +80,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `black_list.txt` | 71 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
 | `white_list.txt` | 222 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
 | `.env` | ~14 | WARP WireGuard keys, Tailscale auth key, rule profile. **Contains secrets & NULLEXIT_SEED.** |
-| `ADGUARD_IP.txt` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
+| `.gateway_ip` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
 | `scripts/unlock-files.sh` | ~20 | **One-shot stale-permission fix.** Uses atomic rename (`cp` + `mv`) to replace locked inodes (mode `000`/`0444` from old `chmod` decisions) with fresh writable ones — no `chmod` called. |
 | `scripts/crypto.sh` | ~50 | **Cryptographic integrity enforcement.** Uses `NULLEXIT_SEED` from `.env` to sign core bash scripts (HMAC-SHA256) and strictly verify them on start to prevent manipulation. Pass `--sign` or `--verify`. |
 | `scripts/pf.conf` | 35 | **macOS native firewall ruleset.** Enforces the default-deny kill-switch, allows local LAN / Tailscale traffic, and applies TCP MSS Clamping (`max-mss 1160`) to prevent WireGuard MTU fragmentation. |
@@ -104,7 +104,7 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 6. **Clean corrupted AdGuard config** — Remove empty `AdGuardHome.yaml`
 7. **Start containers** — `docker compose up -d`
 8. **Wait for gateway Tailscale** — Poll `tailscale status` for "offers exit node" (up to 60s, abort at 40 consecutive NoState)
-9. **Resolve gateway IP** — From `ADGUARD_IP.txt` or `docker compose exec tailscale tailscale ip -4`
+9. **Resolve gateway IP** — From `.gateway_ip` or `docker compose exec tailscale tailscale ip -4`
 10. **Connect host to mesh** — Verify `tailscaled` is running (auto-start if needed), then `tailscale up --reset --ssh=true --accept-dns=false --accept-routes=true --exit-node=` (`--accept-routes=true` must be explicit — `--reset` reverts it to `false` otherwise, silently preventing the default route from switching to `utun*`)
 11. **Pre-flight checks** — [1/3] `tailscale ping` gateway, [2/3] `dig +tcp` AdGuard DNS, [3/3] WARP container internet
 12. **If all pass** → Set exit node + hijack DNS to gateway IP (single server, no fallback)
@@ -878,7 +878,7 @@ macOS exposes several relevant surfaces; the right primitive depends on what you
 
 1. **`recover.sh --post-wake`** (new flag, **non-destructive** by design). Adding `--post-wake` to the existing nuclear recovery script inverts the semantics. The default mode still tears down Tailscale, resets DNS to empty, stops caffeinate, runs `docker compose down`, power-cycles Wi-Fi. The new mode does:
   * Skip Tailscale disconnect (we WANT it to keep the mesh connection)
-  * **Re-hijack** DNS to the gateway Tailscale IP read from `ADGUARD_IP.txt` (instead of resetting to empty) — applies to both `ACTIVE_SERVICE` and `EN0_SERVICE` because the system resolver is scoped to en0
+  * **Re-hijack** DNS to the gateway Tailscale IP read from `.gateway_ip` (instead of resetting to empty) — applies to both `ACTIVE_SERVICE` and `EN0_SERVICE` because the system resolver is scoped to en0
   * **Refresh** the exit-node preference with `tailscale up --reset --ssh=true --accept-dns=false --exit-node=\"$TS_IP\" --exit-node-allow-lan-access=true` (the exact flags `toggle.sh` START uses). This re-asserts DERP mapping without dropping the mesh
   * Inspect `docker inspect --format '{{.State.Health.Status}}' nullexit-warp-1` and **only** `docker compose up -d --force-recreate warp` if gluetun is unhealthy — this single targeted recreate nudges the UDP NAT binding back to Cloudflare without disturbing Tailscale or AdGuard
   * Run the §10.27 sharingd-reset step (existing fix from `toggle.sh` START path) so AirDrop doesn't freeze on the new IP lease

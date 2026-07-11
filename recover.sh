@@ -162,7 +162,7 @@ if [ "$POST_WAKE" = "true" ]; then
     # the DERP relay mapping and re-asserts the exit-node preference without
     # dropping the host's mesh connection (which `tailscale down` would).
     TS_IP=""
-    for src in ADGUARD_IP.txt; do
+    for src in .gateway_ip; do
       [ -f "$src" ] || continue
       TS_IP=$(cat "$src" 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
       [ -n "$TS_IP" ] && break
@@ -185,7 +185,7 @@ if [ "$POST_WAKE" = "true" ]; then
                           >> output.log 2>&1 || true
       fi
     else
-      warn "ADGUARD_IP.txt missing — cannot re-assert exit node"
+      warn ".gateway_ip missing — cannot re-assert exit node"
       run_with_timeout 10 tailscale up --reset --ssh=true --accept-dns=false --exit-node= \
                         >> output.log 2>&1 || true
     fi
@@ -201,7 +201,7 @@ fi
 if [ "$POST_WAKE" = "true" ]; then
   step "Re-hijacking host DNS to gateway IP (post-wake / post-roam)"
   TS_IP=""
-  for src in ADGUARD_IP.txt; do
+  for src in .gateway_ip; do
     [ -f "$src" ] || continue
     TS_IP=$(cat "$src" 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
     [ -n "$TS_IP" ] && break
@@ -224,7 +224,7 @@ if [ "$POST_WAKE" = "true" ]; then
       warn "networksetup accepted but DNS read-back didn't include $TS_IP"
     fi
   else
-    warn "ADGUARD_IP.txt missing — cannot re-hijack DNS (user must run toggle.sh START)"
+    warn ".gateway_ip missing — cannot re-hijack DNS (user must run toggle.sh START)"
   fi
 else
   step "Resetting DNS to default on all network services (empty = DHCP)"
@@ -472,7 +472,7 @@ if [ "$POST_WAKE" = "true" ]; then
   # Direct host → gateway check via Tailscale ping (relayed pong counts as success)
   if command -v tailscale >> output.log 2>&1; then
     TS_IP=""
-    [ -f ADGUARD_IP.txt ] && TS_IP=$(read_adguard_ip || true)
+    [ -f .gateway_ip ] && TS_IP=$(read_adguard_ip || true)
     if [ -n "$TS_IP" ] && tailscale ping --until-direct=false -c 1 --timeout 4s "$TS_IP" 2>> output.log | grep -q pong; then
       ok "Gateway $TS_IP reachable via Tailscale"
       GATEWAY_OK=true

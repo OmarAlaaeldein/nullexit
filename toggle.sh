@@ -1064,24 +1064,27 @@ else
   fi
 
   # 6b. Resolve the gateway's Tailscale IP.
-  # Primary: static ADGUARD_IP.txt (fast, no docker-exec dependency).
-  # Fallback: dynamic query from the container (handles IP changes after re-auth).
+  # Dynamically query the container for the IP (handles IP changes after re-auth)
+  # and cache it in .gateway_ip for fast retrieval by recover.sh during Wi-Fi roaming.
   #
   # CRITICAL: `docker compose exec -T` on macOS/Colima injects carriage
   # returns (\r) into captured output. If $TS_IP ends with \r, then
   # `networksetup -setdnsservers` silently rejects the malformed IP and
   # DNS stays at 1.1.1.1 — the primary bug this project was hitting.
   # `tr -d '\r'` strips the CR; `awk 'NR==1{print $1; exit}'` takes only
-  # the first field of the first line (preserving the old `head -1` guard).
+  # the first field of the first line.
   TS_IP=""
-  TS_IP=$(read_adguard_ip || true)
-  if [ -n "$TS_IP" ]; then
-    echo "Using static IP from ADGUARD_IP.txt: $TS_IP"
-  elif [ "$connected" = "true" ]; then
+  if [ "$connected" = "true" ]; then
     TS_IP=$(run_with_timeout 10 docker compose exec -T tailscale tailscale ip -4 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
     if [ -n "$TS_IP" ]; then
-      echo "[Fallback] Resolved gateway Tailscale IP dynamically: $TS_IP"
+      echo "Resolved gateway Tailscale IP dynamically: $TS_IP"
+      echo "$TS_IP" > .gateway_ip
+    else
+      echo "    [!] Failed to resolve gateway IP dynamically. Trying fallback cache..." >&2
+      TS_IP=$(read_adguard_ip || true)
     fi
+  else
+    TS_IP=$(read_adguard_ip || true)
   fi
 
   # 7. Connect host Mac to Tailscale mesh.
