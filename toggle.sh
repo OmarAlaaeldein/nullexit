@@ -34,6 +34,53 @@ echo "========================================================" >> "$LOG_FILE"
 # and chmod 000'd it on exit. That pattern broke docker compose on macOS/Colima when
 # the umask produced 0600 — the script removed its own ability to read .env before it could even proceed.)
 
+# --- PROCEDURAL PORT GENERATION ---
+# To prevent static port fingerprinting by malware, we randomize exposed ports
+# on every boot and persist them to a hidden environment file.
+PORTS_FILE="/tmp/nullexit-ports.env"
+if [[ "$1" == "" || "$1" == "--restart" ]]; then
+  
+  # Collision-avoidance function
+  GENERATED_PORTS=""
+  get_free_port() {
+    local port
+    while true; do
+      port=$(jot -r 1 10000 65000)
+      # 1. Prevent self-collision within this loop
+      if [[ "$GENERATED_PORTS" == *"$port"* ]]; then
+        continue
+      fi
+      # 2. Prevent collision with ANY process on the Mac (root daemons, terminal apps, etc)
+      # We use netstat instead of lsof because netstat reads the kernel socket table
+      # directly and doesn't require sudo to see ports bound by other users/root.
+      if ! netstat -an -p tcp | awk '{print $4}' | grep -q "\.$port$"; then
+        echo "$port"
+        return
+      fi
+    done
+  }
+
+  export TOR_SOCKS_PORT=$(get_free_port)
+  GENERATED_PORTS="$GENERATED_PORTS $TOR_SOCKS_PORT"
+  
+  export SOCKS_PROXY_PORT=$(get_free_port)
+  GENERATED_PORTS="$GENERATED_PORTS $SOCKS_PROXY_PORT"
+  
+  export DNS_PROXY_PORT=$(get_free_port)
+  
+  echo "export TOR_SOCKS_PORT=$TOR_SOCKS_PORT" > "$PORTS_FILE"
+  echo "export SOCKS_PROXY_PORT=$SOCKS_PROXY_PORT" >> "$PORTS_FILE"
+  echo "export DNS_PROXY_PORT=$DNS_PROXY_PORT" >> "$PORTS_FILE"
+elif [ -f "$PORTS_FILE" ]; then
+  # On STOP, source the existing ports so docker-compose down matches
+  source "$PORTS_FILE"
+else
+  # Fallbacks if file is lost
+  export TOR_SOCKS_PORT=9050
+  export SOCKS_PROXY_PORT=1080
+  export DNS_PROXY_PORT=5354
+fi
+
 # Start execution timer
 TOGGLE_START_TIME=$SECONDS
 
@@ -582,14 +629,14 @@ cleanup_network_state() {
 # kernel routing table (table 200 -> tun0 -> WARP), unlike Tailscale's
 # userspace exit node which bypasses it.
 #
-# The SOCKS5 proxy is exposed on localhost:1080 via Docker port mapping.
+# The SOCKS5 proxy is exposed on localhost:${SOCKS_PROXY_PORT} via Docker port mapping.
 # `networksetup -setsocksfirewallproxy` on macOS routes system TCP traffic
 # through the proxy, which then goes through WARP.
 #
 # IMPORTANT: CLI tools like curl do NOT respect macOS system proxy settings.
 # They must use --socks5-hostname or the ALL_PROXY env variable explicitly.
 
-SOCKS_PROXY_PORT=1080
+SOCKS_PROXY_PORT=${SOCKS_PROXY_PORT}
 
 enable_socks_proxy() {
   local svc="$1"
@@ -629,7 +676,7 @@ disable_socks_proxy() {
 # ─── Local DNS Proxy (Python) ───────────────────────────────────────────────
 # When the tailnet data plane cannot establish, we use a Python DNS proxy.
 # It listens on UDP:53, receives DNS queries, forwards them over TCP to
-# AdGuard at 127.0.0.1:5354 (Docker port mapping), and returns the response.
+# AdGuard at 127.0.0.1:${DNS_PROXY_PORT} (Docker port mapping), and returns the response.
 # The Python script handles the DNS-over-TCP wire format (2-byte length prefix)
 # correctly — unlike socat which just forwards raw bytes.
 #
@@ -662,8 +709,8 @@ start_local_dns_proxy() {
   # Kill any leftover process first
   stop_local_dns_proxy
 
-  echo -n "  Starting local DNS proxy via Python (UDP:53 → TCP:5354)... "
-  sudo -n "$DNS_PROXY_BIN" "$DNS_PROXY_SCRIPT" &
+  echo -n "  Starting local DNS proxy via Python (UDP:53 → TCP:${DNS_PROXY_PORT})... "
+  sudo -n bash -c "TARGET_PORT=$DNS_PROXY_PORT \"$DNS_PROXY_BIN\" \"$DNS_PROXY_SCRIPT\"" &
   DNS_PROXY_PID=$!
   disown "$DNS_PROXY_PID" 2>/dev/null || true
 
@@ -894,6 +941,23 @@ else
 
   # 5. Start compose services
   write_host_ips
+  
+  # Procedurally generated ports have already been exported at the top of the script.
+  echo "  [Security] Procedurally randomized proxy ports generated to evade fingerprinting."
+  
+  # --- HONEY-PORT TRIPWIRE ---
+  # Generate a random trap port. If any malware does a sequential port scan on localhost,
+  # it will inevitably hit this port. When it does, we instantly fire a macOS alert.
+  HONEY_PORT=$(get_free_port)
+  (
+    if nc -l localhost "$HONEY_PORT" >/dev/null 2>&1; then
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] [CRITICAL SECURITY ALERT] PORT SCAN DETECTED! An unknown application just pinged the local Honey-Port ($HONEY_PORT)!" >> "$LOG_FILE"
+      osascript -e 'display notification "An unknown application is aggressively scanning your local ports. Malware port-scan suspected." with title "nullexit OPSEC Alert" sound name "Basso"' 2>/dev/null || true
+    fi
+  ) &
+  disown %1 2>/dev/null || true
+  echo "  [Security] Honey-Port Tripwire armed on random port to detect malware port-scans."
+  
   echo -e "\nStarting Docker containers..."
   docker compose up -d --build
   
@@ -1139,18 +1203,18 @@ else
       SKIP_EXIT_NODE=true
     fi
     
-    # Check 2: Can we reach AdGuard via localhost (exposed port 5354)?
+    # Check 2: Can we reach AdGuard via localhost (exposed port ${DNS_PROXY_PORT})?
     # Colima's SSH tunnel only forwards TCP (not UDP), so we use +tcp.
     echo -n "  [2/3] AdGuard DNS via localhost... "
     if command -v dig &>/dev/null; then
-      if dig +tcp @127.0.0.1 -p 5354 google.com +short +timeout=5 &>/dev/null; then
+      if dig +tcp @127.0.0.1 -p ${DNS_PROXY_PORT} google.com +short +timeout=5 &>/dev/null; then
         echo "PASS"
       else
         echo "FAIL"
         SKIP_EXIT_NODE=true
       fi
     elif command -v nslookup &>/dev/null; then
-      if nslookup -port=5354 google.com 127.0.0.1 &>/dev/null; then
+      if nslookup -port=${DNS_PROXY_PORT} google.com 127.0.0.1 &>/dev/null; then
         echo "PASS"
       else
         echo "FAIL"
@@ -1207,7 +1271,7 @@ else
   # 8. Apply DNS Hijacking.
   # If exit node is enabled: hijack DNS to gateway's Tailscale IP (routes through tailnet).
   # Otherwise, leave DNS at 1.1.1.1 (already set by reset at the top).
-  # AdGuard is also available at localhost:5354 for manual configuration in apps.
+  # AdGuard is also available at localhost:${DNS_PROXY_PORT} for manual configuration in apps.
   if [ -n "$TS_IP" ] && [ "$HOST_ON_MESH" = "true" ] && [ "$SKIP_EXIT_NODE" != "true" ]; then
     echo -e "\nHijacking host DNS to point ONLY at AdGuard Home ($TS_IP)..."
     echo "Setting MagicDNS search domain 'ts.net' so tailnet hostnames resolve..."
@@ -1226,7 +1290,7 @@ else
       echo "  Ad-blocking active via local DNS proxy through AdGuard."
     else
       echo "  Local DNS proxy unavailable. DNS stays at 1.1.1.1."
-      echo "  AdGuard available at http://localhost:80 (port 5354 for DNS via TCP)."
+      echo "  AdGuard available at http://localhost:80 (port ${DNS_PROXY_PORT} for DNS via TCP)."
     fi
     
     # Enable SOCKS5 proxy for traffic routing through WARP

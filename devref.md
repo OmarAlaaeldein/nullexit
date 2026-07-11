@@ -539,6 +539,43 @@ Once unblocked, `sharingd` immediately resumes broadcasting mDNS/Bonjour discove
 **Fix & Trade-offs:** Appended an `iptables` rule to `post-rules.txt` that explicitly blocks `UDP --dport 443` (QUIC). When modern web apps detect QUIC is blocked, they instantly fall back to HTTP/2 (TCP 443). Because TCP is routed through the MSS clamp, the packets are resized *before* they leave, entirely eliminating IP fragmentation and restoring high-speed loading over weak Wi-Fi. 
 *Consequences:* This adds a minor latency penalty (TCP 3-way handshake) compared to QUIC's zero-RTT connection. It may also force WebRTC video calls (Google Meet/Discord) to fall back to TCP TURN servers, slightly inflating real-time video latency. However, in a constrained double-tunnel mesh, the absolute stability gained from eliminating fragmentation vastly outweighs these trade-offs.
 
+### 10.15 Threat Model: Local Proxy Discovery
+
+The Tor SOCKS proxy and Honey-Port Tripwire only bind to `127.0.0.1` (loopback). The real security boundary here is "can an unprivileged local process reach the loopback interface," not "does the malware know the port number." 
+
+The port-randomization and the Honey-Port trap only catch blind or generic port-scanners that do not already know where to look. They **do not protect** against a process that directly reads the `/tmp/nullexit-ports.env` file, greps the `toggle.sh` memory space, or runs `lsof -i` to inspect open socket bindings. 
+
+Because modifying file ownership on `/tmp/nullexit-ports.env` via `chown`/`chmod` to restrict read-access introduces an unavoidable Time-Of-Check to Time-Of-Use (TOCTOU) race condition (the file is created user-owned before privilege escalation, meaning file descriptors can be snatched), it is deliberately left as a standard user-owned file.
+
+The actual, proper mitigation for preventing a malicious local process from reaching the proxy is not hiding the port—it is running a host-level outbound firewall with strict localhost/loopback filtering enabled (e.g., LuLu 4.3.0+ or Little Snitch). These firewalls gate access by cryptographic process identity (binary signature) at the kernel/network-extension level, rather than by port secrecy.
+
+#### Verifying Localhost Filtering (The Rogue Binary Test)
+
+To empirically validate that the host firewall properly intercepts local proxy hijacking, you can compile and execute a completely unknown, un-whitelisted "rogue" binary to attempt a connection to the proxy port:
+
+```c
+// lulu-test.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+
+int main(int argc, char *argv[]) {
+    int port = atoi(argv[1]);
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in server = { .sin_family = AF_INET, .sin_port = htons(port) };
+    server.sin_addr.s_addr = inet_addr("127.0.0.1");
+    
+    printf("Rogue binary attempting connection to 127.0.0.1:%d...\n", port);
+    if (connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
+        printf("Connection BLOCKED by firewall.\n");
+        return 1;
+    }
+    printf("Connection SUCCESSFUL (Firewall bypassed!).\n");
+    return 0;
+}
+```
+Compile with `gcc -o lulu-test lulu-test.c`. When executed against the `$TOR_SOCKS_PORT`, a properly configured host firewall (with "Allow Loopback" disabled in LuLu Preferences) will immediately pause the socket execution and generate a desktop alert for the unrecognized binary signature. This physically stops targeted local malware from exfiltrating data through the Tor tunnel, proving the threat model mitigation.
+
 ---
 
 ## 11. Deep Dive: Exit Node Return Path Analysis (June 26, 2026)
@@ -1151,6 +1188,25 @@ Every component shifts trust rather than eliminating it:
 3. **Tailscale Integrity:** You trust Tailscale's coordination server not to MITM WireGuard keys.
 
 The goal: no single provider has a complete picture. Your ISP sees an encrypted tunnel. WARP sees traffic with no account identity. Tailscale sees node topology but not content.
+
+### OPSEC: Tor-over-WARP Architecture
+
+When extreme anonymity is required, integrating the Tor network into `nullexit` provides a powerful Tor-over-VPN topology:
+* **The University/ISP** sees only an encrypted Cloudflare WireGuard tunnel, rendering them completely blind to the fact that you are using Tor (effectively bypassing Enterprise firewall Tor blocks).
+* **Cloudflare** sees an encrypted TCP stream heading to a Tor Guard Node. They cannot see your DNS lookups, the destination website, or the content of your traffic.
+* **The Tor Exit Node** sees your traffic, but not your real IP (only the Cloudflare IP).
+
+#### The "Transparent Proxy" Trap (What NOT to do)
+It is tempting to build a system-wide "Transparent Tor Proxy" that forces all host traffic (e.g., standard Chrome/Safari browsers, background iCloud syncs) through Tor automatically. **This is a massive OPSEC trap and destroys anonymity.**
+Modern operating systems and browsers will instantly leak your identity through background syncing (e.g., Apple Mail, Google Drive) and browser fingerprinting (canvas fingerprints, WebRTC, screen resolution). The Tor network protects your *IP*, but if your payload contains identifying cookies or unique fingerprints, the Tor Exit Node (which could be run by malicious actors) will instantly tie your session to your real identity.
+
+#### The nullexit Implementation: Isolated Procedural Proxy
+To safely integrate Tor without triggering the transparent proxy trap, `nullexit` implements an **Isolated Tor SOCKS5 Proxy** with **Procedurally Generated Ports**:
+1. **Isolated Container:** A lightweight `tor` Docker container runs securely inside the `warp` network namespace. It does not hijack system traffic.
+2. **Opt-In Usage:** You must consciously configure a highly-hardened browser (like the official Tor Browser or a dedicated Firefox profile) to use the proxy. This prevents accidental background sync leaks.
+3. **Procedurally Generated Ports:** Rather than hardcoding the standard proxy ports (like `127.0.0.1:9050` or `1080`), `toggle.sh` randomizes all internal proxy ports on every boot into the ephemeral range (10000-65000) and silently writes them to `/tmp/nullexit-ports.env`. This completely defeats static fingerprinting by malware.
+4. **Kernel-Level Collision Avoidance:** To prevent the randomizer from picking a port already in use by a root daemon or Apple service (which would crash the gateway), the script directly queries the macOS kernel socket table (`netstat -an -p tcp`) to verify the port is absolutely free before assigning it.
+5. **The Honey-Port Tripwire:** While procedural ports defeat static fingerprinting, advanced malware might attempt a full sequential port scan of `localhost` to find the hidden proxy. To counter this, `toggle.sh` spawns a "Honey-Port" (a fake random port with a netcat listener attached). If any local application attempts to connect to the Honey-Port, it instantly logs a critical security alert to `output.log` and fires a macOS desktop notification, serving as an early-warning Intrusion Detection System (IDS) for local malware.
 
 ### Recommended Upgrades
 

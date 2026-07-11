@@ -8,10 +8,11 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     ports:
-      - "127.0.0.1:5354:5335/udp"    # AdGuard DNS (5335 is used by SSH on host, use 5354 instead)
-      - "127.0.0.1:5354:5335/tcp"    # AdGuard DNS (TCP)
+      - "127.0.0.1:${DNS_PROXY_PORT:-5354}:5335/udp"    # AdGuard DNS (5335 is used by SSH on host, use procedural port instead)
+      - "127.0.0.1:${DNS_PROXY_PORT:-5354}:5335/tcp"    # AdGuard DNS (TCP)
       - "41642:41642/udp"  # Tailscale WireGuard (direct connection to host)
-      - "127.0.0.1:1080:1080/tcp"    # SOCKS5 proxy (routed through WARP tunnel)
+      - "127.0.0.1:${SOCKS_PROXY_PORT:-1080}:1080/tcp"    # SOCKS5 proxy (routed through WARP tunnel)
+      - "127.0.0.1:${TOR_SOCKS_PORT:-9050}:9050/tcp"  # Tor SOCKS5 proxy (procedurally generated)
     environment:
       - TZ=America/New_York
       - VPN_SERVICE_PROVIDER=custom
@@ -186,6 +187,22 @@ services:
     container_name: rule-compiler
     volumes:
       - .:/app
+
+  tor:
+    image: dperson/torproxy
+    container_name: tor
+    network_mode: service:warp
+    depends_on:
+      warp:
+        condition: service_healthy
+    environment:
+      - TZ=America/New_York
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   tailscale_state:
