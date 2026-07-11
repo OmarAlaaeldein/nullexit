@@ -1208,6 +1208,15 @@ To safely integrate Tor without triggering the transparent proxy trap, `nullexit
 4. **Kernel-Level Collision Avoidance:** To prevent the randomizer from picking a port already in use by a root daemon or Apple service (which would crash the gateway), the script directly queries the macOS kernel socket table (`netstat -an -p tcp`) to verify the port is absolutely free before assigning it.
 5. **The Honey-Port Tripwire:** While procedural ports defeat static fingerprinting, advanced malware might attempt a full sequential port scan of `localhost` to find the hidden proxy. To counter this, `toggle.sh` spawns a "Honey-Port" (a fake random port with a netcat listener attached). If any local application attempts to connect to the Honey-Port, it instantly logs a critical security alert to `output.log` and fires a macOS desktop notification, serving as an early-warning Intrusion Detection System (IDS) for local malware.
 
+#### Hardening: Tor Bridges and obfs4 Pluggable Transports
+For users operating under severe Deep Packet Inspection (DPI), `nullexit` supports configuring Tor to connect exclusively through private bridges using the `obfs4` pluggable transport. 
+
+When `TOR_USE_BRIDGES=true` is set:
+- **What it does:** It hides the entry IP from being matched against the public Tor consensus list, and disguises the traffic's protocol fingerprint from the WARP exit provider (Cloudflare).
+- **What it does NOT do:** It does *not* add any extra layers of anonymity beyond what Tor already provides. It is purely a censorship-circumvention and obfuscation mechanism.
+- **Limitations:** `obfs4` is highly effective against passive DPI, but it is not guaranteed to defeat active-probing-resistant detection by a highly sophisticated state-level adversary.
+
+> **Architecture Rule:** The `nullexit` gateway deliberately does NOT bundle, hardcode, or automatically fetch bridge lines. Bridge lines are highly sensitive and expire. Users must obtain their own bridge lines from `https://bridges.torproject.org` and manually populate the `tor-bridges.txt` file. If bridges are enabled but the file is missing or empty, the Tor container will intentionally crash and fail to start rather than silently falling back to public guard relays.
 ### Recommended Upgrades
 
 | Layer | Default | Upgraded |

@@ -109,7 +109,14 @@ To protect against local malware fingerprinting:
 
 To use the Tor proxy, run `cat /tmp/nullexit-ports.env` to find your `$TOR_SOCKS_PORT` for the current session, and point your hardened browser (LibreWolf/Tor Browser) or CLI tool to `127.0.0.1:$TOR_SOCKS_PORT`.
 
+#### Hardening: Using obfs4 Tor Bridges
+If you want to disguise your Tor traffic from the WARP exit node provider, you can optionally enable Tor bridges:
+1. Obtain private `obfs4` bridge lines from [bridges.torproject.org](https://bridges.torproject.org) or the official Telegram bot.
+2. Create a file named `tor-bridges.txt` in the root of the `nullexit` folder and paste your bridge lines inside it (one per line).
+3. Set `TOR_USE_BRIDGES=true` in your `.env` file and restart the gateway. The proxy will refuse to start if the bridges file is empty or missing.
+
 #### Example: Browse your Android phone's files from your Mac
+
 
 1. **On your Android phone**, install [Termux](https://termux.dev/) and [Termux:Boot](https://f-droid.org/packages/com.termux.boot/) from F-Droid.
 2. In Termux, install and start the SSH server:

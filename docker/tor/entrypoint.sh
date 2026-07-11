@@ -1,0 +1,39 @@
+#!/bin/bash
+set -e
+
+TORRC="/etc/tor/torrc"
+mkdir -p /etc/tor /var/lib/tor
+
+# Base configuration (SOCKS proxy on 9050, strictly localhost/container boundaries)
+cat <<EOF > $TORRC
+SocksPort 0.0.0.0:9050
+Log notice stdout
+DataDirectory /var/lib/tor
+EOF
+
+if [ "${TOR_USE_BRIDGES:-false}" = "true" ]; then
+    BRIDGE_FILE="${TOR_BRIDGE_LINES_FILE:-/tor-bridges.txt}"
+    
+    if [ ! -s "$BRIDGE_FILE" ]; then
+        MSG="[$(date '+%Y-%m-%d %H:%M:%S')] [CRITICAL] [Tor Proxy] TOR_USE_BRIDGES is enabled, but no bridge lines found at $BRIDGE_FILE. Proxy startup ABORTED. Get bridges from https://bridges.torproject.org."
+        echo "$MSG"
+        if [ -w "/output.log" ]; then
+            echo "$MSG" >> /output.log
+        fi
+        exit 1
+    fi
+    
+    echo "UseBridges 1" >> $TORRC
+    echo "ClientTransportPlugin obfs4 exec /usr/bin/obfs4proxy" >> $TORRC
+    
+    while IFS= read -r line; do
+        # Ignore comments and empty lines
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        echo "Bridge $line" >> $TORRC
+    done < "$BRIDGE_FILE"
+fi
+
+# Debian tor package uses 'debian-tor' user
+chown -R debian-tor:debian-tor /var/lib/tor /etc/tor
+
+exec gosu debian-tor /usr/bin/tor -f $TORRC
