@@ -1986,3 +1986,14 @@ This is a fundamental limitation of tunneling all host traffic through a strict 
 ### Workaround / Fix
 This lag is the accepted "tax" for maintaining absolute cryptographic anonymity; the only way to restore CRD speed would be to leak its UDP traffic outside the tunnel (violating zero-trust).
 To achieve low-latency remote access, users should bypass CRD entirely and use macOS's built-in **Screen Sharing (VNC)** directly over the Tailscale IP. Tailscale's sophisticated custom DERP/WireGuard architecture successfully UDP hole-punches through strict NATs, providing a direct, encrypted, high-speed connection without relying on external cloud relays.
+
+## 45. Architectural Decision: Dynamic IP Fetch vs. MagicDNS
+
+### Observation
+The `nullexit` gateway uses a dynamically fetched IP address (cached in `.gateway_ip`) to configure host routing and the `pf` kill-switch, rather than utilizing Tailscale's user-friendly MagicDNS hostname (e.g., `nullexit-gateway`).
+
+### Why MagicDNS is Not Used
+1. **The "Chicken and Egg" Bootstrapping Problem:** 
+   macOS's Packet Filter (`pf`) and low-level routing commands (`route add`) operate strictly at Layer 3 and require raw IP addresses. If `toggle.sh` or `recover.sh` attempted to use `nullexit-gateway`, the host Mac would need to perform a DNS lookup to resolve it. However, the very first step of the gateway's initialization is to completely hijack the host's DNS and point it *at the gateway itself*. The Mac cannot resolve the gateway's MagicDNS name if it needs the gateway's IP to know where to send the DNS query!
+2. **Dynamic Self-Healing (Avoiding Stale Cache):**
+   To solve the bootstrapping problem without causing bugs if the node is deleted and re-authenticated on the Tailscale Admin Console, `toggle.sh` explicitly runs `docker compose exec ... tailscale ip -4` during boot to fetch the absolute freshest IP dynamically. It saves this to `.gateway_ip` so that fast-roaming scripts like `recover.sh` can instantly retrieve the routing target without incurring the latency of querying Docker.
