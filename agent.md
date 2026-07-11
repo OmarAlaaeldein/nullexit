@@ -391,3 +391,6 @@ When the user invokes this verb, the agent MUST perform a full end-to-end connec
 2. **Tor Validation:** Identify the dynamically generated `SOCKS_PROXY_PORT` from `docker compose ps`, then run `curl -s --socks5-hostname 127.0.0.1:<PORT> https://check.torproject.org/api/ip` to confirm the proxy works.
 3. **Tailscale Validation:** Run `ping -c 1 100.100.21.8` to ensure the gateway is reachable, and check `tailscale status` to ensure other mesh devices are visible/pingable.
 4. **Log Audit:** Run `tail -n 100 output.log | grep -iE "(error|fail|warn)"` to catch any underlying component failures.
+
+### `/latex` (or `generate latex`)
+When the user invokes this verb, the agent MUST run `python3 -I scripts/generate_tex.py` to regenerate the documentation source code (`nullexit_unified.tex`). The agent MUST NOT attempt to compile the `.tex` file into a PDF (the user handles PDF compilation locally).
