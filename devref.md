@@ -1811,6 +1811,7 @@ When the S24 connected to the PC hotspot, it was behind the PC's NAT. The S24 se
 
 * **Verify Wi-Fi Roaming:** Investigate and test whether switching Wi-Fi networks now successfully and smoothly recovers the gateway end-to-end without any tailscale flag errors or dead tunnels. (Pending user verification).
 * **Fix Diagnostic Script Check 5/8:** ~~Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling.~~ **Closed** — fixed by switching check 5 from `netstat -rn | grep default` to `route -n get 1.1.1.1`. macOS Tailscale uses interface-scoped routes and does not replace the DHCP default route entry. See §36 Known Unknowns.
+* **Expose Tor Control Port (9051):** Consider mapping the Tor Control port to localhost and adding `nyx` (the Tor terminal status monitor) to allow users to inspect their entry, middle, and exit node IPs in real-time. Currently, only the exit node IP is discoverable by curling an external API.
 
 ## 38. Observation: AdGuard Returns Two Different Sinkhole IPs (Unverified)
 

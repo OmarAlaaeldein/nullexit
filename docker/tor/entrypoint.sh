@@ -14,7 +14,7 @@ EOF
 if [ "${TOR_USE_BRIDGES:-false}" = "true" ]; then
     BRIDGE_FILE="${TOR_BRIDGE_LINES_FILE:-/tor-bridges.txt}"
     
-    if [ ! -s "$BRIDGE_FILE" ]; then
+    if ! grep -vE "^[[:space:]]*#" "$BRIDGE_FILE" | grep -q '[^[:space:]]'; then
         MSG="[$(date '+%Y-%m-%d %H:%M:%S')] [CRITICAL] [Tor Proxy] TOR_USE_BRIDGES is enabled, but no bridge lines found at $BRIDGE_FILE. Proxy startup ABORTED. Get bridges from https://bridges.torproject.org."
         echo "$MSG"
         if [ -w "/output.log" ]; then

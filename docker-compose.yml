@@ -190,6 +190,7 @@ services:
 
   tor:
     build: ./docker/tor
+    image: nullexit-tor:v1.0.0
     container_name: tor
     network_mode: service:warp
     depends_on:
