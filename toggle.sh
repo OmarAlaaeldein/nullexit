@@ -847,6 +847,7 @@ else
     fi
     echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address, $colima_network_mode)..."
     run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode "$colima_network_mode"
+    echo "$colima_network_mode" > /tmp/nullexit_colima_mode.txt
   else
     echo "Colima is already running."
   fi
