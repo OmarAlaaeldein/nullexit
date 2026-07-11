@@ -382,3 +382,12 @@ Extracts the heavy, duplicated installation logic shared between `setup.sh` (mac
   `source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"`
 - Linux sibling scripts (`scripts/toggle-linux.sh`, etc.) source via:
   `source "$(dirname "${BASH_SOURCE[0]}")/common.sh"`
+
+## Agent Verbs / Protocols
+
+### `/sweep` (or `sweep the gateway`)
+When the user invokes this verb, the agent MUST perform a full end-to-end connectivity and health audit of the gateway:
+1. **WARP Validation:** Run `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp=` (must equal `on`).
+2. **Tor Validation:** Identify the dynamically generated `SOCKS_PROXY_PORT` from `docker compose ps`, then run `curl -s --socks5-hostname 127.0.0.1:<PORT> https://check.torproject.org/api/ip` to confirm the proxy works.
+3. **Tailscale Validation:** Run `ping -c 1 100.100.21.8` to ensure the gateway is reachable, and check `tailscale status` to ensure other mesh devices are visible/pingable.
+4. **Log Audit:** Run `tail -n 100 output.log | grep -iE "(error|fail|warn)"` to catch any underlying component failures.
