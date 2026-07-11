@@ -131,7 +131,7 @@ P2P_OVERRIDE_FILE="$SCRIPT_DIR/../.lan_p2p_detected"
 detect_lan_p2p_mode() {
   local reason="unknown" allow="false"
 
-  # Step 1: Detect Wi-Fi security type via system_profiler (airport binary removed in macOS 15+)
+  # Step 1: Detect Wi-Fi security type via system_profiler (airport binary removed in macOS 14.4+)
   # SPAirPortDataType lists all known networks; the first "Security:" line is the current association.
   local security
   security=$(system_profiler SPAirPortDataType 2>/dev/null \
