@@ -1825,7 +1825,7 @@ When the S24 connected to the PC hotspot, it was behind the PC's NAT. The S24 se
 
 * **Verify Wi-Fi Roaming:** Investigate and test whether switching Wi-Fi networks now successfully and smoothly recovers the gateway end-to-end without any tailscale flag errors or dead tunnels. (Pending user verification).
 * **Fix Diagnostic Script Check 5/8:** ~~Investigate why `diagnose-host-leak.sh` check 5/8 (`Host default route`) sometimes reports "default route goes via physical Wi-Fi — Tailscale route assertion failed" on macOS even though the `warp=on` egress checks confirm that traffic is successfully tunneling.~~ **Closed** — fixed by switching check 5 from `netstat -rn | grep default` to `route -n get 1.1.1.1`. macOS Tailscale uses interface-scoped routes and does not replace the DHCP default route entry. See §36 Known Unknowns.
-* **Expose Tor Control Port (9051):** Consider mapping the Tor Control port to localhost and adding `nyx` (the Tor terminal status monitor) to allow users to inspect their entry, middle, and exit node IPs in real-time. Currently, only the exit node IP is discoverable by curling an external API.
+* **Expose Tor Control Port (9051):** ~~Consider mapping the Tor Control port to localhost and adding `nyx` (the Tor terminal status monitor) to allow users to inspect their entry, middle, and exit node IPs in real-time.~~ **Closed** — mapped the Tor Control Port to a procedurally generated, localhost-bound port `TOR_CONTROL_PORT`, configured `ControlPort` and disabled cookie authentication in `docker/tor/entrypoint.sh`, and integrated it into the `/sweep` verification protocol.
 * **Host-Only Tor Mode (Pluggable Egress):** Implement an `EGRESS_TYPE=tor_host_only` mode for users in heavily censored (DPI-restricted) environments. This mode would skip booting `warp` and `tailscale`, boot `adguardhome` and `tor` (using Telegram `obfs4` bridges), set AdGuard's upstream to Tor's `DNSPort`, and use the `pf` kill-switch to force all host Mac traffic strictly through the Tor network. This provides a 100% free, DPI-resistant evasion path without requiring an external VPS.
   * **The Technical Realities (What You Need to Watch Out For):**
     * **The UDP Problem:** Tor only transports TCP traffic. It does not support UDP (aside from DNS requests passed directly to its DNSPort). macOS is incredibly chatty over UDP (FaceTime, mDNS, QUIC protocols). Your pf rules defined in `scripts/pf.conf` must be configured to aggressively and silently DROP all host UDP traffic (except for local DNS queries to AdGuard). If you don't drop it cleanly, macOS services might hang indefinitely while waiting for timeouts.
@@ -1997,3 +1997,35 @@ The `nullexit` gateway uses a dynamically fetched IP address (cached in `.gatewa
    macOS's Packet Filter (`pf`) and low-level routing commands (`route add`) operate strictly at Layer 3 and require raw IP addresses. If `toggle.sh` or `recover.sh` attempted to use `nullexit-gateway`, the host Mac would need to perform a DNS lookup to resolve it. However, the very first step of the gateway's initialization is to completely hijack the host's DNS and point it *at the gateway itself*. The Mac cannot resolve the gateway's MagicDNS name if it needs the gateway's IP to know where to send the DNS query!
 2. **Dynamic Self-Healing (Avoiding Stale Cache):**
    To solve the bootstrapping problem without causing bugs if the node is deleted and re-authenticated on the Tailscale Admin Console, `toggle.sh` explicitly runs `docker compose exec ... tailscale ip -4` during boot to fetch the absolute freshest IP dynamically. It saves this to `.gateway_ip` so that fast-roaming scripts like `recover.sh` can instantly retrieve the routing target without incurring the latency of querying Docker.
+
+## 46. Tor Container Kill-Switch Inheritance & Fail-Closed Egress Verification
+
+### Context
+Unlike the host's SOCKS5 fallback path (whose kill-switch interaction is documented in §31), the `tor` container's connection status and fail-closed behavior under VPN tunnel drops is not governed by macOS `pf` rules. Instead, it relies on network namespace inheritance inside Docker Compose.
+
+### Mechanics
+1. **Shared Network Namespace:** The `tor` service is configured with `network_mode: service:warp` in `docker-compose.yml`. This shares the network namespace of the `warp` (Gluetun) container.
+2. **Inherited Egress Rules:** All socket communication within the namespace is bound to the same networking stack. Gluetun manages this stack by redirecting traffic through `tun0` (the WireGuard/WARP tunnel) and applying `iptables` rules that explicitly drop outbound traffic originating on `eth0` (the physical/bridge interface), except for permitted local subnets or the VPN server's endpoint.
+3. **Tunnel Fail-Closed:** If the WARP connection drops or the `tun0` interface is brought down, the routing table entries for `tun0` become invalid or disappear. Because the `iptables` rules in the shared namespace continue to drop any outgoing internet traffic attempting to exit via `eth0`, the `tor` container cannot leak raw traffic to the host's underlying networks. Egress fails closed.
+
+### Verification / Manual Test Case
+To manually verify that the Tor container fails closed and does not leak traffic when the tunnel dies:
+
+1. **Verify active path:** Ensure the gateway is active (`toggle.sh start`) and fetch the Tor port (`$TOR_SOCKS_PORT` in `/tmp/nullexit-ports.env`). Verify Tor traffic routes correctly:
+   ```bash
+   curl --socks5-hostname 127.0.0.1:$TOR_SOCKS_PORT https://check.torproject.org/api/ip
+   ```
+   *(This should output a Tor exit node IP).*
+
+2. **Simulate tunnel drop:** Bring down the virtual interface inside the shared network namespace:
+   ```bash
+   docker compose exec warp ip link set dev tun0 down
+   ```
+
+3. **Re-run the egress check:**
+   ```bash
+   curl --socks5-hostname 127.0.0.1:$TOR_SOCKS_PORT https://check.torproject.org/api/ip
+   ```
+   * **Expected Result:** The request must hang and eventually time out, or immediately fail with a proxy error (e.g., `curl: (97) SOCKS5: connection failed` or `curl: (7) Failed to connect`).
+   * **Leaked Egress Check:** Check the host's Wi-Fi router or firewall logs. No outbound packets from the Tor container should route directly over the bridge network to the internet.
+

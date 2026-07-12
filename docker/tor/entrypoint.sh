@@ -4,9 +4,11 @@ set -e
 TORRC="/etc/tor/torrc"
 mkdir -p /etc/tor /var/lib/tor
 
-# Base configuration (SOCKS proxy on 9050, strictly localhost/container boundaries)
+# Base configuration (SOCKS proxy on 9050, Control port on 9051, strictly localhost/container boundaries)
 cat <<EOF > $TORRC
-SocksPort 0.0.0.0:9050
+SocksPort 127.0.0.1:9050
+ControlPort 127.0.0.1:9051
+CookieAuthentication 0
 Log notice stdout
 DataDirectory /var/lib/tor
 EOF

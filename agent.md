@@ -12,6 +12,7 @@
 - **When fixing an error and using logs to debug, always show the user the reasoning and the specific logs that support this theory.**
 - **When the user tells you to "push", this means read git diffs and prepare commit messages that correspond to these changes (do not ignore any changes). If the changes can be atomized into multiple commits for easier understanding, do so.**
 - **When the user says "latex this", it means you should run `python3 scripts/generate_tex.py` to regenerate the unified LaTeX document.**
+- **NEVER apply changes to running gateway containers directly via `docker compose up` or `docker compose restart`.** Recreating or restarting containers (especially the `warp` container which hosts the network namespace) breaks the shared network stack for all other services (`adguardhome`, `tailscale`, `routing-fix`), severing host connectivity and freezing macOS DNS. If you need to apply changes or rebuild containers, cleanly stop the gateway first using `./toggle.sh`, or trigger `recover.sh --post-wake` to rebuild and re-verify the network stack safely in the correct dependency order. Do NOT run `./toggle.sh --restart` or any network-rebuilding commands yourself if the execution could sever host network access; instead, explain the changes and ask the USER to run `./toggle.sh --restart` (or `./toggle.sh` stop and start) themselves to safely apply the modifications.
 
 ## 🔬 How to Verify Gateway is Working
 Whenever modifications are made to the gateway scripts, routing, or containers, execute these verification checks in order:
@@ -386,11 +387,24 @@ Extracts the heavy, duplicated installation logic shared between `setup.sh` (mac
 ## Agent Verbs / Protocols
 
 ### `/sweep` (or `sweep the gateway`)
-When the user invokes this verb, the agent MUST perform a full end-to-end connectivity and health audit of the gateway:
+When the user invokes this verb, the agent MUST perform a full end-to-end connectivity, health, security, and performance audit of the gateway:
 1. **WARP Validation:** Run `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp=` (must equal `on`).
-2. **Tor Validation:** Identify the dynamically generated `SOCKS_PROXY_PORT` from `docker compose ps`, then run `curl -s --socks5-hostname 127.0.0.1:<PORT> https://check.torproject.org/api/ip` to confirm the proxy works.
-3. **Tailscale Validation:** Run `ping -c 1 100.100.21.8` to ensure the gateway is reachable, and check `tailscale status` to ensure other mesh devices are visible/pingable.
-4. **Log Audit:** Run `tail -n 100 output.log | grep -iE "(error|fail|warn)"` to catch any underlying component failures.
+2. **Tor Proxy & Control Validation:**
+   - Source the dynamically generated ports from `/tmp/nullexit-ports.env` (or identify them using `docker compose ps`).
+   - **SOCKS5 Check:** Run `curl -s --socks5-hostname 127.0.0.1:$TOR_SOCKS_PORT https://check.torproject.org/api/ip` to confirm the SOCKS5 proxy successfully connects and routes through the Tor network.
+   - **Control Port Check:** Query the Tor Control Port using netcat: `echo "PROTOCOLINFO" | nc 127.0.0.1:$TOR_CONTROL_PORT`. Verify it returns a standard `250-PROTOCOLINFO` response, confirming the Control Port is active and communicating.
+   - **Circuit & Node Lookup:** Query the Tor Control Port for the active path (`GETINFO circuit-status`). For each active built circuit, parse the relay fingerprints, lookup their IP addresses (`GETINFO ns/id/<fingerprint>`), and resolve their country codes using Tor's local GeoIP database (`GETINFO ip-to-country/<IP>`). Include the list of active circuits, showing the role (Guard/Middle/Exit), nickname, IP, and country of each hop in the final sweep report.
+3. **DNS Leak Validation:**
+   - Audit the upstream resolver currently utilized by the host. Run `curl -s https://edns.ip-api.com/json` to fetch details of the DNS resolver processing the client's requests.
+   - Verify that the resolver IP and organization returned belong to Cloudflare (e.g., AS13335) or match the WARP tunnel's exit range, and that **no** DNS traffic leaks to the user's raw physical ISP DNS.
+4. **Performance Benchmark Audit:**
+   - Run the python benchmark script `python3 benchmarks/test_load.py`.
+   - Report the overall load speed and the ratio of successfully fetched vs. blocked/failed subresources for the targeted domains to ensure ad-blocking and MTU encapsulation are performing correctly.
+5. **Tailscale Mesh Validation:**
+   - Run `ping -c 1 100.100.21.8` to ensure the gateway is reachable.
+   - Run `tailscale status` to identify all active/online nodes in the mesh.
+   - For every online peer returned in the status output, execute a ping check (`ping -c 1 <peer-ip>`) to verify bidirectional connectivity and confirm healthy routing to all active mesh devices.
+6. **Log Audit:** Run `tail -n 100 output.log | grep -iE "(error|fail|warn)"` to catch any underlying component failures or warnings.
 
 ### `/latex` (or `generate latex`)
 When the user invokes this verb, the agent MUST run `python3 -I scripts/generate_tex.py` to regenerate the documentation source code (`nullexit_unified.tex`). The agent MUST NOT attempt to compile the `.tex` file into a PDF (the user handles PDF compilation locally).

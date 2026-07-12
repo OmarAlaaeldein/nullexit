@@ -111,6 +111,16 @@ To protect against local malware fingerprinting:
 
 To use the Tor proxy, run `cat /tmp/nullexit-ports.env` to find your `$TOR_SOCKS_PORT` for the current session, and point your hardened browser (LibreWolf/Tor Browser) or CLI tool to `127.0.0.1:$TOR_SOCKS_PORT`.
 
+> [!WARNING]  
+> **Preventing DNS Leaks (SOCKS5 vs. SOCKS5-Hostname):**  
+> When routing command-line tools through Tor, you **must** force the tool to delegate DNS resolution to the Tor proxy. Using plain SOCKS5 (e.g., `socks5://` or curl's `--socks5` flag) will resolve hostnames *locally* using the host's DNS settings (AdGuard/WARP) before establishing the connection. While this DNS traffic is encrypted inside the WARP tunnel, the destination domain name is still leaked to AdGuard and Cloudflare, undermining your anonymity.
+> 
+> Use these correct protocols and configurations:
+> - **`curl`:** Use `--socks5-hostname` or the `socks5h://` scheme (e.g., `curl -x socks5h://127.0.0.1:$TOR_SOCKS_PORT https://check.torproject.org`). Do **not** use `--socks5` or `socks5://`.
+> - **`sqlmap`:** Pass the proxy URL using the `socks5h://` scheme to ensure remote resolution: `--proxy="socks5h://127.0.0.1:$TOR_SOCKS_PORT"`.
+> - **`nmap`:** Nmap's built-in `--proxies` option resolves hostnames locally. To safely scan targets without DNS leaks, tunnel it using `proxychains-ng` configured with `proxy_dns` enabled (add `socks5 127.0.0.1 <PORT>` to `/etc/proxychains.conf` or a local config, then run `proxychains4 nmap <args>`).
+
+
 #### Hardening: Using obfs4 Tor Bridges
 If you want to disguise your Tor traffic from the WARP exit node provider, you can optionally enable Tor bridges:
 1. Obtain private `obfs4` bridge lines from [bridges.torproject.org](https://bridges.torproject.org) or the official Telegram bot.

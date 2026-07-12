@@ -13,6 +13,7 @@ services:
       - "41642:41642/udp"  # Tailscale WireGuard (direct connection to host)
       - "127.0.0.1:${SOCKS_PROXY_PORT:-1080}:1080/tcp"    # SOCKS5 proxy (routed through WARP tunnel)
       - "127.0.0.1:${TOR_SOCKS_PORT:-9050}:9050/tcp"  # Tor SOCKS5 proxy (procedurally generated)
+      - "127.0.0.1:${TOR_CONTROL_PORT:-9051}:9051/tcp"  # Tor Control port (procedurally generated)
     environment:
       - TZ=America/New_York
       - VPN_SERVICE_PROVIDER=custom

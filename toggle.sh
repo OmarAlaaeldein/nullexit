@@ -63,12 +63,16 @@ if [[ "$1" == "" || "$1" == "--restart" ]]; then
   export TOR_SOCKS_PORT=$(get_free_port)
   GENERATED_PORTS="$GENERATED_PORTS $TOR_SOCKS_PORT"
   
+  export TOR_CONTROL_PORT=$(get_free_port)
+  GENERATED_PORTS="$GENERATED_PORTS $TOR_CONTROL_PORT"
+  
   export SOCKS_PROXY_PORT=$(get_free_port)
   GENERATED_PORTS="$GENERATED_PORTS $SOCKS_PROXY_PORT"
   
   export DNS_PROXY_PORT=$(get_free_port)
   
   echo "export TOR_SOCKS_PORT=$TOR_SOCKS_PORT" > "$PORTS_FILE"
+  echo "export TOR_CONTROL_PORT=$TOR_CONTROL_PORT" >> "$PORTS_FILE"
   echo "export SOCKS_PROXY_PORT=$SOCKS_PROXY_PORT" >> "$PORTS_FILE"
   echo "export DNS_PROXY_PORT=$DNS_PROXY_PORT" >> "$PORTS_FILE"
 elif [ -f "$PORTS_FILE" ]; then
@@ -77,6 +81,7 @@ elif [ -f "$PORTS_FILE" ]; then
 else
   # Fallbacks if file is lost
   export TOR_SOCKS_PORT=9050
+  export TOR_CONTROL_PORT=9051
   export SOCKS_PROXY_PORT=1080
   export DNS_PROXY_PORT=5354
 fi
