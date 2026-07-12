@@ -75,6 +75,8 @@ if [[ "$1" == "" || "$1" == "--restart" ]]; then
   echo "export TOR_CONTROL_PORT=$TOR_CONTROL_PORT" >> "$PORTS_FILE"
   echo "export SOCKS_PROXY_PORT=$SOCKS_PROXY_PORT" >> "$PORTS_FILE"
   echo "export DNS_PROXY_PORT=$DNS_PROXY_PORT" >> "$PORTS_FILE"
+  ADGUARD_PASS=$(grep -E "^ADGUARD_PASSWORD=" .env 2>/dev/null | cut -d'=' -f2- | tr -d "\"'")
+  echo "export TOR_PASSWORD=${ADGUARD_PASS:-nullexit}" >> "$PORTS_FILE"
 elif [ -f "$PORTS_FILE" ]; then
   # On STOP, source the existing ports so docker-compose down matches
   source "$PORTS_FILE"

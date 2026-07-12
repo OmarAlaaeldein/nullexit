@@ -201,6 +201,7 @@ services:
       - TZ=America/New_York
       - TOR_USE_BRIDGES=${TOR_USE_BRIDGES:-false}
       - TOR_BRIDGE_LINES_FILE=${TOR_BRIDGE_LINES_FILE:-./tor-bridges.txt}
+      - TOR_PASSWORD=${ADGUARD_PASSWORD:-nullexit}
     working_dir: /nullexit
     volumes:
       - ./:/nullexit:ro

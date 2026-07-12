@@ -13,6 +13,11 @@ Log notice stdout
 DataDirectory /var/lib/tor
 EOF
 
+if [ -n "$TOR_PASSWORD" ]; then
+    HASH=$(tor --hash-password "$TOR_PASSWORD" | tail -n 1)
+    echo "HashedControlPassword $HASH" >> $TORRC
+fi
+
 if [ "${TOR_USE_BRIDGES:-false}" = "true" ]; then
     BRIDGE_FILE="${TOR_BRIDGE_LINES_FILE:-/tor-bridges.txt}"
     

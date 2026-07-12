@@ -43,7 +43,8 @@ KILL_SWITCH=false                  # enforce strict PF lock that breaks SSH if V
 # watcher.sh auto-detects 802.1x and AP isolation on every Wi-Fi change and overrides
 # this setting automatically — you only need to set this manually if auto-detection fails.
 TAILSCALE_ALLOW_LAN_P2P=false     # auto-managed; true only on trusted hotspots/home networks
-ADGUARD_PASSWORD=nullexit
+ADGUARD_USER=admin                 # Username for AdGuard Home (defaults to admin if not set)
+ADGUARD_PASSWORD=nullexit          # Shared password for AdGuard Home and Tor ControlPort (defaults to nullexit if not set)
 BLOCKED_COUNTRIES="kp il"          # dynamically block country IP ranges via ipdeny.com
 ```
 

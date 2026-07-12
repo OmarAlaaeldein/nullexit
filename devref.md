@@ -221,7 +221,8 @@ Each mesh device has a stable `100.x.x.x` Tailscale IP, which is visible as the 
 | `KILL_SWITCH` | (Optional) `true` to enforce strict PF lock — drops all host traffic if VPN fails. Breaks SSH if VPN dies. |
 | `HOST_LEAK_PROBE` | (Optional) `false` to disable the 300ms host-egress leak prober (default: `true`) |
 | `STOP_COLIMA_ON_EXIT` | (Optional) `true` to fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts) |
-| `ADGUARD_PASSWORD` | AdGuard Home web UI password (default: `nullexit`; username always `admin`) |
+| `ADGUARD_USER` | (Optional) AdGuard Home web UI username (default: `admin`) |
+| `ADGUARD_PASSWORD` | (Optional) Shared password for AdGuard Home and Tor ControlPort (default: `nullexit`) |
 | `BLOCKED_COUNTRIES` | Space-separated 2-letter ISO codes to block via ipdeny.com CIDR ranges (e.g. `"kp il cn ru"`) |
 
 ---
@@ -1572,6 +1573,19 @@ Split the single implicit rule into explicit `proto tcp`, `proto udp`, and `prot
 - **Upgraded Base Image:** Shifted the Tor Dockerfile base image to `debian:bookworm-slim`, restoring access to the `obfs4proxy` pluggable transport package.
 - **Robust Bridge Validation:** Replaced the fragile `[ -s ]` check with a strict `grep -vE '^\s*(#|$)'` command that strips comments and empty lines. If no valid lines remain, the container safely falls back to standard public guard relays instead of crashing, ensuring Tor remains available even with a misconfigured bridge file.
 - **Image Pinning:** Explicitly pinned `image: nullexit-tor:v1.0.0` in `docker-compose.yml` to prevent arbitrary local builds from drifting to `:latest`.
+
+### 23.9 July 12, 2026: Tor ControlPort Dynamic Password Authentication & User Config
+**Symptom:**
+Querying the Tor Control Port (e.g., via the `/sweep` script or `check_circuits.py`) returned empty responses or connection errors. Logs showed that Tor automatically closed its ControlPort:
+`You have a ControlPort set to accept unauthenticated connections from a non-local address. ... That's so bad that I'm closing your ControlPort for you.`
+
+**Root Cause:**
+Docker port mapping (especially under Colima on macOS) requires container sockets to bind to `0.0.0.0` to be reachable from the host. However, when Tor's ControlPort is bound to `0.0.0.0` (non-local) with no authentication, Tor closes it by default as a safety precaution. Sourcing SOCKS5/ControlPort to `127.0.0.1` inside the container was not an option as it broke the Docker bridge routing path.
+
+**Resolution:**
+- **Dynamic Password Authentication**: Updated the Tor container's `entrypoint.sh` to read `TOR_PASSWORD` and dynamically generate its HMAC hash via `tor --hash-password`, adding `HashedControlPassword <hash>` to `torrc`. This secures the ControlPort on `0.0.0.0` so Tor keeps it open.
+- **Unified Credentials in `.env`**: Exposed `ADGUARD_USER=admin` and `ADGUARD_PASSWORD=nullexit` in `.env` to serve as the unified gateway credentials. Sourced `TOR_PASSWORD` directly from `ADGUARD_PASSWORD` in `docker-compose.yml`.
+- **Client Authentication**: Updated `scripts/check_circuits.py` to fetch `TOR_PASSWORD` (defaulting to `ADGUARD_PASSWORD` or `nullexit`) and authenticate with the ControlPort using `AUTHENTICATE "<password>"` to regain access.
 
 ---
 

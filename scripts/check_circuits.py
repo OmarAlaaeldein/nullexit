@@ -3,12 +3,12 @@ import socket
 import os
 import re
 
-def query_tor(port, command):
+def query_tor(port, command, password=""):
     try:
         s = socket.socket()
         s.settimeout(2)
         s.connect(('127.0.0.1', port))
-        s.sendall(f"AUTHENTICATE\r\n{command}\r\nQUIT\r\n".encode())
+        s.sendall(f"AUTHENTICATE \"{password}\"\r\n{command}\r\nQUIT\r\n".encode())
         response = b""
         while True:
             chunk = s.recv(4096)
@@ -36,12 +36,34 @@ def get_ports():
                             ports[key] = val
     return ports
 
+def get_password(ports):
+    # 1. Try ports.env
+    password = ports.get("TOR_PASSWORD")
+    if password:
+        return password
+    
+    # 2. Try .env
+    if os.path.exists(".env"):
+        try:
+            with open(".env", "r") as f:
+                for line in f:
+                    if line.startswith("ADGUARD_PASSWORD="):
+                        return line.split("=", 1)[1].strip().strip('"\'')
+                    if line.startswith("TOR_PASSWORD="):
+                        return line.split("=", 1)[1].strip().strip('"\'')
+        except Exception:
+            pass
+            
+    # 3. Fallback
+    return "nullexit"
+
 def main():
     ports = get_ports()
     control_port = ports.get("TOR_CONTROL_PORT", 9051)
+    password = get_password(ports)
     
     print(f"Connecting to Tor Control Port on 127.0.0.1:{control_port}...")
-    status = query_tor(control_port, "GETINFO circuit-status")
+    status = query_tor(control_port, "GETINFO circuit-status", password)
     
     if "Error" in status:
         print(status)
@@ -61,7 +83,7 @@ def main():
             nickname = node.split("~")[1] if "~" in node else "unknown"
             
             # Fetch node IP
-            ns_info = query_tor(control_port, f"GETINFO ns/id/{fingerprint}")
+            ns_info = query_tor(control_port, f"GETINFO ns/id/{fingerprint}", password)
             ip = "unknown"
             for line in ns_info.split("\n"):
                 if line.startswith("r "):
@@ -73,7 +95,7 @@ def main():
             # Fetch country
             country = "unknown"
             if ip != "unknown":
-                country_info = query_tor(control_port, f"GETINFO ip-to-country/{ip}")
+                country_info = query_tor(control_port, f"GETINFO ip-to-country/{ip}", password)
                 for line in country_info.split("\n"):
                     if line.startswith("250-ip-to-country/"):
                         country = line.split("=")[1].strip().upper()
