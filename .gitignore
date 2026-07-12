@@ -44,3 +44,13 @@ TUNNEL_FAILED_CLOSED.marker
 # Python cache
 __pycache__/
 *.py[cod]
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.xdv
+*.fdb_latexmk
+*.fls
+*.synctex*
