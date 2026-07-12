@@ -46,6 +46,7 @@ TAILSCALE_ALLOW_LAN_P2P=false     # auto-managed; true only on trusted hotspots/
 ADGUARD_USER=admin                 # Username for AdGuard Home (defaults to admin if not set)
 ADGUARD_PASSWORD=nullexit          # Shared password for AdGuard Home and Tor ControlPort (defaults to nullexit if not set)
 BLOCKED_COUNTRIES="kp il"          # dynamically block country IP ranges via ipdeny.com
+TOR_EXCLUDE_EXIT_NODES=""          # comma-separated country codes to exclude as Tor exit nodes (e.g. {us},{gb})
 ```
 
 ## 3. Deploy the Gateway
