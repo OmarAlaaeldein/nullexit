@@ -20,6 +20,8 @@ graph TB
         TSDAEMON["tailscaled\n(brew service)\nhost Tailscale"]
         HOSTDNS["Host DNS\n→ Gateway IP\n(hijacked by toggle.sh)"]
         HOSTSOCKS["Host SOCKS5\n127.0.0.1:1080\n(fallback only)"]
+        HOSTTOR["Host Tor SOCKS5\n127.0.0.1:$TOR_SOCKS_PORT\n(randomized)"]
+        HOSTTORCTRL["Host Tor Control\n127.0.0.1:$TOR_CONTROL_PORT\n(randomized)"]
 
         subgraph MONITORS["🔍 Background Daemons (toggle.sh children)"]
             WARPWATCH["WARP Watcher\n(every 30s, via docker exec)\n→ output.log"]
@@ -35,6 +37,7 @@ graph TB
                 SOCKS["tailscale\nSOCKS5\nport 1080"]
                 ADGUARD["adguardhome\nDNS sinkhole\nport 5335"]
                 ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Go Logger\n(writes blocked.log)"]
+                TOR["tor container\nSOCKS5: port 9050\nControl: port 9051"]
             end
         end
 
@@ -66,6 +69,8 @@ graph TB
 
     %% Logging
     ROUTINGFIX -->|"writes"| BLOCKEDLOG["blocked.log\n(Host-side)"]
+    HOSTTOR -->|"port mapping"| TOR
+    HOSTTORCTRL -->|"port mapping"| TOR
 
     %% Recovery triggers
     WARPWATCH -->|"≥6 consecutive warp=off"| RECOVER
