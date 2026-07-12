@@ -11,11 +11,22 @@ ControlPort 0.0.0.0:9051
 CookieAuthentication 0
 Log notice stdout
 DataDirectory /var/lib/tor
+
+# Transparent proxying & DNS resolution for .onion mapping
+TransPort 0.0.0.0:9040
+DNSPort 0.0.0.0:5353
+AutomapHostsOnResolve 1
+VirtualAddrNetworkIPv4 198.18.0.0/15
 EOF
 
 if [ -n "$TOR_PASSWORD" ]; then
     HASH=$(tor --hash-password "$TOR_PASSWORD" | tail -n 1)
     echo "HashedControlPassword $HASH" >> $TORRC
+fi
+
+if [ -n "$TOR_EXCLUDE_EXIT_NODES" ]; then
+    echo "ExcludeExitNodes $TOR_EXCLUDE_EXIT_NODES" >> $TORRC
+    echo "StrictNodes 1" >> $TORRC
 fi
 
 if [ "${TOR_USE_BRIDGES:-false}" = "true" ]; then

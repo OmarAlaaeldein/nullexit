@@ -202,6 +202,7 @@ services:
       - TOR_USE_BRIDGES=${TOR_USE_BRIDGES:-false}
       - TOR_BRIDGE_LINES_FILE=${TOR_BRIDGE_LINES_FILE:-./tor-bridges.txt}
       - TOR_PASSWORD=${ADGUARD_PASSWORD:-nullexit}
+      - TOR_EXCLUDE_EXIT_NODES=${TOR_EXCLUDE_EXIT_NODES:-{us}}
     working_dir: /nullexit
     volumes:
       - ./:/nullexit:ro

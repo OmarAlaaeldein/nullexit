@@ -400,7 +400,7 @@ docker exec routing-fix sh -c "
   curl -sf -X POST http://127.0.0.1:3000/control/dns_config \
     -H 'Content-Type: application/json' \
     -b /tmp/agh.cookie \
-    -d '{\"upstream_dns\":[\"127.0.0.1:53\"],\"bootstrap_dns\":[\"1.1.1.1\",\"8.8.8.8\"],\"upstream_mode\":\"load_balance\"}' \
+    -d '{\"upstream_dns\":[\"127.0.0.1:53\",\"[/onion/]127.0.0.1:5353\"],\"bootstrap_dns\":[\"1.1.1.1\",\"8.8.8.8\"],\"upstream_mode\":\"load_balance\"}' \
     >/dev/null
 
   # Step 5: Register the compiled rules file as a filter list

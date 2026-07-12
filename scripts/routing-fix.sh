@@ -137,6 +137,21 @@ add_tailscale_p2p_bypass() {
 
 add_tailscale_p2p_bypass
 
+add_onion_transparent_proxy() {
+  for ipt in iptables iptables-legacy; do
+    command -v "$ipt" >/dev/null 2>&1 || continue
+    if ! $ipt -t nat -C PREROUTING -d 198.18.0.0/15 -p tcp -j REDIRECT --to-ports 9040 2>/dev/null; then
+      $ipt -t nat -I PREROUTING -d 198.18.0.0/15 -p tcp -j REDIRECT --to-ports 9040 2>/dev/null || true
+    fi
+    if ! $ipt -C FORWARD -d 198.18.0.0/15 -j ACCEPT 2>/dev/null; then
+      $ipt -I FORWARD -d 198.18.0.0/15 -j ACCEPT 2>/dev/null || true
+    fi
+  done
+}
+
+add_tailscale_p2p_bypass
+add_onion_transparent_proxy
+
 create_log_drop_chain() {
   local ipt="$1"
   local chain="$2"
@@ -279,6 +294,9 @@ while true; do
   
   # Ensure P2P packets bypass WARP to maintain low latency
   add_tailscale_p2p_bypass
+
+  # Ensure transparent proxying for .onion is active
+  add_onion_transparent_proxy
 
   # Enforce country blocklist
   add_country_block
