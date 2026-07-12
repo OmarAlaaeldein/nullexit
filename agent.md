@@ -338,7 +338,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 
 
 
-## Part 6: Constant Duplication Map
+## Part 5: Constant Duplication Map
 
 | Value | Files |
 |-------|-------|
@@ -358,7 +358,7 @@ These exist in macOS toggle.sh but NOT in toggle-linux.sh:
 
 ---
 
-## Part 7: Refactoring Outcome (Implemented July 2026)
+## Part 6: Refactoring Outcome (Implemented July 2026)
 
 **Decision: "Scripts-only" architecture**
 Instead of introducing a new `lib/` directory, all shared code was moved into the existing `scripts/` directory to keep the project hierarchy flat and simple.

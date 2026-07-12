@@ -1,6 +1,6 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
-> **Last updated:** July 11, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
+> **Last updated:** July 12, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
 
 **nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel — double-encrypting every packet, hiding your ISP metadata, and providing network-wide DNS ad-blocking (AdGuard Home) and kernel-level IP threat blocking (`ipset`/`iptables`) for every device on your mesh.
 
@@ -22,6 +22,7 @@ Run the interactive setup script for your OS. It downloads `wgcf`, generates fre
 ```
 
 ### Reference `.env`
+This is a quick reference of the common variables. For the **complete, authoritative list** of every `.env` variable (including all optional/advanced settings), see `devref.md §7`.
 ```env
 WIREGUARD_PRIVATE_KEY=<Generated>
 WIREGUARD_PUBLIC_KEY=<Generated>
@@ -208,18 +209,18 @@ Fully automated lifecycle script. Also supports a native `.app` launcher:
 osacompile -o "Toggle Gateway.app" Toggle-Gateway.applescript
 ```
 
-Optional `.env` settings:
+Optional `.env` settings (common subset; the full canonical table lives in `devref.md §7`):
 - `GATEWAY_BYPASS_PING=true` — proceed even if pre-flight connectivity checks fail.
 - `GATEWAY_USE_EXIT_NODE=false` — DNS-only mode, skip exit-node routing.
 - `GATEWAY_HIJACK_HOST=false` — skip DNS hijacking on the host (provides VPN/adblocking only to external Tailscale peers).
-- `GATEWAY_MSS=1360` — override TCP Maximum Segment Size for the tunnel (default is calculated automatically).
+- `GATEWAY_MSS=1180` — override the TCP MSS clamp for the double-tunnel (default `1120`; raise to `1180` for more speed on a healthy path).
 - `HOST_LEAK_PROBE=false` — disable background host-egress leak prober (default: true).
 - `HOST_MTU=1200` — override the host Tailscale interface MTU. Defaults to 1200 to fit inside the 1280-byte WARP tunnel.
 - `KILL_SWITCH=true` — enforce strict network lock that breaks SSH if the VPN fails.
 - `STOP_COLIMA_ON_EXIT=true` — fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts).
 - `TAILSCALE_ALLOW_LAN_P2P=true` — allow direct Tailscale LAN P2P connections between devices on the same network.
   - **Default: `false`.** On campus or enterprise Wi-Fi (WPA2-Enterprise / 802.1x), AP Client Isolation blocks local device-to-device traffic. When Tailscale still attempts a local P2P upgrade, macOS's `gvproxy` layer SNAT-mangles the reply's source port. WireGuard's endpoint roaming treats this as a legitimate address change and updates the phone's outbound path to the newly-mangled port — which has no listener. This blackholes 100% of the phone's traffic while the DERP relay path is abandoned. Setting this to `false` preemptively drops all RFC1918-destined Tailscale UDP from the gateway so the phone receives a clean failure and safely falls back to DERP.
-  - **Auto-managed:** `watcher.sh` automatically detects WPA2-Enterprise via `system_profiler SPAirPortDataType` (the `airport` binary was removed in macOS 14.4) and probes for AP isolation by pinging the default gateway (`route -n get 1.1.1.1`) on every network change. It writes the detected value to `.lan_p2p_detected` in the repo root, which `routing-fix.sh` re-reads every 30 seconds — **no restart required.** Only set this manually if auto-detection fails. See `devref.md §36` for the full SNAT endpoint poisoning analysis and `devref.md §40` for the `airport` removal background. *(Note: Direct P2P between the gateway container and the host Mac itself is always permitted via the Docker bridge to bypass DERP relays, regardless of this setting).*
+  - **Auto-managed:** `watcher.sh` automatically detects WPA2-Enterprise via `system_profiler SPAirPortDataType` (the `airport` binary was removed in macOS 14.4) and probes for AP isolation by pinging the default gateway (`route -n get 1.1.1.1`) on every network change. It writes the detected value to `.lan_p2p_detected` in the repo root, which `routing-fix.sh` re-reads every 30 seconds — **no restart required.** Only set this manually if auto-detection fails. See `devref.md §15.7.1` for the full SNAT endpoint poisoning analysis and `devref.md §15.11.6` for the `airport` removal background. *(Note: Direct P2P between the gateway container and the host Mac itself is always permitted via the Docker bridge to bypass DERP relays, regardless of this setting).*
   - Set to `true` on trusted home networks or Windows/mobile hotspots (no AP isolation) for a faster, lower-latency direct path.
 - `WARP_FAIL_THRESHOLD=3` — number of consecutive failed checks before forcing a gateway teardown (default: 6 checks = 30s).
 - `WARP_ENDPOINT_1` / `WARP_ENDPOINT_2` — override the Cloudflare WARP WireGuard endpoints.
@@ -240,7 +241,7 @@ cp ./launchd/com.nullexit.wake-recovery.plist ~/Library/LaunchAgents/
 sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|" ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 launchctl load -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 ```
-See `devref.md §11.16` for the full deep dive.
+See `devref.md §15.5.1` for the full deep dive.
 
 ---
 
@@ -272,7 +273,7 @@ For higher security, the gateway supports these drop-in upgrades:
 #### Python Runtime Airgap (Isolated Mode)
 **Never** install third-party `pip` packages (like `requests` or `pyyaml`) into the Python environment that `nullexit` uses. All python scripts in this project (e.g., the `dns-proxy.py` daemon) are strictly engineered to run on the zero-dependency Python Standard Library. To strictly isolate the environment from supply-chain attacks, `nullexit` executes these scripts using **Python's Isolated Mode** (`python3 -I`). This deliberately blinds the execution environment to any malicious user-installed `pip` packages on the host, permanently air-gapping the gateway from PyPI.
 
-See `devref.md §8` for the full threat model, Snowden programme analysis, and trust assumptions.
+See `devref.md §9` for the full threat model, Snowden programme analysis, and trust assumptions.
 
 ---
 
@@ -285,7 +286,7 @@ See `devref.md §8` for the full threat model, Snowden programme analysis, and t
 - **`devref.md`** — Complete architecture reference, routing deep-dives, and full resolved-issues log. Read this before modifying any routing or firewall logic.
 
 > [!CAUTION]
-> **Two infinite routing loops are possible.** (1) If a hotspot device providing internet to the gateway host is *also* using the gateway as its exit node, packets bounce forever between the two. (2) When the host's default route is redirected to `utun*`, WARP endpoint packets can loop back into the tunnel. Both are documented in `devref.md §11.10` and `§11.18` and are automatically handled by `toggle.sh`.
+> **Two infinite routing loops are possible.** (1) If a hotspot device providing internet to the gateway host is *also* using the gateway as its exit node, packets bounce forever between the two. (2) When the host's default route is redirected to `utun*`, WARP endpoint packets can loop back into the tunnel. Both are documented in `devref.md §15.2.1` and `§15.2.2` and are automatically handled by `toggle.sh`.
 
 ---
 
@@ -305,21 +306,14 @@ GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 
 ## 13. Changelog
 
-- **July 10, 2026** — **Bug fixes:** 
-  1. Resolved a race condition where Wi-Fi roaming caused the host IP to leak as the raw ISP IP (`132.x`) after every network switch. The WARP Watcher was firing nuclear shutdown while `recover.sh --post-wake` was still intentionally recreating the warp container. Fixed by adding a `/tmp/nullexit-warp-inhibit.marker` that pauses the watcher's failure counter during post-wake recovery. See `devref.md §25`.
-  2. Resolved a startup race condition where the pre-flight connectivity check `[1/3] Gateway reachable via Tailscale` would fail because the host's `tailscaled` had not yet propagated the netmap immediately after `tailscale up --reset`. Upgraded the check to a 5-attempt retry loop with a 1-second delay. See `devref.md §26`.
-  3. Resolved a concurrency collision where the network changes from a nuclear `recover.sh` teardown triggered `watcher.sh` to run `recover.sh --post-wake` in parallel, corrupting container states. Implemented a shared lifecycle lock (`/tmp/nullexit-toggle.lock`) across both scripts to safely skip post-wake logic during teardowns. See `devref.md §27`.
-  4. Resolved an infinite auto-recovery loop after a tunnel failure shutdown. When the WARP Watcher triggered nuclear `recover.sh` to teardown the gateway, the active-state marker file `/tmp/nullexit-gateway-active.marker` was leaked on disk. The resulting network configuration changes from the teardown then triggered `watcher.sh`, which saw the marker and immediately restarted the gateway, looping indefinitely. Fixed by explicitly deleting the marker file at the start of nuclear `recover.sh`. See `devref.md §28`.
-  5. Resolved a pre-flight check false negative during cold boots where the `[1/3] Gateway reachable via Tailscale` check would fail. Because gluetun blocks UDP STUN traffic to the public internet, Tailscale is forced to use a slower DERP-assisted handshake which takes ~30-35 seconds on cold boots. Increased the retry loop limit to 45 attempts (45s) to give the handshake sufficient time to complete. See `devref.md §29`.
-  6. Resolved a startup race condition during restarts where `docker compose build` would fail with DNS resolution errors because physical Wi-Fi was power-cycled during teardown and Colima booted before the host obtained a DHCP lease. Implemented a unified `wait_for_dhcp_settle` helper (configured with a 30s timeout to tolerate macOS DHCP lease latency) in `scripts/common.sh` and added it to the start of `toggle.sh`. See `devref.md §30`.
-  7. Resolved a bug where enabling the PF Kill-Switch during SOCKS5 fallback mode blocked all host traffic (including `tailscaled` daemon connections to the control plane) because SOCKS5 does not route non-TCP/system traffic. Removed kill-switch activation from the SOCKS5 fallback path in `toggle.sh`. See `devref.md §31`.
-  8. Resolved a bug where host-side `tailscale up` calls passed the `--reset` flag, which aggressively cleared macOS Tailscale credentials and logged the user out. Removed the `--reset` flag from all host-side invocations to preserve authenticated sessions during exit-node state toggling. See `devref.md §32`.
-  9. Resolved a bug where container connectivity check failures in `toggle.sh` and `recover.sh` were discarded to `/dev/null`. Redirected stderr of Docker exec checks to `output.log` to prevent diagnostic blind spots during tunnel outages. See `devref.md §33`.
-- **July 6, 2026** — Edge-case security and stability hardening: DNS Watcher interface independence, robust lock-file PID verification, fail-closed crypto integrity check, strict `iptables` pinning for tailscale0↔tun0, Docker port binding to `127.0.0.1` to prevent LAN exposure, routing verification via `netstat -nr`. See `devref.md §12`.
+- **July 12, 2026** — Tor ControlPort dynamic password authentication (unified with `ADGUARD_PASSWORD`), enabling live circuit inspection via `/sweep`. See `devref.md §15.10.2`.
+- **July 11, 2026** — Tor container hardening: `obfs4proxy` restored (base image → `debian:bookworm-slim`), robust bridge-file validation, and image pinning. See `devref.md §15.10.1`.
+- **July 10, 2026** — Roaming/startup stabilization suite: fixed the Wi-Fi-roam host-IP leak (raw ISP `132.x`) caused by the WARP Watcher racing post-wake recovery, plus a batch of pre-flight/concurrency/kill-switch/Tailscale-flag bugs and the macOS SNAT endpoint-poisoning P2P blackhole. Full post-mortems in the Incident Log — see `devref.md §15.2.7`, `§15.5.3`–`§15.5.5`, `§15.2.8`–`§15.2.9`, `§15.7.1`, `§15.7.3`–`§15.7.5`, `§15.12.18`.
+- **July 6, 2026** — Edge-case security and stability hardening: DNS Watcher interface independence, robust lock-file PID verification, fail-closed crypto integrity check, strict `iptables` pinning for tailscale0↔tun0, Docker port binding to `127.0.0.1` to prevent LAN exposure, routing verification via `netstat -nr`. See `devref.md §17`.
 - **July 4, 2026** — Colima bridged networking, SOCKS5 proxy migrated natively to Tailscale, headless prompt crashes fixed, proxy bypass domains added to fix LAN P2P. Python dependencies completely eliminated: `logger` and `rule-compiler` ported to blazing-fast Go multi-stage Docker builds. Added `crypto.sh` to enforce cryptographic signature validation on all core bash scripts. Massively refactored `toggle.sh` and `recover.sh` to eliminate ~200 lines of duplicated code by migrating network and process logic to `scripts/common.sh`. Added a concurrency mutex to `toggle.sh`, resolved unbound `TS_AUTHKEY` check crashes on setup, and integrated Go validation to the CI pipeline.
 - **July 3, 2026** — **Critical Security Updates:** Addressed the overnight silent IP leak and improved geo-blocking. Introduced `scripts/host-leak-probe.sh` (a sub-second host-egress leak detector) and a statistical threshold auto-shutdown watcher. Added `unlock-files.sh` to safely reset file permissions. Resolved numerous startup regressions and system bugs.
-- **July 2, 2026** — Two infinite routing loops resolved (`devref.md §11.18`): host-VM tunnel loop (WARP bypass routes now via gateway IP + manual `utun*` redirection) and Docker Compose subnet takeover (`10.200.1.0/24` lock). `--accept-routes=true` now explicit on all `tailscale up --reset` calls.
-- **July 2, 2026** — Auto-recovery daemon documented in §6 above (`scripts/watcher.sh` + launchd plist). See `devref.md §11.16`.
+- **July 2, 2026** — Two infinite routing loops resolved (`devref.md §15.2.2`): host-VM tunnel loop (WARP bypass routes now via gateway IP + manual `utun*` redirection) and Docker Compose subnet takeover (`10.200.1.0/24` lock). `--accept-routes=true` now explicit on all `tailscale up --reset` calls.
+- **July 2, 2026** — Auto-recovery daemon documented in §6 above (`scripts/watcher.sh` + launchd plist). See `devref.md §15.5.1`.
 - **July 2, 2026** — Linux scripts (`scripts/toggle-linux.sh`, `recover-linux.sh`, `setup-linux.sh`) documented in §6.
 - **July 1, 2026** — `recover.sh --post-wake` ships; wired to watcher daemon. Triggered on every sleep/wake or network-state change.
 - **June 28, 2026** — 8 internal scripts moved to `scripts/`. User-facing files (`toggle.sh`, `recover.sh`, `setup.sh`, `docker-compose.yml`) stay at repo root.
