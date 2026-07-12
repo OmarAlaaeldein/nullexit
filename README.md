@@ -122,6 +122,18 @@ To use the Tor proxy, run `cat /tmp/nullexit-ports.env` to find your `$TOR_SOCKS
 > - **`nmap`:** Nmap's built-in `--proxies` option resolves hostnames locally. To safely scan targets without DNS leaks, tunnel it using `proxychains-ng` configured with `proxy_dns` enabled (add `socks5 127.0.0.1 <PORT>` to `/etc/proxychains.conf` or a local config, then run `proxychains4 nmap <args>`).
 
 
+#### Transparent .onion Browsing & Dark Web Access
+In addition to the randomized SOCKS5 proxy port, `nullexit` provides seamless, transparent `.onion` domain browsing for **all devices** on your Tailscale mesh:
+- **Zero-Config DNS:** AdGuard Home automatically intercepts queries for `.onion` domains and resolves them to Tor's virtual mapping subnet.
+- **Tailscale Auto-Routing:** The virtual subnet is mapped to the `198.18.0.0/15` benchmark range (RFC 2544). Since this range is not a private IP subnet, Tailscale's Exit Node mode automatically routes it to the gateway (bypassing local LAN exclusions).
+- **Transparent NAT Proxying:** Kernel firewall rules in the gateway redirect all TCP traffic destined for `198.18.0.0/15` directly into Tor's transparent port (`9040`).
+- **Exit Node Exclusion:** Supports the ability to exclude specific countries from being used as Tor exit nodes via the `TOR_EXCLUDE_EXIT_NODES` environment variable in `.env`.
+
+##### Enable in Web Browsers
+To prevent accidental DNS leaks, web browsers block `.onion` lookups by default. To browse dark web sites natively:
+- **Firefox:** Go to `about:config`, search for `network.dns.blockDotOnion`, and set it to `false`. Type any onion address (e.g. `duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion`) directly into the URL bar and it will load.
+- **Mobile Browsers (iOS/Android):** Connect to your Tailscale exit node, open Firefox (with blockDotOnion disabled), and browse onion sites natively on the go.
+
 #### Hardening: Using obfs4 Tor Bridges
 If you want to disguise your Tor traffic from the WARP exit node provider, you can optionally enable Tor bridges:
 1. Obtain private `obfs4` bridge lines from [bridges.torproject.org](https://bridges.torproject.org) or the official Telegram bot.

@@ -2043,3 +2043,21 @@ To manually verify that the Tor container fails closed and does not leak traffic
    * **Expected Result:** The request must hang and eventually time out, or immediately fail with a proxy error (e.g., `curl: (97) SOCKS5: connection failed` or `curl: (7) Failed to connect`).
    * **Leaked Egress Check:** Check the host's Wi-Fi router or firewall logs. No outbound packets from the Tor container should route directly over the bridge network to the internet.
 
+## 47. Architectural Decision: Transparent .onion Routing via RFC 2544 Subnet (198.18.0.0/15)
+
+### Context
+To enable seamless dark web browsing across the entire mesh, the gateway requires a mechanism to dynamically map `.onion` domains to IP addresses that the host operating system and network layers can route.
+
+### IP Address Conflict & Solution
+1. **Initial Conflict:** Initially, the Tor virtual address network was configured to map `.onion` sites within the `10.192.0.0/10` range. However, the Colima Docker daemon dynamically allocated `10.200.1.0/24` to the containers. Because this Docker subnet mathematically falls within the `10.192.0.0/10` block, a routing loop occurred: all host packets destined for the Docker containers on ports like `9050` or `9051` were intercepted by the transparent proxy NAT rules and dropped, causing proxy failures.
+2. **Tailscale Private IP Exclusion:** Shifting the subnet to another private range like `10.123.0.0/16` resolved the port conflict, but led to connection timeouts. On macOS, Tailscale's Exit Node routing actively excludes RFC 1918 private subnets (e.g. `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`) to maintain accessibility to local LAN resources (like printers/routers). Thus, packets targeting `10.123.x.x` were dropped locally by Tailscale before reaching the gateway tunnel.
+3. **The Benchmarking Subnet Solution:** To bypass these private IP exclusions without manual static routing tables, Tor's virtual network was changed to **`198.18.0.0/15`** (reserved by RFC 2544 for benchmarking). Since this is not a private RFC 1918 range, Tailscale exit-node routing automatically encapsulates and routes all traffic destined for `198.18.0.0/15` through the tunnel to the gateway.
+4. **Transparent NAT Redirection:** The `routing-fix` sidecar applies NAT rules in the shared network namespace:
+   ```bash
+   iptables -t nat -I PREROUTING -d 198.18.0.0/15 -p tcp -j REDIRECT --to-ports 9040
+   ```
+   This intercepts all incoming TCP traffic targeting the mapped `.onion` range and transparently proxies it through Tor's transparent port (`9040`).
+
+### Exit Node Exclusions
+The gateway supports the ability to exclude specific countries from being used as exit nodes (e.g. to avoid certain jurisdictions or nodes with poor network latency). This is configured globally via the `TOR_EXCLUDE_EXIT_NODES` environment variable in `.env`, which gets dynamically appended to Tor's `ExcludeExitNodes` and strictly enforced with `StrictNodes 1`.
+

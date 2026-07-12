@@ -37,7 +37,7 @@ graph TB
                 SOCKS["tailscale\nSOCKS5\nport 1080"]
                 ADGUARD["adguardhome\nDNS sinkhole\nport 5335"]
                 ROUTINGFIX["routing-fix sidecar\nGeo-IP Blocking & Go Logger\n(writes blocked.log)"]
-                TOR["tor container\nSOCKS5: port 9050\nControl: port 9051"]
+                TOR["tor container\nSOCKS5: port 9050\nControl: port 9051\nTransparent Proxy: port 9040\nDNSPort: port 5353"]
             end
         end
 
@@ -57,10 +57,13 @@ graph TB
     TS -->|"FORWARD → tun0 (MASQUERADE)"| GLUETUN
     GLUETUN -->|"WireGuard UDP (macOS Host Egress)"| PFFIREWALL
     PFFIREWALL -->|"TCP MSS Clamped / Kill-Switch check"| CF
+    TS -->|"198.18.0.0/15 PREROUTING redirect"| TOR
+    TOR -->|"internal path / exit nodes via tun0"| GLUETUN
 
     %% DNS
     HOSTDNS -->|"UDP:53 → TCP:5354"| ADGUARD
     ADGUARD -->|"DNS upstream via tun0"| CF
+    ADGUARD -->|"onion queries → localhost:5353"| TOR
 
     %% Monitoring
     WARPWATCH -->|"docker exec warp wget cdn-cgi/trace"| GLUETUN
