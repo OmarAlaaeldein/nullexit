@@ -140,11 +140,6 @@ run_with_timeout() {
   return "$exit_status"
 }
 
-# ─── Resolve the active network service (same heuristic as toggle.sh) ──────
-resolve_active_service() {
-  get_active_service
-}
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Quick-check functions (used by --watch loop; return simple status strings)
 # Each echoes its result so the caller can capture and compare.
@@ -290,7 +285,7 @@ run_watch_loop() {
 # Begin main diagnostic (skipped in non-watch modes if we're just watching)
 # ═══════════════════════════════════════════════════════════════════════════
 
-ACTIVE_SERVICE=$(resolve_active_service)
+ACTIVE_SERVICE=$(get_active_service)
 EN0_SERVICE=$(networksetup -listnetworkserviceorder 2>> "$LOG_FILE" \
               | grep -B 1 "Device: en0" | head -1 \
               | sed -E 's/^\([0-9\*]+\) //' || true)

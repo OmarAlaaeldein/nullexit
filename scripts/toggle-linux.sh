@@ -144,25 +144,6 @@ stop_sleep_prevention() {
 
 DNS_WATCHER_PID_FILE="/tmp/nullexit-dns-watcher.pid"
 
-start_dns_watcher() {
-  local target_ip=$1
-  stop_dns_watcher
-  echo "  Starting background DNS Watcher for seamless Wi-Fi roaming..."
-  nohup bash -c "
-    trap 'exit 0' SIGTERM SIGINT SIGHUP
-    while true; do
-      if [ -n \"\$ACTIVE_SERVICE\" ]; then
-        CURRENT_DNS=\$(resolvectl dns \"\$ACTIVE_SERVICE\" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        if [ \"\$CURRENT_DNS\" != \"$target_ip\" ]; then
-          resolvectl dns \"\$ACTIVE_SERVICE\" \"$target_ip\" >/dev/null 2>&1 || true
-        fi
-      fi
-      sleep 30
-    done
-  " >> output.log 2>&1 &
-  echo $! > "$DNS_WATCHER_PID_FILE"
-}
-
 stop_dns_watcher() {
   if [ -f "$DNS_WATCHER_PID_FILE" ]; then
     local watcher_pid
@@ -310,34 +291,7 @@ disconnect_tailscale_host() {
   fi
 }
 
-# Function to get the active network service name (e.g., "Wi-Fi" or "USB 10/100 LAN")
-get_active_service() {
-  # Get the interface used for default internet routing
-  local iface
-  iface=$(ip route get 1.1.1.1 2>/dev/null | awk '{print $5; exit}')
-  if [ -z "$iface" ]; then
-    echo ""
-    return 1
-  fi
-  echo "$iface"
-}
-
 ACTIVE_SERVICE=$(get_active_service)
-
-# Resolve the service name for en0 (usually "Wi-Fi") — macOS scutil DNS resolver
-# is commonly scoped to en0, so per-service DNS changes on other interfaces are
-# ignored unless en0's service is also updated.
-# Helper to restore host DNS to a clean state (used on script start, on failure,
-# and after a successful STOP). Without this, a successful toggle-off leaves the
-# host's resolver pinned to a now-dead gateway IP — every lookup stalls for macOS's
-# DNS timeout (~5s) before falling through to whatever next server is configured.
-# With it, we always leave the host in `1.1.1.1 / no search domain`.
-reset_dns() {
-  if [ -n "$ACTIVE_SERVICE" ]; then
-    resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
-    resolvectl revert "$ACTIVE_SERVICE" 2>/dev/null || true
-  fi
-}
 
 # Helper to nuke leftover network state after teardown (proxy settings, routing
 # table, DNS cache, Wi-Fi). Prevents the "had to write a whole recovery script"
@@ -372,141 +326,6 @@ cleanup_network_state() {
   sleep 3
 
   echo "Network state cleanup complete."
-}
-
-# ─── SOCKS5 Proxy (WARP Tunnel) ────────────────────────────────────────────
-# When Tailscale's exit node can't route through WARP (due to userspace
-# forwarding), we use a SOCKS5 proxy running inside the warp container's
-# network namespace. Connections created by this proxy go through the
-# kernel routing table (table 200 -> tun0 -> WARP), unlike Tailscale's
-# userspace exit node which bypasses it.
-#
-# The SOCKS5 proxy is exposed on localhost:${SOCKS_PROXY_PORT} via Docker port mapping.
-# We route system TCP traffic through the proxy, which then goes through WARP.
-#
-# IMPORTANT: CLI tools like curl do NOT respect macOS system proxy settings.
-# They must use --socks5-hostname or the ALL_PROXY env variable explicitly.
-
-enable_socks_proxy() {
-  local svc="$1"
-  echo "  (Linux global SOCKS proxy configuration is desktop-environment specific, skipping.)"
-  echo "  SOCKS5 proxy is active and listening on 127.0.0.1:$SOCKS_PROXY_PORT"
-}
-
-disable_socks_proxy() {
-  local svc="$1"
-  echo "  (Linux global SOCKS proxy configuration skipped.)"
-}
-
-# ─── Local DNS Proxy (Python) ───────────────────────────────────────────────
-# When the tailnet data plane cannot establish, we use a Python DNS proxy.
-# It listens on UDP:53, receives DNS queries, forwards them over TCP to
-# AdGuard at 127.0.0.1:${DNS_PROXY_PORT} (Docker port mapping), and returns the response.
-# The Python script handles the DNS-over-TCP wire format (2-byte length prefix)
-# correctly — unlike socat which just forwards raw bytes.
-#
-# Python3 is built into macOS — no external dependencies.
-DNS_PROXY_PID=""
-
-# Kill any leftover DNS proxy process
-stop_local_dns_proxy() {
-  if [ -n "$DNS_PROXY_PID" ]; then
-    kill "$DNS_PROXY_PID" 2>/dev/null || true
-    wait "$DNS_PROXY_PID" 2>/dev/null || true
-    DNS_PROXY_PID=""
-  fi
-  # Clean up any stale Python DNS proxy processes
-  sudo -n pkill -f "dns-proxy.py" 2>/dev/null || true
-}
-
-# Start local DNS proxy (Python)
-start_local_dns_proxy() {
-  if [ -z "$DNS_PROXY_BIN" ]; then
-    echo "  Python not found. Python3 is built into macOS — this shouldn't happen."
-    return 1
-  fi
-
-  if [ ! -f "$DNS_PROXY_SCRIPT" ]; then
-    echo "  DNS proxy script not found at $DNS_PROXY_SCRIPT"
-    return 1
-  fi
-
-  # Kill any leftover process first
-  stop_local_dns_proxy
-
-  echo -n "  Starting local DNS proxy via Python (UDP:53 → TCP:${DNS_PROXY_PORT})... "
-  sudo -n bash -c "TARGET_PORT=$DNS_PROXY_PORT \"$DNS_PROXY_BIN\" \"$DNS_PROXY_SCRIPT\"" &
-  DNS_PROXY_PID=$!
-  disown "$DNS_PROXY_PID" 2>/dev/null || true
-
-  # Give it a moment to bind
-  sleep 0.5
-
-  if kill -0 "$DNS_PROXY_PID" 2>/dev/null; then
-    echo "started (PID $DNS_PROXY_PID)."
-
-    # Hijack host DNS to localhost
-    echo -n "  Hijacking host DNS to 127.0.0.1 for ad-blocking... "
-    resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
-    resolvectl domain "$ACTIVE_SERVICE" "" 2>/dev/null || true
-    if ! sudo -n resolvectl dns "$ACTIVE_SERVICE" 127.0.0.1; then
-      echo "FAILED (resolvectl error — check permissions)."
-      stop_local_dns_proxy
-      return 1
-    fi
-    resolvectl dns "$ACTIVE_SERVICE" 127.0.0.1 2>/dev/null || true
-    sudo -n resolvectl flush-caches 2>/dev/null || true
-
-    # Verify DNS actually works through the proxy
-    echo -n "  Verifying DNS resolution... "
-    if dig @127.0.0.1 google.com +short +timeout=5 &>/dev/null; then
-      echo "ok."
-      return 0
-    else
-      echo "FAILED (DNS queries not reaching AdGuard)."
-      echo "  Restoring DNS to 1.1.1.1..."
-      reset_dns
-      stop_local_dns_proxy
-      return 1
-    fi
-  else
-    echo "FAILED (could not bind port 53 — is it in use?)."
-    DNS_PROXY_PID=""
-    return 1
-  fi
-}
-
-# Helper to FORCIBLY hijack host DNS to a single server (the gateway's AdGuard IP)
-# and VERIFY via `networksetup -getdnsservers` that the only name server is exactly
-# $1. Returns 0 iff the live state matches; non-zero if it can't be confirmed.
-#
-# This deliberately does NOT append a 1.1.1.1 fallback: macOS's resolver queries
-# the list in order and falls back to the next entry on timeout, so on a
-# misbehaving AdGuard (filter compile crash, OOM kill, etc.) the resolver still
-# leaks to 1.1.1.1 and silently bypasses ad-blocking. With no fallback, a broken
-# gateway manifests as a *visible* DNS outage that prompts the user to
-# investigate — which is the correct failure mode.
-force_dns_to_gateway() {
-  local target_ip="$1"
-  
-  for attempt in {1..3}; do
-    echo -n "  [force_dns] Attempt $attempt/3: setting DNS to $target_ip on $ACTIVE_SERVICE... "
-    sudo -n resolvectl domain "$ACTIVE_SERVICE" "~ts.net" 2>/dev/null || true
-    if ! sudo -n resolvectl dns "$ACTIVE_SERVICE" "$target_ip"; then
-      echo "FAILED (resolvectl error)"
-    else
-      # Verify
-      entries=$(resolvectl dns "$ACTIVE_SERVICE" 2>> output.log | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+')
-      if [ "$entries" == "$target_ip" ]; then
-        echo "VERIFIED"
-        return 0
-      else
-        echo "MISMATCH (Resolver refused lock)"
-      fi
-    fi
-    sleep 2
-  done
-  return 1
 }
 
 # Ensure DNS is set to 1.1.1.1 immediately at script start to prevent any DNS deadlocks/hangs
