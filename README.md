@@ -229,7 +229,7 @@ Optional `.env` settings (common subset; the full canonical table lives in `devr
 ### Linux — `scripts/toggle-linux.sh`
 ```bash
 ./scripts/toggle-linux.sh   # toggle ON/OFF
-./scripts/recover-linux.sh  # recovery tool
+./recover.sh                # recovery tool (cross-platform)
 ```
 
 ### Sleep Prevention (macOS)

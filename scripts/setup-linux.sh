@@ -29,7 +29,7 @@ cat <<EOF > "Recover Gateway.desktop"
 Version=1.0
 Name=Recover Gateway
 Comment=Emergency DNS and Network Recovery
-Exec=bash -c "cd '$DIR' && ./scripts/recover-linux.sh; read -p 'Press Enter to close...' dummy"
+Exec=bash -c "cd '$DIR' && ./recover.sh; read -p 'Press Enter to close...' dummy"
 Icon=utilities-terminal
 Terminal=true
 Type=Application

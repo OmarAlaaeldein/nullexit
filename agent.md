@@ -189,18 +189,12 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ---
 
-### scripts/recover-linux.sh (257 lines, 10KB)
+### recover.sh — Linux path (unified into the root cross-platform script)
 
-**Functions (6 total):**
-
-| # | Function | Line | Purpose |
-|---|----------|------|---------|
-| 1 | `step()` | L24 | Print formatted step header |
-| 2 | `ok()` | L25 | Print green success message |
-| 3 | `warn()` | L26 | Print yellow warning message |
-| 4 | `fail()` | L27 | Print red failure message |
-| 5 | `die()` | L28 | Print red error + exit 1 |
-| 6 | `run_with_timeout()` | L33 | Simplified timeout (immediate SIGKILL, no PID tracking) |
+Linux recovery is no longer a separate file. `scripts/recover-linux.sh` was
+merged into the repo-root `recover.sh`, which dispatches on `$OSTYPE`: the Linux
+branch runs a self-contained teardown (resolvectl / nmcli / ip) and exits before
+the macOS dual-mode body. All formatting/timeout helpers come from `common.sh`.
 
 ---
 

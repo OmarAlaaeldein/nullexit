@@ -763,6 +763,53 @@ reset_dns() {
   fi
 }
 
+# Verify basic direct-internet connectivity after a recovery/teardown: DNS via
+# 1.1.1.1, then HTTP (curl) or ping to 1.1.1.1. Sets the global INTERNET_OK to
+# "true" on any successful check (callers read $INTERNET_OK in their summary).
+# Always returns 0 so a bare call can't trip `set -e`. Used by recover.sh's macOS
+# and Linux recovery paths (extracted from a formerly-duplicated block).
+verify_internet_connectivity() {
+  step "Verifying internet connectivity"
+
+  # Wait a moment for the network to settle
+  sleep 2
+
+  INTERNET_OK=false
+
+  # Try DNS resolution first
+  if host -W 3 google.com 1.1.1.1 >> output.log 2>&1; then
+    ok "DNS resolution works (google.com via 1.1.1.1)"
+    INTERNET_OK=true
+  elif nslookup google.com 1.1.1.1 >> output.log 2>&1; then
+    ok "DNS resolution works (nslookup google.com via 1.1.1.1)"
+    INTERNET_OK=true
+  else
+    warn "DNS resolution check failed — will still try ping/curl"
+  fi
+
+  # Try actual HTTP connectivity
+  if command -v curl >> output.log 2>&1; then
+    if curl -sf --max-time 5 https://1.1.1.1 >> output.log 2>&1; then
+      ok "Internet reachable via HTTP"
+      INTERNET_OK=true
+    elif curl -sf --max-time 5 http://1.1.1.1 >> output.log 2>&1; then
+      ok "Internet reachable via HTTP (plain)"
+      INTERNET_OK=true
+    else
+      warn "HTTP check failed"
+    fi
+  elif command -v ping >> output.log 2>&1; then
+    if ping -c 1 -W 3 1.1.1.1 >> output.log 2>&1; then
+      ok "Internet reachable via ping"
+      INTERNET_OK=true
+    else
+      warn "Ping check failed"
+    fi
+  fi
+
+  return 0
+}
+
 # ─── Local DNS Proxy (Python) ───────────────────────────────────────────────
 # When the tailnet data plane cannot establish, we use a Python DNS proxy.
 # It listens on UDP:53, receives DNS queries, forwards them over TCP to

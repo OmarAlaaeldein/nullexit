@@ -141,7 +141,7 @@ start_sleep_prevention() {
   # Run systemd-inhibit wrapped in a bash trap to prevent idle system sleep.
   # Critically, this traps shutdown signals (SIGTERM) and automatically
   # flushes hijacked DNS back to normal right before the PC powers off.
-  # We do not use recover-linux.sh here because it is a heavy recovery script
+  # We do not use recover.sh here because it is a heavy recovery script
   # which takes too long and gets terminated before it can reset the DNS. Instead,
   # we surgically and instantly restore normal DNS settings here.
   nohup bash -c "
@@ -175,7 +175,7 @@ stop_sleep_prevention() {
   if [ -f "$PID_FILE" ]; then
     local caffe_pid
     caffe_pid=$(cat "$PID_FILE")
-    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o command= 2>/dev/null | grep -q -E "systemd-inhibit|recover-linux.sh"; then
+    if [ -n "$caffe_pid" ] && kill -0 "$caffe_pid" 2>/dev/null && ps -p "$caffe_pid" -o command= 2>/dev/null | grep -q -E "systemd-inhibit|recover.sh"; then
       echo "  Stopping system sleep prevention (systemd-inhibit wrapper PID $caffe_pid)..."
       kill "$caffe_pid" 2>/dev/null || true
     fi
