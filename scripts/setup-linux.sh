@@ -17,7 +17,7 @@ cat <<EOF > "Toggle Gateway.desktop"
 Version=1.0
 Name=Toggle Gateway
 Comment=Start or Stop Nullexit Gateway
-Exec=bash -c "cd '$DIR' && ./scripts/toggle-linux.sh; read -p 'Press Enter to close...' dummy"
+Exec=bash -c "cd '$DIR' && ./toggle.sh; read -p 'Press Enter to close...' dummy"
 Icon=utilities-terminal
 Terminal=true
 Type=Application
@@ -55,5 +55,5 @@ fi
 
 echo -e "${BOLD}To toggle the gateway on/off:${NC}"
 echo "  Linux: double-click the 'Toggle Gateway' desktop icon!"
-echo "  (or run ./scripts/toggle-linux.sh in terminal)"
+echo "  (or run ./toggle.sh in terminal)"
 echo ""

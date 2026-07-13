@@ -18,7 +18,6 @@ PRIORITY_FILES = [
     'toggle.sh',
     'recover.sh',
     'setup.sh',
-    'scripts/toggle-linux.sh',
     'scripts/setup-linux.sh',
     'docker-compose.yml',
     'scripts/common.sh',

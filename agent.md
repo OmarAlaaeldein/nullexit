@@ -150,42 +150,14 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ## Part 2: Linux Scripts
 
-### scripts/toggle-linux.sh (931 lines, 39KB)
+### toggle.sh — Linux path (unified into the root cross-platform script)
 
-**Functions (17 total):**
-
-| # | Function | Line | Purpose |
-|---|----------|------|---------|
-| 1 | `run_with_timeout()` | L19 | Runs command with timeout watchdog, kills on expiry |
-| 2 | `run_gui_cmd()` | L57 | ⚠️ macOS code — uses `stat -f '%Su' /dev/console`, DEAD CODE on Linux |
-| 3 | `start_sleep_prevention()` | L74 | Uses `systemd-inhibit` (Linux) to block sleep |
-| 4 | `stop_sleep_prevention()` | L116 | Kills sleep prevention process via PID file |
-| 5 | `start_dns_watcher()` | L130 | Background daemon polling DNS every 30s, re-hijacks if changed |
-| 6 | `stop_dns_watcher()` | L149 | Kills DNS watcher process via PID file |
-| 7 | `cleanup_handler()` | L162 | Trap handler for ERR/INT/TERM/HUP — restores DNS, kills bg processes |
-| 8 | `disconnect_tailscale_host()` | L273 | Disconnects host Tailscale from mesh |
-| 9 | `get_active_service()` | L283 | Gets active network interface via `ip route` (Linux) |
-| 10 | `reset_dns()` | L304 | Restores DNS via `resolvectl revert` (Linux) |
-| 11 | `cleanup_network_state()` | L314 | Flushes DNS cache, routes, power-cycles network interface |
-| 12 | `enable_socks_proxy()` | L361 | Stub — prints message that Linux global SOCKS is DE-specific |
-| 13 | `disable_socks_proxy()` | L367 | Stub — prints skip message |
-| 14 | `stop_local_dns_proxy()` | L383 | Kills Python DNS proxy processes |
-| 15 | `start_local_dns_proxy()` | L394 | Starts Python DNS proxy (UDP:53 → TCP:5354) + hijacks DNS |
-| 16 | `force_dns_to_gateway()` | L461 | 3-attempt loop to set + verify DNS via `resolvectl` |
-| 17 | `is_gateway_active()` | L495 | Checks if containers running or DNS was hijacked |
-
-**Shared constants with macOS toggle.sh:**
-
-| Constant | Value | Both |
-|----------|-------|------|
-| `SOCKS_PROXY_PORT` | `1080` | toggle-linux L359, toggle.sh L661 |
-| `PID_FILE` | `/tmp/nullexit-caffeinate.pid` | toggle-linux L71, toggle.sh L105 |
-| `DNS_WATCHER_PID_FILE` | `/tmp/nullexit-dns-watcher.pid` | toggle-linux L128, toggle.sh L169 |
-| ARP threshold | `15` devices | toggle-linux L518, toggle.sh L863 |
-| Colima memory | `0.6` (600MB) | toggle-linux L578, toggle.sh L928 |
-| Colima swap | `400MB` | toggle-linux L587, toggle.sh L937 |
-| Tailscale wait loop | `60 iterations × 1s` | toggle-linux L613, toggle.sh L1010 |
-| NoState stuck threshold | `40 consecutive` | toggle-linux L628, toggle.sh L1025 |
+The Linux toggle is no longer a separate file. `scripts/toggle-linux.sh` was
+merged into the repo-root `toggle.sh`, which dispatches on `$OSTYPE`: an early
+`if [[ "$OSTYPE" != darwin* ]]` block runs the self-contained Linux toggle
+(shuf / ss / nmcli / ip / systemd) and exits before the macOS body. The shared
+DNS/proxy/daemon primitives it used were already moved to `common.sh` in the
+`313dc32` unification, so both branches call them by the same names.
 
 ---
 
@@ -316,7 +288,7 @@ Added July 10, 2026. Called on startup and on every network state change (Listen
 
 ### Features Missing From Linux Scripts
 
-These exist in macOS toggle.sh but NOT in toggle-linux.sh:
+These exist in `toggle.sh`'s macOS branch but NOT its Linux branch:
 
 1. `write_gateway_active_marker()` / `clear_gateway_active_marker()`
 2. `restart_tailscaled_daemon()`
@@ -376,7 +348,7 @@ Extracts the heavy, duplicated installation logic shared between `setup.sh` (mac
 ### Sourcing Pattern
 - macOS root scripts (`toggle.sh`, `recover.sh`, `setup.sh`) source via:
   `source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/common.sh"`
-- Linux sibling scripts (`scripts/toggle-linux.sh`, etc.) source via:
+- Scripts under `scripts/` (`watcher.sh`, `diagnose-host-leak.sh`, etc.) source via:
   `source "$(dirname "${BASH_SOURCE[0]}")/common.sh"`
 
 ## Agent Verbs / Protocols
