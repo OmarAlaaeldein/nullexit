@@ -28,6 +28,31 @@ die()  { echo -e "\n[$(date '+%Y-%m-%d %H:%M:%S')]   ${RED}✗ $*${NC}\n"; exit 
 
 # ─── Helper Functions ────────────────────────────────────────────────────────
 
+# Append a timestamped line to output.log (best-effort; never fails the caller).
+# Used to record lifecycle breadcrumbs (EXEC/EXIT markers, phase changes) so a
+# START/STOP that is killed or window-closed still leaves a retraceable trail.
+log_line() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "${LOG_FILE:-output.log}" 2>/dev/null || true
+}
+
+# Run a lifecycle command with FULL observability: log the command, stream its
+# combined stdout+stderr to the terminal AND append it to output.log via tee,
+# then log the exit code explicitly. Returns the command's real exit code (not
+# tee's). This closes the blind spot where `docker compose up` / `colima start`
+# printed only to the terminal — so when they fail (or the run is interrupted),
+# output.log shows exactly what the last command was and whether it succeeded.
+#
+# Usage:  run_logged docker compose up -d --build
+run_logged() {
+  local logf="${LOG_FILE:-output.log}"
+  log_line "EXEC: $*"
+  # PIPESTATUS[0] is the command's exit code; tee (PIPESTATUS[1]) is ignored.
+  "$@" 2>&1 | tee -a "$logf"
+  local rc=${PIPESTATUS[0]}
+  log_line "EXIT $rc: $*"
+  return "$rc"
+}
+
 # Pure-bash timeout (no dependency on GNU coreutils' timeout)
 # Runs a command with a safety cutoff so a wedged daemon can't hang the script.
 run_with_timeout() {

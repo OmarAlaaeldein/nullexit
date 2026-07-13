@@ -25,6 +25,48 @@ if [ -f "$LOG_FILE" ]; then
   fi
 fi
 
+# --- LIFECYCLE PHASE TRACKING + EXIT BREADCRUMB ---
+# TOGGLE_PHASE is updated as the script moves through STARTUP/STOP/START so that
+# if the process is killed (window closed, pkill, OOM) or exits with an error,
+# the EXIT trap records the final exit code AND the phase it died in. Previously
+# an interrupted START left output.log ending abruptly after the teardown with no
+# indication of what failed — this makes every exit traceable.
+TOGGLE_PHASE="init"
+_log_exit_breadcrumb() {
+  local rc=$?
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] toggle.sh EXIT: code=$rc phase=$TOGGLE_PHASE (pid $$)" >> "$LOG_FILE" 2>/dev/null || true
+}
+trap '_log_exit_breadcrumb' EXIT
+
+# --- DEBUG TRACE (opt-in via .env: DEBUG_TRACE=true) ---
+# When enabled, mirror a full command-by-command xtrace to output.log for a
+# complete post-mortem trail (e.g. a race during --restart while Wi-Fi is
+# re-associating). Off by default. Read directly from .env here because
+# common.sh (read_env_var) isn't sourced yet.
+#
+# BASH_XTRACEFD (send xtrace to its own fd, keeping the terminal clean) needs
+# bash >= 4.1. macOS ships /bin/bash 3.2, so we branch: on 4.1+ we wire xtrace
+# to a dedicated log fd; on 3.2 we fall back to duplicating stderr to the log
+# via `tee` for the traced region. Either way we NEVER use the `exec {var}>>`
+# dynamic-fd form (also 4.1+), which would hard-fail on 3.2.
+DEBUG_TRACE=$(grep -E '^DEBUG_TRACE=' .env 2>/dev/null | cut -d'=' -f2- | tr -d "\"'" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+if [ "$DEBUG_TRACE" = "true" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG_TRACE enabled — xtrace mirrored to output.log (bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})" >> "$LOG_FILE"
+  # Timestamped, location-aware xtrace prompt (works on 3.2 and 4.x).
+  export PS4='+ [$(date "+%H:%M:%S")] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+  if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    # bash >= 4.1: dedicate fd 9 to the log and point xtrace at it (terminal stays clean).
+    exec 9>>"$LOG_FILE"
+    export BASH_XTRACEFD=9
+    set -x
+  else
+    # bash 3.2 (stock macOS): BASH_XTRACEFD unsupported. Tee stderr (where xtrace
+    # goes) to the log so the trail is captured; the terminal still shows it too.
+    exec 2> >(tee -a "$LOG_FILE" >&2)
+    set -x
+  fi
+fi
+
 # --- MAIN EXECUTION LOGGING ---
 echo -e "\n========================================================" >> "$LOG_FILE"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] toggle.sh invoked" >> "$LOG_FILE"
@@ -609,6 +651,7 @@ echo "Checking Gateway Status..."
 HIJACK_HOST=$(read_env_var GATEWAY_HIJACK_HOST | tr '[:upper:]' '[:lower:]')
 
 if is_gateway_active; then
+  TOGGLE_PHASE="stop"
   echo -e "\n=============================================="
   echo "Gateway is RUNNING. Stopping it now..."
   echo -e "==============================================\n"
@@ -620,7 +663,7 @@ if is_gateway_active; then
   fi
 
   echo "Stopping Docker containers..."
-  docker compose down --remove-orphans -t 30
+  run_logged docker compose down --remove-orphans -t 30
   
   # Only stop Colima if the user explicitly opted in (false by default) to prevent breaking their other Docker dev projects
   STOP_COLIMA=$(read_env_var STOP_COLIMA_ON_EXIT | tr '[:upper:]' '[:lower:]')
@@ -654,6 +697,7 @@ if is_gateway_active; then
   ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
   echo -e "\nGateway has been successfully STOPPED in ${ELAPSED} seconds."
 else
+  TOGGLE_PHASE="start"
   START_GATEWAY=true
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Action: STARTUP GATEWAY" >> "$LOG_FILE"
   echo -e "\n=============================================="
@@ -682,7 +726,7 @@ else
       fi
     fi
     echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address, $colima_network_mode)..."
-    run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode "$colima_network_mode"
+    run_logged run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode "$colima_network_mode"
     echo "$colima_network_mode" > /tmp/nullexit_colima_mode.txt
   else
     echo "Colima is already running."
@@ -748,8 +792,8 @@ else
   echo "  [Security] Honey-Port Tripwire armed on random port to detect malware port-scans."
   
   echo -e "\nStarting Docker containers..."
-  docker compose up -d --build
-  
+  run_logged docker compose up -d --build
+
   # Log the output of the rule compiler for debugging before removing it
   docker compose logs rule-compiler >> output.log 2>&1
   # Clean up the one-off rule compiler container so it doesn't clutter the Docker UI

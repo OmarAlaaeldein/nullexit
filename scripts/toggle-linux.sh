@@ -4,6 +4,41 @@
 
 set -e
 
+# Define log file (used by the lifecycle breadcrumb + run_logged helper)
+LOG_FILE="$PWD/output.log"
+
+# --- LIFECYCLE PHASE TRACKING + EXIT BREADCRUMB ---
+# TOGGLE_PHASE is updated as the script moves through STOP/START so that if the
+# process is killed (terminal closed, pkill, OOM) or exits on error, the EXIT
+# trap records the final exit code AND the phase it died in — making an
+# interrupted START traceable in output.log instead of ending abruptly.
+TOGGLE_PHASE="init"
+_log_exit_breadcrumb() {
+  local rc=$?
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] toggle-linux.sh EXIT: code=$rc phase=$TOGGLE_PHASE (pid $$)" >> "$LOG_FILE" 2>/dev/null || true
+}
+trap '_log_exit_breadcrumb' EXIT
+
+# --- DEBUG TRACE (opt-in via .env: DEBUG_TRACE=true) ---
+# When enabled, mirror a full command-by-command xtrace to output.log. Off by
+# default. Read directly from .env because common.sh (read_env_var) isn't
+# sourced yet. Branch on bash version: BASH_XTRACEFD needs >= 4.1 (Linux
+# usually has bash 5); fall back to teeing stderr on older bash. We never use
+# the `exec {var}>>` dynamic-fd form (4.1+ only).
+DEBUG_TRACE=$(grep -E '^DEBUG_TRACE=' .env 2>/dev/null | cut -d'=' -f2- | tr -d "\"'" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+if [ "$DEBUG_TRACE" = "true" ]; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG_TRACE enabled — xtrace mirrored to output.log (bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})" >> "$LOG_FILE"
+  export PS4='+ [$(date "+%H:%M:%S")] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+  if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    exec 9>>"$LOG_FILE"
+    export BASH_XTRACEFD=9
+    set -x
+  else
+    exec 2> >(tee -a "$LOG_FILE" >&2)
+    set -x
+  fi
+fi
+
 # --- PROCEDURAL PORT GENERATION ---
 # To prevent static port fingerprinting by malware, we randomize exposed ports
 # on every boot and persist them to a hidden environment file.
@@ -360,6 +395,7 @@ reset_dns
 
 echo "Checking Gateway Status..."
 if is_gateway_active; then
+  TOGGLE_PHASE="stop"
   echo -e "\n=============================================="
   echo "Gateway is RUNNING. Stopping it now..."
   echo -e "==============================================\n"
@@ -369,7 +405,7 @@ if is_gateway_active; then
   echo ""
 
   echo "Stopping Docker containers..."
-  docker compose down -t 5
+  run_logged docker compose down -t 5
   
   echo -e "\nDocker daemon handles container teardown automatically."
 
@@ -392,6 +428,7 @@ if is_gateway_active; then
   ELAPSED=$(( SECONDS - TOGGLE_START_TIME ))
   echo -e "\nGateway has been successfully STOPPED in ${ELAPSED} seconds."
 else
+  TOGGLE_PHASE="start"
   echo -e "\n=============================================="
   echo "Gateway is STOPPED. Starting it now..."
   echo -e "==============================================\n"
@@ -430,8 +467,8 @@ else
   echo "  [Security] Honey-Port Tripwire armed on random port to detect malware port-scans."
 
   echo -e "\nStarting Docker containers..."
-  docker compose up -d
-  
+  run_logged docker compose up -d
+
   # Clean up the one-off rule compiler container so it doesn't clutter the Docker UI
   docker compose rm -s -f rule-compiler >> output.log 2>&1
 
