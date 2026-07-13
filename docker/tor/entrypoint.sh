@@ -4,7 +4,9 @@ set -e
 TORRC="/etc/tor/torrc"
 mkdir -p /etc/tor /var/lib/tor
 
-# Base configuration (SOCKS proxy on 9050, Control port on 9051, strictly localhost/container boundaries)
+# Base configuration: SOCKS 9050, Control 9051, TransPort 9040, DNSPort 5353 — all bound to
+# 0.0.0.0 (required for Docker/Colima host port-mapping). The ControlPort is secured via a
+# dynamic HashedControlPassword (added below when TOR_PASSWORD is set); see devref.md §15.10.2.
 cat <<EOF > $TORRC
 SocksPort 0.0.0.0:9050
 ControlPort 0.0.0.0:9051

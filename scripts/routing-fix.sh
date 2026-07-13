@@ -74,7 +74,7 @@ add_fwd_related_established
 #
 # LAN P2P is controlled by two sources (in priority order):
 #   1. /app/.lan_p2p_detected — written by watcher.sh on macOS on every network change
-#      using airport -I (802.1x detection) + AP isolation probe. Overrides .env.
+#      using system_profiler SPAirPortDataType (802.1x detection) + AP isolation probe. Overrides .env.
 #   2. TAILSCALE_ALLOW_LAN_P2P env var (from .env) — static fallback.
 # When disabled, we explicitly DROP local RFC1918-destined Tailscale UDP so the
 # phone cleanly falls back to DERP rather than getting poisoned by macOS gvproxy SNAT.

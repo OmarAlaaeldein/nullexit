@@ -229,7 +229,8 @@ trap 'cleanup_handler HUP' HUP
 
 # ─── NOPASSWD sudo ──────────────────────────────────────────────────────────
 # The user has NOPASSWD in /etc/sudoers.d/nullexit for the specific commands
-# needed (networksetup, dnsmasq, dscacheutil, killall, pkill, socat).
+# needed (resolvectl, ip, systemctl, systemd-inhibit, pkill, and
+# python3 scripts/dns-proxy.py for the fallback DNS proxy).
 # All privileged calls below use `sudo -n` which will run without prompting.
 # No credential caching loop is needed.
 

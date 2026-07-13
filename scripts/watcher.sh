@@ -119,7 +119,7 @@ fi
 
 # ─── LAN P2P Auto-Detection ────────────────────────────────────────────────
 # Detects whether the current network allows safe Tailscale LAN P2P by:
-#   1. Checking WPA2-Enterprise (802.1x) via airport -I — always forces P2P=false
+#   1. Checking WPA2-Enterprise (802.1x) via system_profiler SPAirPortDataType — always forces P2P=false
 #      because enterprise networks almost universally have AP Client Isolation.
 #   2. AP Isolation probe — sends a broadcast ping and checks if ANY LAN host responds.
 #      If no LAN hosts respond on a non-empty network, AP Isolation is active.
