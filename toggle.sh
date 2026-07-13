@@ -16,12 +16,16 @@ fi
 # Define log file
 LOG_FILE="$PWD/output.log"
 
-# Rotate log file if it exceeds 50MB (52428800 bytes)
+# Rotate log file if it exceeds 1GB (1073741824 bytes).
+# Sized large on purpose: with DEBUG_TRACE the log holds a full command-by-command
+# trace — effectively the entire compilation/warning history of the framework —
+# which is valuable to keep for post-mortems. Raised from 50MB so always-on
+# tracing doesn't churn that history away prematurely.
 if [ -f "$LOG_FILE" ]; then
   log_size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo 0)
-  if [ "$log_size" -gt 52428800 ]; then
+  if [ "$log_size" -gt 1073741824 ]; then
     mv "$LOG_FILE" "${LOG_FILE}.old" 2>/dev/null || rm -f "$LOG_FILE"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log file exceeded 50MB; rotated to output.log.old" > "$LOG_FILE"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log file exceeded 1GB; rotated to output.log.old" > "$LOG_FILE"
   fi
 fi
 
