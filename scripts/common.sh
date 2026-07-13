@@ -127,6 +127,71 @@ is_gateway_active() {
   return 1
 }
 
+# Decide whether the gateway SHOULD be running, from persisted *intent* rather
+# than a live health probe. This is the correct signal for toggle.sh's
+# STOP-vs-START decision: a disable should tear down whatever the last START
+# left behind — it should NOT depend on whether Docker/Colima happens to be
+# reachable right now.
+#
+# Why this exists: using is_gateway_active() for the decision means every toggle
+# (including *disable*) runs `docker compose ps` first. When Colima is down the
+# socket is absent, that call blocks for the full run_with_timeout window, and
+# under `set -e` + the ERR trap a non-zero result at the `if … then … else … fi`
+# boundary could abort the script BEFORE the START body runs — so the very path
+# that would boot Colima never executed (observed as `EXIT: code=1 phase=start`).
+#
+# Signal source: MARKER_FILE is written at the end of a successful START
+# (write_gateway_active_marker) and cleared at the top of STOP and in
+# cleanup_handler. Reading it is instant and cannot hang or abort.
+#
+# ECHOES "running" or "stopped" to stdout (and ALWAYS returns 0). Callers read
+# the string:  [ "$(gateway_state)" = "running" ] && …
+#
+# CRITICAL — why this echoes instead of using a 0/1 return code: on macOS
+# /bin/bash 3.2, with `set -e` + an `ERR` trap + `set -x` (DEBUG_TRACE=true) all
+# active, a function that does `return 1` triggers a SPURIOUS `set -e` abort in
+# the caller even when the call is guarded (`if f; then`, or even `f || rc=$?`).
+# The `return N` from the function, traced by `set -x`, trips the ERR trap. This
+# is a genuine bash-3.2 interaction (see devref §15.11.8). Echoing a result and
+# always returning 0 sidesteps `return`/`set -e`/`set -x` entirely — the function
+# can never contribute a non-zero status, so no caller can be aborted by it.
+gateway_state() {
+  # Primary: persisted intent. Marker present => a START completed and no STOP
+  # has cleared it yet.
+  #
+  # NOTE: toggle.sh runs a "defensive stale-marker clear" near the top of every
+  # invocation (before this decision) to stop the wake-watcher firing against a
+  # crashed gateway. That would wipe the marker before we read it, so toggle.sh
+  # captures the marker's existence into GATEWAY_MARKER_AT_STARTUP *before* that
+  # clear and we honor it here. If the variable is unset (other callers, or the
+  # --restart pre-check which runs before the defensive clear), fall back to the
+  # live marker file.
+  if [ -n "${GATEWAY_MARKER_AT_STARTUP:-}" ]; then
+    if [ "$GATEWAY_MARKER_AT_STARTUP" = "yes" ]; then echo "running"; return 0; fi
+  elif [ -f "$MARKER_FILE" ]; then
+    echo "running"; return 0
+  fi
+
+  # Marker absent. Normally this means "stopped". But cover the edge case where
+  # the marker was lost (e.g. /tmp cleared, or gateway started by an older build)
+  # yet containers are genuinely up — reconcile via is_gateway_active, but ONLY
+  # when Docker is actually reachable, so a dead-socket probe can never hang. On
+  # macOS Docker runs in the Colima VM; if that socket is absent, the gateway
+  # definitively is not running.
+  local docker_up="no"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    if [ -S /var/run/docker.sock ] || [ -S "$HOME/.colima/default/docker.sock" ]; then docker_up="yes"; fi
+  else
+    if [ -S /var/run/docker.sock ]; then docker_up="yes"; fi
+  fi
+
+  if [ "$docker_up" = "yes" ] && is_gateway_active; then
+    echo "running"; return 0
+  fi
+  echo "stopped"
+  return 0
+}
+
 # Reads an environment variable from a file (default: .env), strips quotes and whitespace
 read_env_var() {
   local var_name="$1"

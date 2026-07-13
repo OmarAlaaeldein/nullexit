@@ -49,24 +49,31 @@ trap '_log_exit_breadcrumb' EXIT
 # common.sh (read_env_var) isn't sourced yet.
 #
 # BASH_XTRACEFD (send xtrace to its own fd, keeping the terminal clean) needs
-# bash >= 4.1. macOS ships /bin/bash 3.2, so we branch: on 4.1+ we wire xtrace
-# to a dedicated log fd; on 3.2 we fall back to duplicating stderr to the log
-# via `tee` for the traced region. Either way we NEVER use the `exec {var}>>`
-# dynamic-fd form (also 4.1+), which would hard-fail on 3.2.
+# bash >= 4.1. macOS ships /bin/bash 3.2, so we branch:
+#   - bash >= 4.1 (e.g. Linux): dedicate fd 9 to the log and point xtrace there;
+#     the terminal stays clean and normal stderr is untouched.
+#   - bash 3.2 (stock macOS): BASH_XTRACEFD is unsupported, so xtrace always goes
+#     to stderr. We redirect stderr *straight to the log file* with a plain
+#     `exec 2>>"$LOG_FILE"`. This deliberately does NOT use a process
+#     substitution (`2> >(tee …)`): under `set -e`, stderr flowing through the
+#     backgrounded `tee` proved to abort the script mid-START on 3.2 (a failed
+#     write / SIGPIPE in a pipeline returned non-zero and tripped `set -e`, with
+#     $LINENO mis-blaming the enclosing `fi` — see devref §15.11.8-A/E). The
+#     tradeoff: on 3.2 the terminal no longer shows live progress while tracing
+#     (everything is in output.log instead). Acceptable for an opt-in debug mode.
+# We NEVER use the `exec {var}>>` dynamic-fd form (4.1+ only), which hard-fails on 3.2.
 DEBUG_TRACE=$(grep -E '^DEBUG_TRACE=' .env 2>/dev/null | cut -d'=' -f2- | tr -d "\"'" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 if [ "$DEBUG_TRACE" = "true" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG_TRACE enabled — xtrace mirrored to output.log (bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})" >> "$LOG_FILE"
   # Timestamped, location-aware xtrace prompt (works on 3.2 and 4.x).
   export PS4='+ [$(date "+%H:%M:%S")] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
-    # bash >= 4.1: dedicate fd 9 to the log and point xtrace at it (terminal stays clean).
     exec 9>>"$LOG_FILE"
     export BASH_XTRACEFD=9
     set -x
   else
-    # bash 3.2 (stock macOS): BASH_XTRACEFD unsupported. Tee stderr (where xtrace
-    # goes) to the log so the trail is captured; the terminal still shows it too.
-    exec 2> >(tee -a "$LOG_FILE" >&2)
+    # bash 3.2 (stock macOS): plain stderr→file redirect (no process substitution).
+    exec 2>>"$LOG_FILE"
     set -x
   fi
 fi
@@ -139,9 +146,11 @@ TOGGLE_START_TIME=$SECONDS
 
 if [[ "$1" == "--restart" ]]; then
   echo "Executing Gateway Restart Sequence..."
-  # We must source common.sh here temporarily to check is_gateway_active before we proceed
+  # We must source common.sh here temporarily to check gateway state before we proceed
   source "$SCRIPT_DIR/scripts/common.sh"
-  if is_gateway_active; then
+  # Use persisted intent (marker) via gateway_state, which echoes a string (never
+  # a return code) to stay set -e-safe under set -x. See devref §15.11.8.
+  if [ "$(gateway_state)" = "running" ]; then
     echo "Gateway is currently running. Stopping it first..."
     bash "$0"
     echo "Gateway stopped. Now starting it..."
@@ -205,6 +214,22 @@ clear_gateway_active_marker() {
   rm -f /tmp/nullexit-gateway-active.marker
   rm -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/TUNNEL_FAILED_CLOSED.marker"
 }
+
+# Capture whether the gateway-active marker exists BEFORE the defensive clear
+# below wipes it. The STOP-vs-START decision (gateway_should_be_running) reads
+# this captured value — persisted *intent* — instead of a live Docker probe, so
+# a disable is instant and works even when Colima/Docker is down. Must be read
+# before clear_gateway_active_marker or it would always look "stopped".
+#
+# Written as default-assign + `if` WITHOUT an `else`: under `set -e` (with the
+# DEBUG_TRACE xtrace redirect active) an `if [ -f … ]; then …; else …; fi` whose
+# condition is false was aborting the script here at init on macOS /bin/bash 3.2
+# — the false `[ -f ]` status leaked through the compound. An `if` with no `else`
+# yields status 0 when the condition is false, so nothing leaks.
+GATEWAY_MARKER_AT_STARTUP="no"
+if [ -f "$MARKER_FILE" ]; then
+  GATEWAY_MARKER_AT_STARTUP="yes"
+fi
 
 # Defensive: clear any stale marker from a prior crashed/aborted run. If a
 # previous toggle.sh wrote the marker but was OOM-killed in the middle of the
@@ -654,7 +679,14 @@ reset_dns
 echo "Checking Gateway Status..."
 HIJACK_HOST=$(read_env_var GATEWAY_HIJACK_HOST | tr '[:upper:]' '[:lower:]')
 
-if is_gateway_active; then
+# Decide STOP vs START from persisted intent (marker), not a live Docker probe.
+# This makes *disable* instant and robust even when Colima/Docker is down.
+#
+# CRITICAL (set -e + set -x on bash 3.2): gateway_state ECHOES "running"/"stopped"
+# and always returns 0, so we branch on the STRING — never on a function's exit
+# code. A helper that `return 1`s trips a spurious `set -e` abort under `set -x`
+# (DEBUG_TRACE=true) even when guarded, hence the echo contract. See devref §15.11.8.
+if [ "$(gateway_state)" = "running" ]; then
   TOGGLE_PHASE="stop"
   echo -e "\n=============================================="
   echo "Gateway is RUNNING. Stopping it now..."
@@ -667,8 +699,12 @@ if is_gateway_active; then
   fi
 
   echo "Stopping Docker containers..."
-  run_logged docker compose down --remove-orphans -t 30
-  
+  # `|| true`: a disable must always complete its teardown even if the Docker
+  # daemon / Colima VM is already down (compose down would exit non-zero and,
+  # under set -e, abort the STOP). The START path intentionally does NOT guard
+  # its `docker compose up` — a failed start SHOULD trigger cleanup.
+  run_logged docker compose down --remove-orphans -t 30 || true
+
   # Only stop Colima if the user explicitly opted in (false by default) to prevent breaking their other Docker dev projects
   STOP_COLIMA=$(read_env_var STOP_COLIMA_ON_EXIT | tr '[:upper:]' '[:lower:]')
   if [[ "$STOP_COLIMA" == "true" ]]; then

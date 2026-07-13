@@ -34,7 +34,10 @@ if [ "$DEBUG_TRACE" = "true" ]; then
     export BASH_XTRACEFD=9
     set -x
   else
-    exec 2> >(tee -a "$LOG_FILE" >&2)
+    # bash < 4.1: plain stderr→file redirect. NOT a process substitution — under
+    # set -e, xtrace flowing through a backgrounded `tee` can abort the script
+    # (failed write/SIGPIPE trips set -e). See devref §15.11.8.
+    exec 2>>"$LOG_FILE"
     set -x
   fi
 fi
@@ -96,9 +99,12 @@ TOGGLE_START_TIME=$SECONDS
 
 if [[ "$1" == "restart" ]] || [[ "$1" == "--restart" ]]; then
   echo "Executing Gateway Restart Sequence..."
-  # We must source common.sh here temporarily to check is_gateway_active before we proceed
+  # We must source common.sh here temporarily to check gateway state before we proceed
   source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
-  if is_gateway_active; then
+  # Use persisted intent via gateway_state (echoes a string, never a return code;
+  # set -e-safe under set -x — see devref §15.11.8). On Linux the marker is not
+  # maintained, so this degrades to the is_gateway_active fallback (fast — native Docker).
+  if [ "$(gateway_state)" = "running" ]; then
     echo "Gateway is currently running. Stopping it first..."
     bash "$0"
     echo "Gateway stopped. Now starting it..."
@@ -394,7 +400,10 @@ reset_dns
   fi
 
 echo "Checking Gateway Status..."
-if is_gateway_active; then
+# Decide STOP vs START from persisted intent via gateway_state, which echoes a
+# string (never a return code) to stay set -e-safe under set -x. See devref §15.11.8.
+# On Linux this falls back to is_gateway_active (fast — native Docker).
+if [ "$(gateway_state)" = "running" ]; then
   TOGGLE_PHASE="stop"
   echo -e "\n=============================================="
   echo "Gateway is RUNNING. Stopping it now..."
@@ -405,8 +414,9 @@ if is_gateway_active; then
   echo ""
 
   echo "Stopping Docker containers..."
-  run_logged docker compose down -t 5
-  
+  # `|| true`: a disable must always complete even if the Docker daemon is down.
+  run_logged docker compose down -t 5 || true
+
   echo -e "\nDocker daemon handles container teardown automatically."
 
   # The host's DNS was hijacked to the gateway IP during ENABLE; now that the
