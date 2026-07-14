@@ -226,4 +226,8 @@ web.whatsapp.com
 instagram.com
 cdninstagram.com
 static.whatsapp.net
+media-bos5-1.cdn.whatsapp.net
+media-yyz1-1.cdn.whatsapp.net
+webtp.whatsapp.net
+mmg.whatsapp.net
 
