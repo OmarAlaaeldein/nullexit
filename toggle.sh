@@ -507,7 +507,7 @@ else
   for i in {1..60}; do
     # Run tailscale status and capture its output so the user can see what's happening.
     # Previously this was hidden behind 2>> output.log, making it impossible to debug hangs.
-    ts_output=$(run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>&1 || true)
+    ts_output=$(run_with_timeout 3 docker compose exec -T tailscale tailscale status 2>&1 || true)
     
     if echo "$ts_output" | grep -q "offers exit node"; then
       connected=true
@@ -575,7 +575,7 @@ else
   # the first field of the first line.
   TS_IP=""
   if [ "$connected" = "true" ]; then
-    TS_IP=$(run_with_timeout 10 docker compose exec -T tailscale tailscale ip -4 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
+    TS_IP=$(run_with_timeout 5 docker compose exec -T tailscale tailscale ip -4 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
     if [ -n "$TS_IP" ]; then
       echo "Resolved gateway Tailscale IP dynamically: $TS_IP"
       echo "$TS_IP" > .gateway_ip
@@ -1697,17 +1697,53 @@ else
   echo "  [Security] Honey-Port Tripwire armed on random port to detect malware port-scans."
   
   echo -e "\nStarting Docker containers..."
-  # Gate `--build`: BuildKit re-checking the locally-built images on the 600MB VM
-  # costs ~30s per toggle even when every layer is CACHED (§15.8.7). Only pass
-  # --build when the hashed build inputs change or a local image is missing;
-  # otherwise reuse cached images (plain `up -d`). A real source change still
-  # rebuilds, so the §15.8.6 "updates applied on boot" guarantee is preserved.
+
+  # --- Ad-block rule compilation: hash-gated one-off, off the critical path (§15.8.8) ---
+  # The rule-compiler (a `compile`-profiled container, the SOLE writer of adguard/work)
+  # re-dedupes ~340k rules inside the 600MB VM (~28s) — far too slow to run every toggle.
+  # It is gated on a hash of the lists YOU control (black_list.txt + white_list.txt):
+  # recompile only when they change, when compiled_rules.txt / ip_blocklist.ipset are
+  # missing, or when they exceed RULES_MAX_AGE_DAYS (default 7, so the remote blocklists
+  # still refresh occasionally). Otherwise AdGuard/routing-fix boot on the existing
+  # artifacts and we skip the ~28s — they no longer `depends_on` the rule-compiler
+  # container (see docker-compose.yml). A compile failure is non-fatal: we keep the
+  # previous compiled rules rather than bricking the tunnel (ad-block != the kill-switch).
+  RULES_HASH_FILE="$SCRIPT_DIR/.rules_hash"
+  rules_hash=$(compute_rules_hash)
+  stored_rules_hash=""
+  [ -f "$RULES_HASH_FILE" ] && stored_rules_hash=$(cat "$RULES_HASH_FILE" 2>/dev/null)
+  rules_max_age_days=$(read_env_var RULES_MAX_AGE_DAYS)
+  [ -z "$rules_max_age_days" ] && rules_max_age_days=7
+  need_compile=false
+  if [ ! -f adguard/work/userfilters/compiled_rules.txt ] || [ ! -f adguard/work/userfilters/ip_blocklist.ipset ]; then
+    need_compile=true
+  elif [ -z "$rules_hash" ] || [ "$rules_hash" != "$stored_rules_hash" ]; then
+    need_compile=true
+  elif [ -n "$(find adguard/work/userfilters/compiled_rules.txt -mtime +"$rules_max_age_days" 2>/dev/null)" ]; then
+    need_compile=true
+  fi
+  if [ "$need_compile" = "true" ]; then
+    echo "  Ad-block lists changed (or artifacts missing/stale) — compiling rules (one-off, ~28s)..."
+    if run_logged docker compose run --build --rm rule-compiler >> output.log 2>&1; then
+      if [ -n "$rules_hash" ]; then echo "$rules_hash" > "$RULES_HASH_FILE"; fi
+    else
+      echo "  [!] Rule compile failed — continuing with existing compiled ad-block rules."
+    fi
+  else
+    echo "  Ad-block lists unchanged — reusing compiled rules (skipping the ~28s recompile)."
+  fi
+
+  # --- Gate `--build` for the long-running images (routing-fix, tor) ---
+  # BuildKit re-checking these on the 600MB VM costs ~30s even when every layer is
+  # CACHED (§15.8.8). Only pass --build when the hashed inputs change or an image is
+  # missing; otherwise plain `up -d` reuses cached images. `up` starts everything
+  # except the `compile`-profiled rule-compiler.
   BUILD_HASH_FILE="$SCRIPT_DIR/.build_hash"
   build_inputs_hash=$(compute_build_inputs_hash)
   stored_build_hash=""
   [ -f "$BUILD_HASH_FILE" ] && stored_build_hash=$(cat "$BUILD_HASH_FILE" 2>/dev/null)
   local_images_present=true
-  for _img in nullexit-routing-fix:v1.0.0 nullexit-rule-compiler:v1.0.0 nullexit-tor:v1.0.0; do
+  for _img in nullexit-routing-fix:v1.0.0 nullexit-tor:v1.0.0; do
     docker image inspect "$_img" >> output.log 2>&1 || local_images_present=false
   done
   if [ -n "$build_inputs_hash" ] && [ "$build_inputs_hash" = "$stored_build_hash" ] && [ "$local_images_present" = "true" ]; then
@@ -1720,11 +1756,6 @@ else
     if [ -n "$build_inputs_hash" ]; then echo "$build_inputs_hash" > "$BUILD_HASH_FILE"; fi
   fi
 
-  # Log the output of the rule compiler for debugging before removing it
-  docker compose logs rule-compiler >> output.log 2>&1
-  # Clean up the one-off rule compiler container so it doesn't clutter the Docker UI
-  docker compose rm -s -f rule-compiler >> output.log 2>&1
-  
   RULE_COUNT=$(grep "! Total Block Rules:" adguard/work/userfilters/compiled_rules.txt 2>/dev/null | awk -F': ' '{print $2}' || echo "0")
   NATIVE_COUNT=$(grep "! Native AdGuard Rules:" adguard/work/userfilters/compiled_rules.txt 2>/dev/null | awk -F': ' '{print $2}' || echo "0")
   
@@ -1766,7 +1797,7 @@ else
   for i in {1..60}; do
     # Run tailscale status and capture its output so the user can see what's happening.
     # Previously this was hidden behind 2>> output.log, making it impossible to debug hangs.
-    ts_output=$(run_with_timeout 5 docker compose exec -T tailscale tailscale status 2>&1 || true)
+    ts_output=$(run_with_timeout 3 docker compose exec -T tailscale tailscale status 2>&1 || true)
     
     if echo "$ts_output" | grep -q "offers exit node"; then
       connected=true
@@ -1834,7 +1865,7 @@ else
   # the first field of the first line.
   TS_IP=""
   if [ "$connected" = "true" ]; then
-    TS_IP=$(run_with_timeout 10 docker compose exec -T tailscale tailscale ip -4 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
+    TS_IP=$(run_with_timeout 5 docker compose exec -T tailscale tailscale ip -4 2>> output.log | tr -d '\r' | awk 'NR==1{print $1; exit}' || true)
     if [ -n "$TS_IP" ]; then
       echo "Resolved gateway Tailscale IP dynamically: $TS_IP"
       echo "$TS_IP" > .gateway_ip

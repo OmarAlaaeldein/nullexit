@@ -1510,6 +1510,22 @@ Here is the exact step-by-step of the "infinite loop" blackhole:
 
 **Result:** The Colima phase dropped from ~120s to ~12s and total `toggle.sh --restart` wall time from ~197s to ~106s, with the double-tunnel and direct host↔container P2P confirmed intact after the change. The key insight: treat "Docker is reachable" — not "the `colima start` CLI returned" — as the definition of *started*.
 
+#### 15.8.8 Toggle-On Startup Optimizations: Rule-Compiler Off the Critical Path (July 14, 2026)
+**Context:** A genuine cold toggle-on (VM bounced for RAM, WARP down) measured **95s**. Profiled per-phase with the now-fixed `DEBUG_TRACE` (§15.11.8-A): Colima cold start **19s** (near floor), `docker compose up` **45s**, tailscale connect+poll **21s**, final checks **7s**.
+
+**Two wrong hypotheses first (documented so they aren't re-tried):** (1) that BuildKit `--build` was the ~30s cost — it wasn't; every layer was already `CACHED`, so gating `--build` saved only ~2s. (2) that `docker compose exec` was slow in the poll loop — it isn't (0.18s steady-state vs 0.06s for `docker exec`); the ~5s/iteration was `tailscale status` **blocking during cold connect** and hitting the `run_with_timeout 5` cap.
+
+**Real bottleneck (evidence-backed):** the 45s `compose up` was **not** WARP. On a genuine cold start WARP goes healthy fast (tor starts right with it → no §15.8.5 same-key penalty; that only bites rapid off→on). The long pole is the **rule-compiler re-deduping ~340k rules inside the 600MB VM (~28s), every toggle** — `adguardhome` started 28s after warp because it waited on `rule-compiler: service_completed_successfully`, even though all 16 remote lists loaded from cache unchanged.
+
+**Fix — hash-gated, off the critical path (kept in-container):**
+- `rule-compiler` is now a **`compile`-profiled** service, excluded from `docker compose up`. `adguardhome` and `routing-fix` no longer `depends_on` it — they boot instantly on the `compiled_rules.txt` / `ip_blocklist.ipset` already in `./adguard/work`.
+- `toggle.sh` runs it on-demand via `docker compose run --build --rm rule-compiler`, **gated on `compute_rules_hash()`** = sha256 of `black_list.txt` + `white_list.txt` (the lists the user controls). Recompile only when that hash changes, when an artifact is missing, or when the compiled file is older than `RULES_MAX_AGE_DAYS` (default 7, so the remote blocklists still refresh occasionally). A compile failure is **non-fatal** — we keep the previous compiled rules rather than bricking the tunnel (ad-block ≠ the kill-switch).
+- Also trimmed the tailscale-connect poll timeouts (status `5s→3s`, `ip -4` `10s→5s`) to reduce overshoot.
+
+**Why NOT run the compiler natively on the Mac host (the tempting idea):** rejected on purpose. There is no Go on the host, so "native" means either `brew install go` (a host toolchain dependency that drifts the project from *portable+secure-on-any-device* toward *faster-on-mine*) or committing a prebuilt arch-specific **binary blob** you'd then have to trust/sign. Worse, it would make the **host** write into the `./adguard/work` bind-mount — violating the deliberate *"single allowed writer is the rule-compiler container"* invariant (host↔container UID/perms mismatches corrupt AdGuard's BoltDB store). Staying in-container preserves both properties; the gate delivers the speed.
+
+**Result:** unchanged toggle → `compose up` **45s → 9s**, total `--restart` **~95–106s → 63s**, with AdGuard still serving the full 342,519 rules (it reuses the existing compiled file) and the double-tunnel + direct host↔container P2P intact. Editing `black_list.txt`/`white_list.txt` flips the hash → one-off recompile → new rules take effect. Both lists were added to the `crypto.sh` signed set (they're security inputs), so editing them requires a re-sign — which is the same moment you'd want the recompile. Local state files `.build_hash` / `.rules_hash` are gitignored.
+
 ### 15.9 Permissions, Crypto & Security Hardening
 
 #### 15.9.1 Sudo Credential Caching Removed

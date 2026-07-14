@@ -122,8 +122,9 @@ services:
     depends_on:
       warp:
         condition: service_healthy
-      rule-compiler:
-        condition: service_completed_successfully
+      # rule-compiler dependency removed: it is now a hash-gated one-off run by
+      # toggle.sh before `up` (§15.8.8). This service boots on the existing
+      # compiled_rules.txt / ip_blocklist.ipset already present in ./adguard/work.
     environment:
       - TZ=America/New_York
       - WARP_ENDPOINT=${WARP_ENDPOINT_1:-162.159.192.1}
@@ -156,8 +157,9 @@ services:
     depends_on:
       warp:
         condition: service_healthy
-      rule-compiler:
-        condition: service_completed_successfully
+      # rule-compiler dependency removed: it is now a hash-gated one-off run by
+      # toggle.sh before `up` (§15.8.8). This service boots on the existing
+      # compiled_rules.txt / ip_blocklist.ipset already present in ./adguard/work.
     environment:
       - TZ=America/New_York
     healthcheck:
@@ -186,6 +188,11 @@ services:
       context: ./scripts
       dockerfile: Dockerfile.rule-compiler
     container_name: rule-compiler
+    # `compile` profile: excluded from `docker compose up`. toggle.sh runs it
+    # on-demand via `docker compose run --build --rm rule-compiler`, hash-gated on
+    # black_list.txt/white_list.txt, so ~340k rules are re-deduped only when a list
+    # actually changes instead of every toggle (~28s saved on the common path, §15.8.8).
+    profiles: ["compile"]
     volumes:
       - .:/app
 

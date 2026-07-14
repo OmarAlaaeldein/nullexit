@@ -128,27 +128,39 @@ colima_start_until_ready() {
   return 1
 }
 
-# Hash exactly the files that feed the three locally-built images (routing-fix,
-# rule-compiler, tor). toggle.sh uses this to skip `docker compose --build` when
-# nothing changed: BuildKit re-evaluating those images on the 600MB Colima VM
-# costs ~30s per toggle even when every layer is CACHED (§15.8.7). Includes the
-# Dockerfiles, everything they COPY (routing-fix.sh, tor/entrypoint.sh, the
-# logger/ and rule-compiler/ Go sources), and docker-compose.yml (build stanzas /
-# image tags). Prints a sha256 hex digest, or empty on failure (caller then builds).
+# Hash the files that feed the long-running locally-built images that `docker
+# compose up` starts (routing-fix, tor). toggle.sh uses this to skip
+# `docker compose --build` when nothing changed: BuildKit re-evaluating those
+# images on the 600MB Colima VM costs ~30s per toggle even when every layer is
+# CACHED (§15.8.8). Includes the Dockerfiles, everything they COPY (routing-fix.sh,
+# tor/entrypoint.sh, the logger/ Go source), and docker-compose.yml. The
+# rule-compiler image is NOT here — it is a `compile`-profiled one-off, built+run
+# by the gated compile step (§15.8.8). Prints a sha256 hex digest, or empty.
 compute_build_inputs_hash() {
   local root="${SCRIPT_DIR:-.}" f
   {
     for f in \
       "$root/scripts/Dockerfile.routing-fix" \
-      "$root/scripts/Dockerfile.rule-compiler" \
       "$root/scripts/routing-fix.sh" \
       "$root/docker/tor/Dockerfile" \
       "$root/docker/tor/entrypoint.sh" \
       "$root/docker-compose.yml"; do
       printf '::%s::' "$f"; cat "$f" 2>/dev/null
     done
-    find "$root/scripts/logger" "$root/scripts/rule-compiler" -type f 2>/dev/null \
+    find "$root/scripts/logger" -type f 2>/dev/null \
       | LC_ALL=C sort | while IFS= read -r f; do printf '::%s::' "$f"; cat "$f" 2>/dev/null; done
+  } | openssl dgst -sha256 2>/dev/null | awk '{print $NF}'
+}
+
+# Hash the ad-block lists the user controls: black_list.txt (custom blocks) and
+# white_list.txt (the allow-list that governs what DNS resolves through). toggle.sh
+# gates the ~28s rule recompile on this — editing either list changes the digest
+# and triggers a one-off recompile of compiled_rules.txt + ip_blocklist.ipset;
+# an unchanged toggle skips it entirely (§15.8.8). Prints a sha256 hex digest.
+compute_rules_hash() {
+  local root="${SCRIPT_DIR:-.}"
+  { printf '::black::'; cat "$root/black_list.txt" 2>/dev/null
+    printf '::white::'; cat "$root/white_list.txt" 2>/dev/null
   } | openssl dgst -sha256 2>/dev/null | awk '{print $NF}'
 }
 
