@@ -38,6 +38,7 @@ tor-bridges.txt
 # Runtime state files
 .host_ips
 .lan_p2p_detected
+.build_hash
 .signatures
 TUNNEL_FAILED_CLOSED.marker
 

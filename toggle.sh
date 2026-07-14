@@ -1697,7 +1697,28 @@ else
   echo "  [Security] Honey-Port Tripwire armed on random port to detect malware port-scans."
   
   echo -e "\nStarting Docker containers..."
-  run_logged docker compose up -d --build
+  # Gate `--build`: BuildKit re-checking the locally-built images on the 600MB VM
+  # costs ~30s per toggle even when every layer is CACHED (§15.8.7). Only pass
+  # --build when the hashed build inputs change or a local image is missing;
+  # otherwise reuse cached images (plain `up -d`). A real source change still
+  # rebuilds, so the §15.8.6 "updates applied on boot" guarantee is preserved.
+  BUILD_HASH_FILE="$SCRIPT_DIR/.build_hash"
+  build_inputs_hash=$(compute_build_inputs_hash)
+  stored_build_hash=""
+  [ -f "$BUILD_HASH_FILE" ] && stored_build_hash=$(cat "$BUILD_HASH_FILE" 2>/dev/null)
+  local_images_present=true
+  for _img in nullexit-routing-fix:v1.0.0 nullexit-rule-compiler:v1.0.0 nullexit-tor:v1.0.0; do
+    docker image inspect "$_img" >> output.log 2>&1 || local_images_present=false
+  done
+  if [ -n "$build_inputs_hash" ] && [ "$build_inputs_hash" = "$stored_build_hash" ] && [ "$local_images_present" = "true" ]; then
+    echo "  Build inputs unchanged — skipping image build (reusing cached images)."
+    run_logged docker compose up -d
+  else
+    echo "  Build inputs changed or a local image is missing — building images..."
+    run_logged docker compose up -d --build
+    # Record the hash only after a successful build (set -e aborts above on failure).
+    if [ -n "$build_inputs_hash" ]; then echo "$build_inputs_hash" > "$BUILD_HASH_FILE"; fi
+  fi
 
   # Log the output of the rule compiler for debugging before removing it
   docker compose logs rule-compiler >> output.log 2>&1

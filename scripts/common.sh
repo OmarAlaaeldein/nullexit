@@ -128,6 +128,30 @@ colima_start_until_ready() {
   return 1
 }
 
+# Hash exactly the files that feed the three locally-built images (routing-fix,
+# rule-compiler, tor). toggle.sh uses this to skip `docker compose --build` when
+# nothing changed: BuildKit re-evaluating those images on the 600MB Colima VM
+# costs ~30s per toggle even when every layer is CACHED (§15.8.7). Includes the
+# Dockerfiles, everything they COPY (routing-fix.sh, tor/entrypoint.sh, the
+# logger/ and rule-compiler/ Go sources), and docker-compose.yml (build stanzas /
+# image tags). Prints a sha256 hex digest, or empty on failure (caller then builds).
+compute_build_inputs_hash() {
+  local root="${SCRIPT_DIR:-.}" f
+  {
+    for f in \
+      "$root/scripts/Dockerfile.routing-fix" \
+      "$root/scripts/Dockerfile.rule-compiler" \
+      "$root/scripts/routing-fix.sh" \
+      "$root/docker/tor/Dockerfile" \
+      "$root/docker/tor/entrypoint.sh" \
+      "$root/docker-compose.yml"; do
+      printf '::%s::' "$f"; cat "$f" 2>/dev/null
+    done
+    find "$root/scripts/logger" "$root/scripts/rule-compiler" -type f 2>/dev/null \
+      | LC_ALL=C sort | while IFS= read -r f; do printf '::%s::' "$f"; cat "$f" 2>/dev/null; done
+  } | openssl dgst -sha256 2>/dev/null | awk '{print $NF}'
+}
+
 # Check if the gateway is active (either containers are running, or host DNS is hijacked)
 is_gateway_active() {
   # 1. Check if containers are running (suppress stderr to avoid errors if docker is down)
