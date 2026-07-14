@@ -1937,6 +1937,13 @@ The root-cause leap, though, came from a **design-smell intuition, not the stack
 
 **Follow-up (same day) — a `set -e` regression the fix introduced, and why only a live run caught it.** The first cut of the marker capture wrote the intent as a full `if [ -f "$MARKER_FILE" ]; then GATEWAY_MARKER_AT_STARTUP="yes"; else GATEWAY_MARKER_AT_STARTUP="no"; fi`. On macOS `/bin/bash` 3.2, with `set -e` active and the `DEBUG_TRACE` xtrace redirect (`exec 2> >(tee …)`) in effect, that construct **aborted the script at init** the moment the marker was absent — the false `[ -f ]` status leaked through the compound and `set -e` killed the run (`EXIT: code=1 phase=init`), before the gateway logic ran at all. Notably this did **not** reproduce in isolated `bash -c` snippets of the same block — it only surfaced in the script's real runtime context — so we had to bisect against the actual `toggle.sh` (swap the block for a trivial assignment → the script sailed past init) to prove causation. Fix: write it as a default assignment plus an `if` **without an `else`** (`GATEWAY_MARKER_AT_STARTUP="no"` then `if [ -f "$MARKER_FILE" ]; then GATEWAY_MARKER_AT_STARTUP="yes"; fi`), which yields status 0 when the condition is false. Lesson reinforced: `set -e` on legacy bash is genuinely treacherous around conditionals, and the observability work paid for itself again — the breadcrumb pinned the abort to init instantly, and a live run (not static checks) was the only thing that exposed a heisenbug invisible to isolated reproduction.
 
+#### 15.12.20 Honey-Port Tripwire Accumulation (July 14, 2026)
+**Symptom:** After many toggle-ons, `ps` showed a pile of idle `bash ./toggle.sh` subshells, each blocked on an `nc -l localhost <port>` listener — one leaked per toggle-on, never reaped.
+
+**Root Cause:** The Honey-Port Tripwire arms a fresh random port each START via a disowned `( nc -l … ) &` subshell. `nc -l` blocks until a connection that (by design) almost never comes, so each toggle-on leaks one idle listener; because the port is random, successive listeners never collide and simply stack up over time.
+
+**Fix:** `toggle.sh` now reaps the previous tripwire before arming a new one — `pkill -f "nc -l localhost"` (macOS) / `pkill -f "nc -l .*127.0.0.1"` + `"nc -l localhost"` (Linux) — immediately before `HONEY_PORT=$(get_free_port)` at both arming sites. No `sudo` needed (the listeners are user-owned). Net effect: at most one tripwire alive at a time instead of one per toggle. (The same `pkill` pattern cleared the backlog that this session's ~15 test toggles produced.)
+
 ---
 
 # Part IV — Observations, Changelog & TODO

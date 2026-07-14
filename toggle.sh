@@ -478,6 +478,10 @@ else
   # --- HONEY-PORT TRIPWIRE ---
   # Generate a random trap port. If any malware does a sequential port scan on localhost,
   # it will inevitably hit this port. When it does, we instantly fire a desktop alert.
+  # Reap the honey-port from any previous toggle before arming a new one, so the
+  # `nc -l` tripwire never accumulates one idle listener per toggle-on (§15.12.20).
+  pkill -f "nc -l .*127.0.0.1" 2>/dev/null || true
+  pkill -f "nc -l localhost" 2>/dev/null || true
   HONEY_PORT=$(get_free_port)
   (
     if nc -l -p "$HONEY_PORT" 127.0.0.1 >/dev/null 2>&1 || nc -l localhost "$HONEY_PORT" >/dev/null 2>&1; then
@@ -1686,6 +1690,9 @@ else
   # --- HONEY-PORT TRIPWIRE ---
   # Generate a random trap port. If any malware does a sequential port scan on localhost,
   # it will inevitably hit this port. When it does, we instantly fire a macOS alert.
+  # Reap the honey-port from any previous toggle before arming a new one, so the
+  # `nc -l` tripwire never accumulates one idle listener per toggle-on (§15.12.20).
+  pkill -f "nc -l localhost" 2>/dev/null || true
   HONEY_PORT=$(get_free_port)
   (
     if nc -l localhost "$HONEY_PORT" >/dev/null 2>&1; then
