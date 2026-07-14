@@ -1597,18 +1597,41 @@ else
   # 3. Boot Colima VM if it is not already running
   echo -e "\nChecking Colima VM status..."
   if ! run_with_timeout 15 colima status >> output.log 2>&1; then
-    colima_network_mode="bridged"
-    security_type=""
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      security_type=$(system_profiler SPAirPortDataType 2>/dev/null | awk '/Current Network Information:/{found=1} found && /Security:/{print $NF; exit}')
-      if echo "$security_type" | grep -qi "Enterprise"; then
-        echo -e "\n  [!] WPA2-Enterprise Wi-Fi detected! Bridged mode will cause MAC-spoofing deauthentication."
-        echo "      Falling back to '--network-mode shared' for Colima."
-        colima_network_mode="shared"
-      fi
+    # Colima networking is gated on the SAME LAN-P2P signal routing-fix uses
+    # (.lan_p2p_detected overrides TAILSCALE_ALLOW_LAN_P2P in .env). A LAN-reachable
+    # VM (--network-address + bridged/shared) needs the socket_vmnet helper and is
+    # only worthwhile on a trusted home network, so we request it only when P2P is
+    # allowed; otherwise — AP-isolated / enterprise, the common case — we boot plain
+    # user-mode networking. Either way host<->container P2P is UNAFFECTED: it rides
+    # routing-fix's Docker-gateway / .host_ips RETURN rules, not the VM network mode
+    # (see devref §15.3.5). colima_start_until_ready returns as soon as Docker answers
+    # (~15s) instead of blocking on colima's ~2min post-provision hang (see §15.8.7);
+    # that hang is colima-internal and mode-independent (it also occurs in user mode).
+    allow_p2p=$(read_env_var "TAILSCALE_ALLOW_LAN_P2P")
+    [ -z "$allow_p2p" ] && allow_p2p="false"
+    if [ -f "$SCRIPT_DIR/.lan_p2p_detected" ]; then
+      allow_p2p=$(tr -d '[:space:]' < "$SCRIPT_DIR/.lan_p2p_detected" 2>/dev/null || echo "false")
     fi
-    echo "Colima is not running. Starting Colima (600MB RAM allocation, vz VM, network address, $colima_network_mode)..."
-    run_logged run_with_timeout 120 colima start --memory 0.6 --vm-type vz --network-address --network-mode "$colima_network_mode"
+
+    if [ "$allow_p2p" = "true" ]; then
+      colima_network_mode="bridged"
+      if [[ "$OSTYPE" == "darwin"* ]]; then
+        security_type=$(system_profiler SPAirPortDataType 2>/dev/null | awk '/Current Network Information:/{found=1} found && /Security:/{print $NF; exit}')
+        if echo "$security_type" | grep -qi "Enterprise"; then
+          echo -e "\n  [!] WPA2-Enterprise Wi-Fi detected! Bridged mode will cause MAC-spoofing deauthentication."
+          echo "      Falling back to '--network-mode shared' for Colima."
+          colima_network_mode="shared"
+        fi
+      fi
+      echo "Colima is not running. Starting Colima (600MB RAM, vz VM, LAN P2P on: --network-address $colima_network_mode)..."
+      colima_start_until_ready --memory 0.6 --vm-type vz --network-address --network-mode "$colima_network_mode" \
+        || echo "  [!] Colima Docker not confirmed ready; continuing (downstream docker-ps auto-heal will retry)."
+    else
+      colima_network_mode="user"
+      echo "Colima is not running. Starting Colima (600MB RAM, vz VM, LAN P2P off: fast user-mode networking)..."
+      colima_start_until_ready --memory 0.6 --vm-type vz \
+        || echo "  [!] Colima Docker not confirmed ready; continuing (downstream docker-ps auto-heal will retry)."
+    fi
     echo "$colima_network_mode" > /tmp/nullexit_colima_mode.txt
   else
     echo "Colima is already running."

@@ -90,6 +90,44 @@ run_with_timeout() {
   return "$exit_status"
 }
 
+# Start Colima and return the moment Docker is actually reachable, instead of
+# blocking on colima 0.10.3's post-provision hang. Observed on macOS/vz: the VM
+# reaches READY and creates the `colima` docker context in ~10-15s, then
+# `colima start` frequently fails to return for ~110s (until a watchdog kills it)
+# even though Docker is fully usable the entire time. We poll the colima docker
+# context and proceed as soon as it answers, then reap the (usually hung) starter.
+# The VM keeps running and `colima status` stays accurate. $@ = colima start args.
+# Returns 0 once Docker responds, 1 if it never does within the cap.
+colima_start_until_ready() {
+  local max_wait=90 waited=0 ready=false start_pid
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] EXEC(bg): colima start $*" >> output.log
+  colima start "$@" >> output.log 2>&1 &
+  start_pid=$!
+  while [ "$waited" -lt "$max_wait" ]; do
+    if run_with_timeout 5 docker --context colima info >/dev/null 2>&1; then
+      ready=true
+      break
+    fi
+    # If colima start exited on its own (genuine finish or hard failure), stop waiting.
+    if ! kill -0 "$start_pid" 2>/dev/null; then
+      run_with_timeout 5 docker --context colima info >/dev/null 2>&1 && ready=true
+      break
+    fi
+    sleep 3
+    waited=$((waited + 3))
+  done
+  # Reap the starter (harmless if it already exited); this does NOT stop the VM.
+  kill "$start_pid" 2>/dev/null || true
+  wait "$start_pid" 2>/dev/null || true
+  if [ "$ready" = "true" ]; then
+    docker context use colima >/dev/null 2>&1 || true
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Colima Docker ready after ~${waited}s (starter reaped)." >> output.log
+    return 0
+  fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Colima Docker NOT ready after ${max_wait}s." >> output.log
+  return 1
+}
+
 # Check if the gateway is active (either containers are running, or host DNS is hijacked)
 is_gateway_active() {
   # 1. Check if containers are running (suppress stderr to avoid errors if docker is down)
