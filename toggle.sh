@@ -42,7 +42,7 @@ trap '_log_exit_breadcrumb' EXIT
 DEBUG_TRACE=$(grep -E '^DEBUG_TRACE=' .env 2>/dev/null | cut -d'=' -f2- | tr -d "\"'" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 if [ "$DEBUG_TRACE" = "true" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG_TRACE enabled — xtrace mirrored to output.log (bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})" >> "$LOG_FILE"
-  export PS4='+ [$(date "+%H:%M:%S")] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+  export PS4='+ [${SECONDS}s] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '  # subshell-free clock: a $(…) in PS4 trips the bash 3.2 set -x/ERR heisenbug (devref §15.11.8)
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
     exec 9>>"$LOG_FILE"
     export BASH_XTRACEFD=9
@@ -908,7 +908,7 @@ DEBUG_TRACE=$(grep -E '^DEBUG_TRACE=' .env 2>/dev/null | cut -d'=' -f2- | tr -d 
 if [ "$DEBUG_TRACE" = "true" ]; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG_TRACE enabled — xtrace mirrored to output.log (bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]})" >> "$LOG_FILE"
   # Timestamped, location-aware xtrace prompt (works on 3.2 and 4.x).
-  export PS4='+ [$(date "+%H:%M:%S")] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
+  export PS4='+ [${SECONDS}s] ${BASH_SOURCE##*/}:${LINENO}:${FUNCNAME[0]:-main}: '  # subshell-free clock: a $(…) in PS4 trips the bash 3.2 set -x/ERR heisenbug (devref §15.11.8)
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
     exec 9>>"$LOG_FILE"
     export BASH_XTRACEFD=9
