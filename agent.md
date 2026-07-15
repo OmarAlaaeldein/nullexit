@@ -81,6 +81,81 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ---
 
+### toggle.sh — Execution Map & Critical Path (verified 2026-07-15)
+
+> Traced from the current unified `toggle.sh` (2191 lines). The file carries **two mirrored halves** selected by an OS switch: **Linux path ≈ L63–848**, **macOS path ≈ L878–2191**. Line numbers below are the **macOS path** (the deployment target); both halves share the same logical shape. `~Line` = current, approximate.
+
+#### Entry & dispatch
+
+```
+./toggle.sh [ (no-arg) | --restart | restart ]
+     |
+     |-- verify HMAC signatures (crypto.sh --verify) --fail--> exit 1   (L857)
+     |-- rotate output.log if > 1GB
+     |-- arm teardown trap:  ERR/INT/TERM/HUP -> cleanup_handler        (L1317-1320)
+     |-- generate random ports (Tor / SOCKS / DNS)                      (L940)
+     |
+     |-- --restart --> gateway_state? running -> run STOP, then START   (L999)
+     |
+     '-- no-arg   --> gateway_state?                                    (L1535)
+                        running  -> STOP  branch  (L1538-1584)
+                        stopped  -> START branch  (L1590-2191)
+```
+
+`gateway_state` is driven by `/tmp/nullexit-gateway-active.marker` (persisted intent), falling back to a live container probe.
+
+#### START — synchronous critical path (all must complete)
+
+| # | Step | ~Line | Effect if it fails / is interrupted |
+|---|------|-------|-------------------------------------|
+| 1 | `disconnect_tailscale_host` (clean slate) | 1595 | host left mesh |
+| 2 | `colima_start_until_ready` (readiness poll, §15.8.7) | 1630 | no Docker VM → abort |
+| 3 | honey-port reap + arm (`nc -l`, disowned) | 1690 | tripwire missing (non-fatal) |
+| 4 | rule-compile (hash-gated, OFF critical path §15.8.8) | 1708 | reuse prior compiled rules |
+| 5 | build-gate routing-fix / tor images | 1743 | rebuild only on change |
+| 6 | `docker compose up -d` → warp, tailscale, routing-fix, adguard, tor | 1758 | no gateway |
+| 7 | wait tailscaled reachable | 1907 | host tailscale unusable |
+| 8 | **host `tailscale set --exit-node=$TS_IP`** | 2046 | **host not routed via gateway → REAL-IP LEAK** |
+| 9 | `add_warp_bypass_routes` + `setup_exit_node_routing` | 2048 | WARP endpoint unreachable / wrong route |
+| 10 | **`force_dns_to_gateway`** (+ `start_local_dns_proxy`) | 2078 | host DNS not hijacked |
+| 11 | `enable_socks_proxy` + verify SOCKS→WARP | 2100 | SOCKS off |
+| 12 | print **"STARTED in Ns"** (timing marker) | 2127 | cosmetic only — NOT the commit point |
+| 13 | `start_sleep_prevention` (caffeinate) | 2130 | Mac may sleep |
+| 14 | `start_dns_watcher` (re-hijack DNS every 30s) | 2134 | no roam DNS recovery |
+| 15 | `start_warp_watcher` (warp liveness → recover.sh) | 2138 | no WARP self-heal |
+| 16 | **`write_gateway_active_marker`** | 2146 | watcher believes gateway is DOWN |
+| 17 | **`SUCCESS_RUN=true`** — disarms the teardown trap | 2164 | *(true commit point)* |
+| 18 | print "You can close this terminal window now." | 2191 | — |
+
+#### STOP — critical path
+
+`disconnect_tailscale_host` (1543) → `docker compose down --remove-orphans` (1552) → `colima stop` (1558) → `reset_dns` (1568) → `stop_local_dns_proxy` (1571) → stop caffeinate (1574) → stop DNS watcher (1575) → `stop_warp_watcher` (1576) → `clear_gateway_active_marker` (1577) → "STOPPED in Ns" (1584).
+
+#### Long-lived background processes spawned by START
+
+| Process | Started | PID / reap | Role |
+|---------|---------|------------|------|
+| honey-port `nc -l localhost $PORT` (disowned) | L1690 | `pkill -f "nc -l localhost"` | port-scan tripwire |
+| `caffeinate` | L2130 | `/tmp/nullexit-caffeinate.pid` | prevent system sleep |
+| DNS watcher loop | L2134 | `/tmp/nullexit-dns-watcher.pid` | re-hijack DNS every 30s (Wi-Fi roam) |
+| WARP watcher loop | L2138 | `/tmp/nullexit-warp-watcher.pid` | monitor warp; fire recover.sh after N fails |
+| local DNS proxy `dns-proxy.py` | L2089 | (killed by `stop_local_dns_proxy`) | UDP:53 → gateway DNS fallback |
+
+Separately, the **launchd `scripts/watcher.sh`** daemon (post-wake / post-roam recovery) runs independently of toggle and invokes `recover.sh --post-wake`; toggle does **not** spawn it.
+
+#### `cleanup_handler` — the fail-closed teardown trap
+
+Armed on `ERR/INT/TERM/HUP` (L1317-1320), guarded by `SUCCESS_RUN`. While `SUCCESS_RUN=false` it runs: `reset_dns`, `disconnect_tailscale_host`, `stop_local_dns_proxy`, stop watchers, `clear_gateway_active_marker`, `docker compose down` (+ `colima stop` on `ERR`). This is the **fail-closed guarantee**: a half-built gateway is torn down, not left leaking.
+
+#### ⚠️ Correctness findings (verified against source)
+
+1. **"STARTED in Ns" (L2127) is NOT the commit point — `SUCCESS_RUN=true` (L2164) is.** The marker write (L2146) and watcher starts (L2130-2138) sit *between* them. **Any TERM/INT — including a wrapping tool's timeout — in the L2127→L2164 window fires `cleanup_handler` → a FULL teardown** (containers + colima + host tailscale), leaving the marker ABSENT and the host on its raw ISP link, *despite* the printed success. This is exactly the 2026-07-15 incident.
+2. **Never pipe `toggle.sh` through a reader** (`| tail`, `| grep`). The disowned children (honey-port, watchers, dns-proxy, caffeinate) inherit stdout, so the pipe never EOFs and the reader hangs long after toggle has exited — which then trips the wrapper's timeout → SIGTERM → finding #1. Run detached with a file redirect instead: `nohup ./toggle.sh --restart > /tmp/t.log 2>&1 &`, then poll the file.
+3. **Host wiring is correctly on the synchronous critical path** (steps 8 & 10 precede "STARTED"), so a *completed* START cannot leave the host unrouted/leaking — the only way to that state is an interruption per finding #1.
+4. **Namespace ordering:** step 6's `docker compose up` creates warp's network namespace that `tailscale`/`routing-fix`/`adguard` share (compose `depends_on: warp healthy` enforces order). Never `docker compose restart warp` on a live gateway — it detaches the shared netns (see Agent Instruction, L16).
+
+---
+
 ### recover.sh (566 lines, 23KB)
 
 **Functions (7 total):**
