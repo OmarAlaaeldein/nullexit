@@ -21,63 +21,67 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 2. **DNS Hijacking Status:** Run `networksetup -getdnsservers "Wi-Fi"` (or appropriate network service) and ensure it is set exclusively to the gateway's Tailscale static IP (typically `100.100.21.8`).
 3. **DNS Query Interception:** Run `dig @100.100.21.8 google.com` (using the gateway static IP from `.gateway_ip`) to ensure AdGuard Home is active, intercepting, and resolving queries.
 4. **Double-Tunnel Egress:** Run `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp` to verify the egress is routed through Cloudflare WARP (`warp=on`).
-5. **Host Leak Monitoring:** Run `tail -n 30 output.log` and verify the background watchers and host leak prober are reporting healthy status without `LEAK` warnings.
+5. **Host Leak Monitoring:** Run `tail -n 30 output.log` and verify the background watchers (DNS + WARP) report healthy status without `LEAK` warnings. For a deeper on-demand audit, run `bash scripts/diagnose-host-leak.sh` (add `--watch` to poll, `--fix` to remediate).
 
 ---
 
 ## Part 1: macOS Main Scripts
 
-### toggle.sh (1281 lines, 56KB)
+### toggle.sh (2191 lines, unified macOS + Linux)
 
-**Functions (27 total):**
+> **Refreshed 2026-07-15.** Post-unification (`$OSTYPE` switch at L20) + the July-2026 `common.sh` extraction, the tables below reflect the *current* file. Most former "toggle.sh functions" now live in `scripts/common.sh`; the host-leak-probe pair was removed. For the ordered execution flow see **"toggle.sh — Execution Map & Critical Path"** above.
 
-| # | Function | Lines | Purpose |
-|---|----------|-------|---------|
-| 1 | `run_with_timeout()` | L30–64 | Run a command with a timeout watchdog; kills after N seconds |
-| 2 | `run_gui_cmd()` | L68–80 | Run a GUI command as the logged-in console user |
-| 3 | `write_gateway_active_marker()` | L88–90 | Write timestamp to `/tmp/nullexit-gateway-active.marker` |
-| 4 | `clear_gateway_active_marker()` | L92–95 | Remove gateway active marker + TUNNEL_FAILED_CLOSED.marker |
-| 5 | `start_sleep_prevention()` | L108–154 | Start `caffeinate` in background with shutdown trap to revert DNS |
-| 6 | `stop_sleep_prevention()` | L157–167 | Stop caffeinate process via PID file |
-| 7 | `start_dns_watcher()` | L173–191 | Background loop to re-hijack DNS every 30s for Wi-Fi roaming |
-| 8 | `stop_dns_watcher()` | L193–203 | Stop DNS watcher via PID file |
-| 9 | `start_warp_watcher()` | L220–279 | Background WARP liveness monitor; triggers recover.sh after N consecutive failures |
-| 10 | `stop_warp_watcher()` | L281–291 | Stop WARP watcher via PID file |
-| 11 | `start_host_leak_probe()` | L297–310 | Start host-egress leak prober (300ms polling) |
-| 12 | `stop_host_leak_probe()` | L312–322 | Stop host leak probe via PID file |
-| 13 | `cleanup_handler()` | L325–382 | Error/signal handler: resets DNS, stops all watchers, tears down containers |
-| 14 | `restart_tailscaled_daemon()` | L449–463 | Restart tailscaled via brew services (user then system fallback) |
-| 15 | `disconnect_tailscale_host()` | L465–477 | Disconnect host Tailscale with retry on failure |
-| 16 | `get_active_service()` | L480–508 | Detect active macOS network service name (e.g., "Wi-Fi") |
-| 17 | `add_warp_bypass_routes()` | L524–546 | Add static routes for WARP endpoints (162.159.192.1, 162.159.193.1) |
-| 18 | `remove_warp_bypass_routes()` | L548–552 | Remove WARP bypass routes |
-| 19 | `setup_exit_node_routing()` | L558–577 | Override default route to point through Tailscale utun interface |
-| 20 | `reset_dns()` | L588–595 | Reset DNS to 1.1.1.1 on ACTIVE_SERVICE + EN0_SERVICE |
-| 21 | `cleanup_network_state()` | L600–645 | Nuclear cleanup: disable proxies, flush DNS cache, flush routes, power-cycle Wi-Fi, kill sharing services |
-| 22 | `enable_socks_proxy()` | L663–682 | Enable system-wide SOCKS5 proxy on macOS |
-| 23 | `disable_socks_proxy()` | L684–689 | Disable SOCKS5 proxy |
-| 24 | `stop_local_dns_proxy()` | L702–710 | Kill local Python DNS proxy |
-| 25 | `start_local_dns_proxy()` | L713–768 | Start Python DNS proxy (UDP:53 → TCP:5354) |
-| 26 | `force_dns_to_gateway()` | L780–820 | Force DNS to a specific IP with 3-retry verification loop |
-| 27 | `is_gateway_active()` | L833–854 | Check if gateway is running (containers, DNS, SOCKS proxy) |
+**Functions still defined in `toggle.sh`** — several exist in *both* halves (Linux L63–848 / macOS L878–2191):
 
-**Constants:**
+| Function | Linux L | macOS L | Purpose |
+|----------|---------|---------|---------|
+| `_log_exit_breadcrumb()` | 30 | 885 | Write lifecycle-phase breadcrumb on exit (post-mortem trail) |
+| `get_free_port()` | 67 | 944 | Pick a random unused port (self- + kernel-collision checked) |
+| `run_gui_cmd()` | — | 1033 | Run a command as the logged-in console GUI user |
+| `write_gateway_active_marker()` | — | 1053 | Write `/tmp/nullexit-gateway-active.marker` (macOS only) |
+| `clear_gateway_active_marker()` | — | 1059 | Remove active marker + `TUNNEL_FAILED_CLOSED.marker` |
+| `start_sleep_prevention()` | 145 | 1091 | Start `caffeinate` w/ revert trap |
+| `stop_sleep_prevention()` | 188 | — | Stop caffeinate via PID file |
+| `stop_dns_watcher()` | 202 | — | Stop DNS watcher (macOS uses `stop_pidfile_daemon`) |
+| `start_warp_watcher()` | — | 1164 | Background WARP liveness monitor → `recover.sh` after N fails |
+| `stop_warp_watcher()` | — | 1241 | Stop WARP watcher via PID file |
+| `cleanup_handler()` | 215 | 1258 | Fail-closed teardown trap (guarded by `SUCCESS_RUN`) |
+| `restart_tailscaled_daemon()` | 327 | *(common)* | Restart tailscaled (Linux-half local copy; macOS uses common.sh) |
+| `disconnect_tailscale_host()` | 337 | *(common)* | `tailscale down` w/ retry (Linux-half local copy; macOS uses common.sh) |
+| `setup_exit_node_routing()` | — | 1430 | Override default route through the Tailscale utun interface |
+| `cleanup_network_state()` | 354 | 1464 | Nuclear cleanup: proxies, DNS cache, routes, Wi-Fi, sharing services |
+
+**Delegated to `scripts/common.sh`** (moved out of toggle.sh in the July-2026 refactor; line = common.sh):
+
+| Function | common.sh L | Function | common.sh L |
+|----------|-------------|----------|-------------|
+| `run_with_timeout()` | 58 | `enable_socks_proxy()` | 769 |
+| `is_gateway_active()` | 168 | `disable_socks_proxy()` | 803 |
+| `gateway_state()` | 232 | `reset_dns()` | 824 |
+| `get_active_service()` | 284 | `stop_local_dns_proxy()` | 898 |
+| `restart_tailscaled_daemon()` | 338 | `start_local_dns_proxy()` | 909 |
+| `disconnect_tailscale_host()` | 352 | `force_dns_to_gateway()` | 988 |
+| `stop_pidfile_daemon()` | 393 | `add_warp_bypass_routes()` | 484 |
+| `start_dns_watcher()` | 715 | `remove_warp_bypass_routes()` | 551 |
+
+**Removed:** `start_host_leak_probe()` / `stop_host_leak_probe()` and the whole `HOST_LEAK_PROBE` prober subsystem — no longer defined or called anywhere in `toggle.sh`, `recover.sh`, or `common.sh`, and `HOST_LEAK_PROBE` is no longer an env var (all verified). The only surviving host-leak tool is the standalone, on-demand `scripts/diagnose-host-leak.sh` (there is **no** `scripts/host-leak-probe.sh`).
+
+**Constants / anchors (current):**
 
 | Constant | Value | Line |
 |----------|-------|------|
-| `LOG_FILE` | `$PWD/output.log` | L8 |
-| `PID_FILE` | `/tmp/nullexit-caffeinate.pid` | L105 |
-| `DNS_WATCHER_PID_FILE` | `/tmp/nullexit-dns-watcher.pid` | L169 |
-| `WARP_WATCHER_PID_FILE` | `/tmp/nullexit-warp-watcher.pid` | L170 |
-| `HOST_LEAK_PROBE_PID_FILE` | `/tmp/nullexit-host-leak-probe.pid` | L171 |
-| `SOCKS_PROXY_PORT` | `1080` | L661 |
-| `PATH` export | `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH` | L396 |
-| Gateway active marker | `/tmp/nullexit-gateway-active.marker` | L89 |
-| TUNNEL_FAILED_CLOSED marker | `$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker` | L94 |
-| WARP endpoints | `162.159.192.1`, `162.159.193.1` | L535-544 |
-| DNS fallback | `1.1.1.1` | L592 |
-| DNS search domain | `ts.net` | L794 |
-| `LOCK_FILE` | `/tmp/nullexit-toggle.lock` | L62 |
+| `LOG_FILE` | `$PWD/output.log` | L22 (Linux) / L863 (macOS) |
+| `LOCK_FILE` | `/tmp/nullexit-toggle.lock` | L1020 |
+| `PID_FILE` (caffeinate) | `/tmp/nullexit-caffeinate.pid` | L142 |
+| `DNS_WATCHER_PID_FILE` | `/tmp/nullexit-dns-watcher.pid` | L200 |
+| `WARP_WATCHER_PID_FILE` | `/tmp/nullexit-warp-watcher.pid` | L1144 |
+| Gateway active marker | `/tmp/nullexit-gateway-active.marker` | L1054 (write) |
+| TUNNEL_FAILED_CLOSED marker | `<repo>/TUNNEL_FAILED_CLOSED.marker` | L1061 |
+| `SOCKS_PROXY_PORT` | random per-toggle, `1080` fallback | L91/L107 (Linux) · L968/L986 (macOS) |
+| DNS search domain | `ts.net` | L763 |
+| `PATH` (via `setup_standard_path`, common.sh) | Homebrew + system bins | L1330 |
+| WARP endpoints (via `get_warp_endpoint_1/2`, common.sh) | `162.159.192.1` / `162.159.193.1` | common.sh L335-336 |
+| DNS fallback | `1.1.1.1` (in `reset_dns`, common.sh) | common.sh L824 |
 
 ---
 
@@ -168,10 +172,6 @@ The Linux half is intent-similar but **not** a line-for-line mirror of macOS. Ve
 
 The `up --reset` vs `set` distinction matters: `--reset` re-applies *all* prefs and forces a route re-eval, whereas `set` mutates only the exit-node pref — the same asymmetry `recover.sh --post-wake` relies on (devref §15.12.21).
 
-#### Note on `start_host_leak_probe`
-
-The pre-unification Part-1 function/constant tables above still list `start_host_leak_probe()` / `stop_host_leak_probe()` / `HOST_LEAK_PROBE_PID_FILE` with old line numbers (~L297–322). **These have no call site in the current unified `toggle.sh`** (verified — `grep` finds neither a definition nor an invocation), so the chart above intentionally omits them. Host-egress leak checking now lives in the standalone `scripts/host-leak-probe.sh` / `scripts/diagnose-host-leak.sh`, not inline in the toggle path. (The Part-1 tables reflect the older 1281-line toggle and are stale on line numbers generally.)
-
 ---
 
 ### recover.sh (566 lines, 23KB)
@@ -197,7 +197,6 @@ The pre-unification Part-1 function/constant tables above still list `start_host
 | `PATH` export | `/opt/homebrew/bin:/usr/local/bin:$PATH` | L77 |
 | `PID_FILE` | `/tmp/nullexit-caffeinate.pid` | L387 |
 | `DNS_WATCHER_PID_FILE` | `/tmp/nullexit-dns-watcher.pid` | L407 |
-| `HOST_LEAK_PROBE_PID_FILE` | `/tmp/nullexit-host-leak-probe.pid` | L423 |
 | WARP endpoints | `162.159.192.1`, `162.159.193.1` | L329-336 |
 | TUNNEL_FAILED_CLOSED marker | `$SCRIPT_DIR/TUNNEL_FAILED_CLOSED.marker` | L51 |
 
@@ -277,7 +276,7 @@ the macOS dual-mode body. All formatting/timeout helpers come from `common.sh`.
 **~95% identical to macOS setup.sh.** Only differences:
 1. Desktop shortcuts (L366-391 Linux `.desktop` files vs macOS `.app` via `osacompile`)
 2. Final instructions text
-3. .env template: macOS adds `GATEWAY_USE_EXIT_NODE`, `WARP_FAIL_THRESHOLD`, `HOST_LEAK_PROBE`, `KILL_SWITCH` — Linux omits these
+3. .env template: macOS adds `GATEWAY_USE_EXIT_NODE`, `WARP_FAIL_THRESHOLD`, `KILL_SWITCH` — Linux omits these
 
 ---
 
@@ -306,15 +305,6 @@ the macOS dual-mode body. All formatting/timeout helpers come from `common.sh`.
 ### scripts/fix-ssh-delay.sh (63 lines, 2.7KB)
 
 **Purpose:** One-shot fix for ~20s SSH delay. Standalone, minimal duplication (uses hardcoded ✓/✗ instead of color functions).
-
-### scripts/host-leak-probe.sh (110 lines, 5.5KB)
-
-**Purpose:** Sub-second host-egress leak prober at 300ms intervals.
-
-**Duplicated logic:**
-- WARP check via cdn-cgi/trace (same curl + awk as toggle.sh WARP Watcher)
-- Color codes (hardcoded; status updates and warnings are conditioned on TTY detection to prevent log pollution)
-- LOG_FILE = `$PROJECT_ROOT/output.log`
 
 ### scripts/reinstall-host-tailscale.sh (740 lines, 31KB)
 
@@ -412,7 +402,6 @@ These exist in `toggle.sh`'s macOS branch but NOT its Linux branch:
 | `America/New_York` (timezone) | docker-compose.yml (×4 services) |
 | `/tmp/nullexit-caffeinate.pid` | (Fixed) centralized in common.sh |
 | `/tmp/nullexit-dns-watcher.pid` | (Fixed) centralized in common.sh |
-| `/tmp/nullexit-host-leak-probe.pid` | toggle.sh, recover.sh |
 | `/opt/homebrew/bin:...` (PATH) | (Fixed) centralized in common.sh |
 
 ---
@@ -426,7 +415,7 @@ Instead of introducing a new `lib/` directory, all shared code was moved into th
 Extracts the fundamental primitives and networking logic used across orchestrator scripts:
 - **Formatters:** `step()`, `ok()`, `warn()`, `fail()`, `die()`
 - **Timeout Wrapper:** `run_with_timeout()` (Canonical version with PID tracking, graceful SIGTERM, and SIGKILL fallback)
-- **Daemon Lifecycle:** `restart_tailscaled_daemon()`, `stop_pidfile_daemon()` (collapsed caffeinate, DNS watcher, WARP watcher, and host leak prober teardown logic)
+- **Daemon Lifecycle:** `restart_tailscaled_daemon()`, `stop_pidfile_daemon()` (collapsed caffeinate, DNS watcher, and WARP watcher teardown logic)
 - **Network Interface/Routing:** `get_active_service()`, `get_en0_service()`, `bounce_wifi_interfaces()`, `add_warp_bypass_routes()`, `remove_warp_bypass_routes()`
 - **Proxy/DNS Cleanup:** `disable_all_proxies()`, `flush_dns_cache()`, `reset_sharing_services()`
 - **Configuration Helpers:** `read_adguard_ip()`, `is_kill_switch_enabled()`, `get_warp_endpoint_1()`, `get_warp_endpoint_2()` (which centralizes the hardcoded 162.159.192.1 / .193.1 into .env logic)
