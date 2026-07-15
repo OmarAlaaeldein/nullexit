@@ -83,7 +83,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 ### toggle.sh — Execution Map & Critical Path (verified 2026-07-15)
 
-> Traced from the current unified `toggle.sh` (2191 lines). The file carries **two mirrored halves** selected by an OS switch: **Linux path ≈ L63–848**, **macOS path ≈ L878–2191**. Line numbers below are the **macOS path** (the deployment target); both halves share the same logical shape. `~Line` = current, approximate.
+> Traced from the current unified `toggle.sh` (2191 lines). The file carries **two halves** selected by `$OSTYPE` at **L20** (`if [[ "$OSTYPE" != "darwin"* ]]` runs the self-contained **Linux path ≈ L63–848** then `exit 0` at ~L845; darwin falls through to the **macOS path ≈ L878–2191**). Line numbers below are the **macOS path** (the deployment target). The halves are *similar in intent but not identical* — see "Linux path — where it diverges" below. `~Line` = current, approximate.
 
 #### Entry & dispatch
 
@@ -109,8 +109,8 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 | # | Step | ~Line | Effect if it fails / is interrupted |
 |---|------|-------|-------------------------------------|
 | 1 | `disconnect_tailscale_host` (clean slate) | 1595 | host left mesh |
-| 2 | `colima_start_until_ready` (readiness poll, §15.8.7) | 1630 | no Docker VM → abort |
-| 3 | honey-port reap + arm (`nc -l`, disowned) | 1690 | tripwire missing (non-fatal) |
+| 2 | `colima_start_until_ready` (readiness poll, §15.8.7) | 1631 | no Docker VM → abort |
+| 3 | honey-port reap (`pkill`) + arm (`nc -l`, disowned) | 1695 | tripwire missing (non-fatal) |
 | 4 | rule-compile (hash-gated, OFF critical path §15.8.8) | 1708 | reuse prior compiled rules |
 | 5 | build-gate routing-fix / tor images | 1743 | rebuild only on change |
 | 6 | `docker compose up -d` → warp, tailscale, routing-fix, adguard, tor | 1758 | no gateway |
@@ -135,7 +135,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 
 | Process | Started | PID / reap | Role |
 |---------|---------|------------|------|
-| honey-port `nc -l localhost $PORT` (disowned) | L1690 | `pkill -f "nc -l localhost"` | port-scan tripwire |
+| honey-port `nc -l localhost $PORT` (disowned) | L1695 | `pkill -f "nc -l localhost"` | port-scan tripwire |
 | `caffeinate` | L2130 | `/tmp/nullexit-caffeinate.pid` | prevent system sleep |
 | DNS watcher loop | L2134 | `/tmp/nullexit-dns-watcher.pid` | re-hijack DNS every 30s (Wi-Fi roam) |
 | WARP watcher loop | L2138 | `/tmp/nullexit-warp-watcher.pid` | monitor warp; fire recover.sh after N fails |
@@ -149,10 +149,28 @@ Armed on `ERR/INT/TERM/HUP` (L1317-1320), guarded by `SUCCESS_RUN`. While `SUCCE
 
 #### ⚠️ Correctness findings (verified against source)
 
-1. **"STARTED in Ns" (L2127) is NOT the commit point — `SUCCESS_RUN=true` (L2164) is.** The marker write (L2146) and watcher starts (L2130-2138) sit *between* them. **Any TERM/INT — including a wrapping tool's timeout — in the L2127→L2164 window fires `cleanup_handler` → a FULL teardown** (containers + colima + host tailscale), leaving the marker ABSENT and the host on its raw ISP link, *despite* the printed success. This is exactly the 2026-07-15 incident.
+1. **"STARTED in Ns" (L2127) is NOT the commit point — `SUCCESS_RUN=true` (L2164) is.** The marker write (L2146) and watcher starts (L2130-2138) sit *between* them. **Any TERM/INT — including a wrapping tool's timeout — in the L2127→L2164 window fires `cleanup_handler` → a FULL teardown** (containers + colima + host tailscale), leaving the marker ABSENT and the host on its raw ISP link, *despite* the printed success. This is exactly the 2026-07-15 incident. (The Linux half has the same shape but a *much* narrower window: STARTED L814 → `SUCCESS_RUN=true` L820, and it maintains no marker.)
 2. **Never pipe `toggle.sh` through a reader** (`| tail`, `| grep`). The disowned children (honey-port, watchers, dns-proxy, caffeinate) inherit stdout, so the pipe never EOFs and the reader hangs long after toggle has exited — which then trips the wrapper's timeout → SIGTERM → finding #1. Run detached with a file redirect instead: `nohup ./toggle.sh --restart > /tmp/t.log 2>&1 &`, then poll the file.
 3. **Host wiring is correctly on the synchronous critical path** (steps 8 & 10 precede "STARTED"), so a *completed* START cannot leave the host unrouted/leaking — the only way to that state is an interruption per finding #1.
 4. **Namespace ordering:** step 6's `docker compose up` creates warp's network namespace that `tailscale`/`routing-fix`/`adguard` share (compose `depends_on: warp healthy` enforces order). Never `docker compose restart warp` on a live gateway — it detaches the shared netns (see Agent Instruction, L16).
+
+#### Linux path — where it diverges (L63–848)
+
+The Linux half is intent-similar but **not** a line-for-line mirror of macOS. Verified differences:
+
+| Aspect | macOS (L878–2191) | Linux (L63–848) |
+|--------|-------------------|-----------------|
+| VM layer | Colima (`colima_start_until_ready`, L1631) | none — native Docker |
+| Host exit-node assert | `$TS_BIN set … --exit-node="$TS_IP"` (L2046) | `$TS_BIN up --reset … --exit-node="$TS_IP"` (L735) |
+| gateway-active marker | written (L2146) | **not maintained** (L119) — `gateway_state` degrades to a live container probe |
+| Commit window | STARTED L2127 → `SUCCESS_RUN` L2164 | STARTED L814 → `SUCCESS_RUN` L820 |
+| Port gen tooling | `jot` / `netstat` | `shuf`/`$RANDOM` / `ss` |
+
+The `up --reset` vs `set` distinction matters: `--reset` re-applies *all* prefs and forces a route re-eval, whereas `set` mutates only the exit-node pref — the same asymmetry `recover.sh --post-wake` relies on (devref §15.12.21).
+
+#### Note on `start_host_leak_probe`
+
+The pre-unification Part-1 function/constant tables above still list `start_host_leak_probe()` / `stop_host_leak_probe()` / `HOST_LEAK_PROBE_PID_FILE` with old line numbers (~L297–322). **These have no call site in the current unified `toggle.sh`** (verified — `grep` finds neither a definition nor an invocation), so the chart above intentionally omits them. Host-egress leak checking now lives in the standalone `scripts/host-leak-probe.sh` / `scripts/diagnose-host-leak.sh`, not inline in the toggle path. (The Part-1 tables reflect the older 1281-line toggle and are stale on line numbers generally.)
 
 ---
 
