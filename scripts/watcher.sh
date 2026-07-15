@@ -44,6 +44,18 @@ RECOVER="$SCRIPT_DIR/../recover.sh"
 MARKER="$MARKER_FILE"
 DEBOUNCE_FILE="/tmp/nullexit-watcher.last-recovery"
 DEBOUNCE_SECONDS="${NULLEXIT_DEBOUNCE_SECONDS:-10}"
+# Post-recovery SETTLE cooldown. A post-wake run re-asserts the exit node
+# (recover.sh: `tailscale set --exit-node`), which re-writes the host default
+# route — and that route IS State:/Network/Global/IPv4, the exact key Listener 2
+# watches. The self-triggered change lands ~15-45s AFTER the run finishes, past
+# the 10s debounce, so without a longer window the watcher re-fires post-wake in
+# a ~40s self-feedback loop that only stops once routing happens to reach a fixed
+# point (devref §15.12.21). This cooldown is armed ONLY after a recovery runs, so
+# a genuine first wake/roam is still handled immediately; only the change we
+# caused ourselves gets absorbed. A real new roam during the window is delayed at
+# most this many seconds, which is acceptable.
+COOLDOWN_FILE="/tmp/nullexit-watcher.settle-until"
+POSTWAKE_SETTLE_SECONDS="${NULLEXIT_POSTWAKE_SETTLE_SECONDS:-45}"
 
 exec >> "$LOG" 2>&1
 
@@ -97,8 +109,15 @@ run_recover() {
     echo "[$(date -u +%FT%TZ)] $why → no $MARKER, skip"
     return 0
   fi
-  local now last
+  local now last settle_until
   now=$(date +%s)
+  # Post-recovery settle window: ignore the Global/IPv4 change our own last
+  # post-wake run caused (exit-node re-assert) so we don't self-feedback loop.
+  settle_until=$(cat "$COOLDOWN_FILE" 2>/dev/null || echo 0)
+  if [ "$now" -lt "$settle_until" ]; then
+    echo "[$(date -u +%FT%TZ)] $why → settling ($((settle_until - now))s left in post-recovery cooldown), skip"
+    return 0
+  fi
   last=$(cat "$DEBOUNCE_FILE" 2>/dev/null || echo 0)
   if [ "$((now - last))" -lt "$DEBOUNCE_SECONDS" ]; then
     echo "[$(date -u +%FT%TZ)] $why → debounced ($((now - last))s since last, threshold ${DEBOUNCE_SECONDS}s)"
@@ -108,8 +127,11 @@ run_recover() {
   echo "[$(date -u +%FT%TZ)] $why → bash $RECOVER --post-wake"
   bash "$RECOVER" --post-wake
   local exit_code=$?
-  echo "$(date +%s)" > "$DEBOUNCE_FILE"
-  echo "[$(date -u +%FT%TZ)] $why → exit=$exit_code (now=$(date +%s))"
+  now=$(date +%s)
+  echo "$now" > "$DEBOUNCE_FILE"
+  # Arm the settle cooldown so the route change this run just caused can't re-fire us.
+  echo "$((now + POSTWAKE_SETTLE_SECONDS))" > "$COOLDOWN_FILE"
+  echo "[$(date -u +%FT%TZ)] $why → exit=$exit_code (settle until +${POSTWAKE_SETTLE_SECONDS}s, now=$now)"
   return $exit_code
 }
 

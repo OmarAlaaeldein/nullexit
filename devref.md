@@ -1944,6 +1944,17 @@ The root-cause leap, though, came from a **design-smell intuition, not the stack
 
 **Fix:** `toggle.sh` now reaps the previous tripwire before arming a new one — `pkill -f "nc -l localhost"` (macOS) / `pkill -f "nc -l .*127.0.0.1"` + `"nc -l localhost"` (Linux) — immediately before `HONEY_PORT=$(get_free_port)` at both arming sites. No `sudo` needed (the listeners are user-owned). Net effect: at most one tripwire alive at a time instead of one per toggle. (The same `pkill` pattern cleared the backlog that this session's ~15 test toggles produced.)
 
+#### 15.12.21 Post-Wake Self-Feedback Loop: The Watcher Re-Fires On The Route Change It Caused (July 14, 2026)
+**Symptom:** After a container restart (or wake), `output.log` showed `recover.sh --post-wake` launching ~6 times in a row, one launch roughly every ~40s, each exiting `exit=0` — recovery *worked* every time yet kept re-firing "until it worked." Every launch was triggered by `NET: … changedKey State:/Network/Global/IPv4`.
+
+**Root Cause — a self-feedback loop, NOT PF.** `scripts/watcher.sh` Listener 2 watches `State:/Network/Global/IPv4` via `scutil n.watch` and launches `recover.sh --post-wake` on any change. But post-wake re-asserts the exit node (`recover.sh` ~L367, `tailscale set --exit-node`), and even though `set` is deliberately used instead of `--reset` to minimise churn (recover.sh ~L360-366), **re-asserting the exit node re-writes the host default route — and the default route IS `State:/Network/Global/IPv4`.** So each run mutates the exact key the watcher triggers on. The self-triggered change lands ~15-45s after the run finishes; `run_recover()`'s old 10s debounce (reset to the run's *finish* time at the tail of the function) had long expired by then, so the watcher re-fired. The loop self-terminates only once `tailscale set` becomes a no-op (route already correct) → no route change → no re-trigger.
+
+**Why the debounce couldn't stop it:** the loop period (~40s = one full post-wake run + settle) far exceeds the 10s debounce, which therefore only ever caught macOS's rapid *duplicate* scutil notifications for a single change (the `+0.2s` doublets), not the self-trigger.
+
+**Not PF:** post-wake never calls `pfctl` (the kill-switch is armed once, in `scripts/common.sh`, not per cycle); no PF-enable line falls inside the loop window. The `No ALTQ support in kernel` warning is normal macOS pfctl noise (Apple ships pfctl without ALTQ compiled in), and `Could not capture PF reference token` is a separate benign ref-count bookkeeping wart — both unrelated to the loop.
+
+**Fix:** `scripts/watcher.sh` `run_recover()` now arms a **post-recovery settle cooldown** (`/tmp/nullexit-watcher.settle-until`, `NULLEXIT_POSTWAKE_SETTLE_SECONDS` default 45s) *after* each post-wake run, and skips launching while `now < settle-until`. Because it is armed only after a recovery runs, a genuine first wake/roam is still handled immediately; only the Global/IPv4 change the run caused itself is absorbed. A real new roam during the window is delayed at most `POSTWAKE_SETTLE_SECONDS`, an acceptable trade for killing the loop. Watcher-side only — `recover.sh` is unchanged. Severity was low (self-correcting, healthy every iteration, no leak/outage; cost was wasted ~28s runs + log noise).
+
 ---
 
 # Part IV — Observations, Changelog & TODO
