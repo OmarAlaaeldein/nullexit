@@ -23,7 +23,7 @@ fi
 if [ "$1" == "--sign" ]; then
   echo "Generating cryptographic signatures using seed..."
   rm -f .signatures
-  for file in toggle.sh recover.sh scripts/common.sh scripts/routing-fix.sh scripts/diagnose-host-leak.sh scripts/watcher.sh scripts/pf.conf post-rules.txt docker-compose.yml black_list.txt white_list.txt; do
+  for file in toggle.sh recover.sh scripts/common.sh scripts/routing-fix.sh scripts/diagnose-host-leak.sh scripts/sweep.sh scripts/watcher.sh scripts/pf.conf post-rules.txt docker-compose.yml black_list.txt white_list.txt; do
     if [ -f "$file" ]; then
       hash=$(openssl dgst -sha256 -hmac "$SEED" "$file" | awk '{print $NF}')
       echo "$file:$hash" >> .signatures
