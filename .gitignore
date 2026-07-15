@@ -58,3 +58,6 @@ __pycache__/
 *.synctex*
 refactor.md
 sweep.md
+
+# Obsidian Knowledge graph
+nullexit-knowledge-graph/
