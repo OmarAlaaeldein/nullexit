@@ -237,7 +237,6 @@ To add a new country to the blocklist:
 | `WARP_ENDPOINT_1` | (Optional) Override Cloudflare WARP WireGuard endpoint IP 1 (default `162.159.192.1`) |
 | `WARP_ENDPOINT_2` | (Optional) Override Cloudflare WARP WireGuard endpoint IP 2 (default `162.159.193.1`) |
 | `KILL_SWITCH` | (Optional) `true` to enforce strict PF lock — drops all host traffic if VPN fails. Breaks SSH if VPN dies. |
-| `HOST_LEAK_PROBE` | (Optional) `false` to disable the 300ms host-egress leak prober (default: `true`) |
 | `STOP_COLIMA_ON_EXIT` | (Optional) `true` to fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts) |
 | `ADGUARD_USER` | (Optional) AdGuard Home web UI username (default: `admin`) |
 | `ADGUARD_PASSWORD` | (Optional) Shared password for AdGuard Home and Tor ControlPort (default: `nullexit`) |

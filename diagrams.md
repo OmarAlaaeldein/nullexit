@@ -25,7 +25,6 @@ graph TB
 
         subgraph MONITORS["🔍 Background Daemons (toggle.sh children)"]
             WARPWATCH["WARP Watcher\n(every 30s, via docker exec)\n→ output.log"]
-            LEAKPROBE["Host Leak Probe\n(every 300ms, via curl from HOST)\n→ output.log"]
             DNSWATCHER["DNS Watcher\n(re-hijacks if drift detected)\n→ output.log"]
             CAFFEINATE["caffeinate -i\n(sleep prevention)"]
         end
@@ -67,7 +66,6 @@ graph TB
 
     %% Monitoring
     WARPWATCH -->|"docker exec warp wget cdn-cgi/trace"| GLUETUN
-    LEAKPROBE -->|"curl cdn-cgi/trace (HOST NIC)"| CF
     DNSWATCHER -->|"networksetup -getdnsservers"| HOSTDNS
 
     %% Logging
@@ -124,7 +122,7 @@ flowchart TD
     EXITPATH["✅ EXIT NODE PATH\n• tailscale up --exit-node=\n• force_dns_to_gateway (3× retry)\n• SOCKS5 disabled"]
     SOCKSPATH["⚠️ SOCKS5 FALLBACK PATH\n• macOS SOCKS5 → 127.0.0.1:1080\n• DNS proxy → 127.0.0.1:53\n• No exit node (SKIP_EXIT_NODE=true)"]
 
-    DAEMONS["Start background daemons\n• caffeinate -i (sleep prevention)\n• DNS Watcher\n• WARP Watcher\n• Host Leak Probe\n(all write → output.log)"]
+    DAEMONS["Start background daemons\n• caffeinate -i (sleep prevention)\n• DNS Watcher\n• WARP Watcher\n(all write → output.log)"]
 
     RULECOMPILE["Rule compiler status\n(log rule/IP counts)"]
     WRITEMARKER["write_gateway_active_marker\n(/tmp/nullexit-gateway-active.marker)"]
@@ -164,22 +162,21 @@ flowchart TD
     ST4["4. stop_local_dns_proxy\n(kill Python UDP proxy)"]
     ST5["5. stop_pidfile_daemon\n(kill caffeinate, rm PID)"]
     ST6["6. stop_pidfile_daemon\n(kill DNS Watcher, rm PID)"]
-    ST7["7. stop_pidfile_daemon\n(kill WARP Watcher, rm PID)"]
-    ST8["8. stop_pidfile_daemon\n(kill Leak Probe, rm PID)"]
-    ST9["9. clear_gateway_active_marker\n(rm /tmp/nullexit-gateway-active.marker)"]
-    ST10["10. cleanup_network_state\n• disable_all_proxies\n• Flush DNS cache (dscacheutil)\n• Flush stale routes\n• Power-cycle Wi-Fi (off→on)"]
+    ST7["7. stop_warp_watcher\n(kill WARP Watcher, rm PID)"]
+    ST8["8. clear_gateway_active_marker\n(rm /tmp/nullexit-gateway-active.marker)"]
+    ST9["9. cleanup_network_state\n• disable_all_proxies\n• Flush DNS cache (dscacheutil)\n• Flush stale routes\n• Power-cycle Wi-Fi (off→on)"]
 
     DONE(["✅ Gateway DOWN\nInternet restored"])
 
     STOP --> ST1 --> ST2 --> ST3 --> ST4
-    ST4 --> ST5 --> ST6 --> ST7 --> ST8 --> ST9 --> ST10 --> DONE
+    ST4 --> ST5 --> ST6 --> ST7 --> ST8 --> ST9 --> DONE
 
     style DONE fill:#0a3d1a,color:#fff
 ```
 
 ---
 
-## 4. Monitoring Layer — The 4 Background Daemons
+## 4. Monitoring Layer — The 3 Background Daemons
 
 ```mermaid
 graph LR
@@ -198,23 +195,19 @@ graph LR
             WARPW["Polls every 30s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nCounts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
         end
 
-        subgraph D4["🩺 Host Leak Probe"]
-            LEAKP["Polls every 300ms via:\ncurl cdn-cgi/trace (HOST NIC directly)\nPID: /tmp/nullexit-host-leak-probe.pid\n\nLogs ONLY on state change:\n  LEAK / ROTATE / HOST-PROBE failed\nAll errors → output.log\n(HOST_LEAK_PROBE=true in .env)"]
-        end
     end
 
     subgraph BLIND["What each monitor can/can't see"]
         B1["WARP Watcher sees:\n✅ Container WARP tunnel state\n❌ Host NIC traffic\n❌ Flash leaks < 5s"]
-        B2["Host Leak Probe sees:\n✅ Host NIC egress (browser path)\n✅ Sub-second transitions\n❌ Container internals"]
+        B2["Host-NIC blind spot covered by:\n🔒 PF kill-switch (kernel, fail-closed)\n🔍 on-demand: diagnose-host-leak.sh\n(--watch to monitor) / sweep.sh"]
     end
 
     D3 -.->|"covers"| B1
-    D4 -.->|"covers"| B2
+    B1 -.->|"gap closed by"| B2
 
     style D1 fill:#1a2d0a
     style D2 fill:#0a1a2d
     style D3 fill:#2d0a2d
-    style D4 fill:#2d1a00
     style BLIND fill:#1a1a1a,color:#aaa
 ```
 
@@ -266,7 +259,7 @@ flowchart TD
         PW2["Flush DNS cache"]
         PW3["Refresh tailscale exit-node"]
         PW4["Force-recreate warp container\n(if Gluetun healthcheck failed)"]
-        PW5["Leave: containers, Wi-Fi,\ncaffeinate, DNS watcher,\nHost Leak Probe — untouched"]
+        PW5["Leave: containers, Wi-Fi,\ncaffeinate, DNS watcher — untouched"]
     end
 
     subgraph NUCLEAR["☢️ Default (nuclear — gateway torn down)"]
@@ -279,7 +272,6 @@ flowchart TD
         N6a["6a. docker compose down -t 30\n(stop all containers)"]
         N6b["6b. stop_pidfile_daemon\n(kill caffeinate)"]
         N6c["6c. stop_pidfile_daemon\n(kill DNS Watcher)"]
-        N6d["6d. stop_pidfile_daemon\n(kill Leak Probe)"]
         N7["7. Power-cycle Wi-Fi\n(networksetup off→sleep 2→on)"]
         N8["8. Verify internet working\n(curl ifconfig.io)"]
     end
@@ -292,7 +284,7 @@ flowchart TD
     PW1 --> PW2 --> PW3 --> PW4 --> PW5 --> DONE_PW
     MODE -->|"no"| N0
     N0 --> N1 --> N2 --> N3 --> N4 --> N5
-    N5 --> N6a --> N6b --> N6c --> N6d --> N7 --> N8 --> DONE_NUC
+    N5 --> N6a --> N6b --> N6c --> N7 --> N8 --> DONE_NUC
 
     style POSTWAKE fill:#0a2d1a,color:#c0ffc0
     style NUCLEAR fill:#2d0505,color:#ffc0c0
@@ -311,7 +303,7 @@ flowchart LR
         E2["Mac wakes from sleep\nor Wi-Fi roams"]
         E3["DNS drifts from\ngateway IP"]
         E4["toggle.sh crashes /\nCtrl-C / SIGTERM"]
-        E5["Host-side flash leak\ndetected (HOST NIC)"]
+        E5["Host-side leak\n(non-tunnel HOST NIC egress)"]
         E6["Silent NAT timeout\n(ping stops working)"]
     end
 
@@ -320,7 +312,7 @@ flowchart LR
         D2["scripts/watcher.sh\n(launchd, always on)"]
         D3["DNS Watcher\n(30s poll, networksetup)"]
         D4["cleanup_handler\n(ERR/INT/TERM/HUP trap)"]
-        D5["Host Leak Probe\n(300ms poll, HOST curl)"]
+        D5["PF kill-switch\n(kernel, always-on) +\ndiagnose-host-leak.sh --watch\n(on-demand)"]
         D6["routing-fix.sh\n(30s curl over tun0)"]
     end
 
@@ -329,7 +321,7 @@ flowchart LR
         A2["recover.sh --post-wake\n(gentle refresh)"]
         A3["Re-hijack DNS\n(networksetup setdnsservers)"]
         A4["Stop all daemons\nReset DNS → 1.1.1.1\nTear down Tailscale"]
-        A5["Log LEAK to output.log"]
+        A5["Non-tunnel egress blocked\nfail-closed at kernel;\n--watch alerts on state change"]
         A6["Blackhole internet traffic\n+ Drop TUNNEL_FAILED_CLOSED.marker"]
         A7["Push macOS Desktop Notification\n(via watcher.sh listener)"]
     end
@@ -359,17 +351,14 @@ All events converge into a single `output.log` at the repo root.
 | `toggle.sh` | All startup/shutdown steps, errors, pre-flight results | Plain text with timestamps |
 | `recover.sh` | Every recovery step (nuclear or post-wake) | Plain text |
 | **WARP Watcher** | `WARP DOWN`, `WARP RECOVERED`, `WARP SHUTDOWN` | `[UTC timestamp]` prefix |
-| **Host Leak Probe** | `LEAK`, `ROTATE`, `HOST-PROBE failed/timeout` | `[HH:MM:SS.mmm]` prefix |
 | **DNS Watcher** | DNS re-hijack events | Appended inline |
 | `docker compose` | Container logs on failure (last 100 lines of warp) | Dumped on ERR path |
 | `routing-fix.sh` | (via `nullexit-logger` inside container) | Structured |
 
 **Grep cheatsheet:**
 ```bash
-grep LEAK output.log           # Host-side warp=off events (real leaks)
-grep ROTATE output.log         # Cloudflare edge IP rotations (harmless)
-grep 'HOST-PROBE' output.log   # curl failures from probe
 grep 'WARP DOWN' output.log    # Container-side tunnel drops
 grep 'WARP SHUTDOWN' output.log # Auto-recovery triggered
 grep 'WARP RECOVERED' output.log # Self-healed before threshold
+grep -E 'EXEC:|EXIT ' output.log # Lifecycle breadcrumbs (last command + exit)
 ```

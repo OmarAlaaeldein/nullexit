@@ -23,6 +23,8 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 4. **Double-Tunnel Egress:** Run `curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp` to verify the egress is routed through Cloudflare WARP (`warp=on`).
 5. **Host Leak Monitoring:** Run `tail -n 30 output.log` and verify the background watchers (DNS + WARP) report healthy status without `LEAK` warnings. For a deeper on-demand audit, run `bash scripts/diagnose-host-leak.sh` (add `--watch` to poll, `--fix` to remediate).
 
+**Automated:** `bash scripts/sweep.sh` runs a read-only 6-check health sweep covering the above plus the PF kill-switch and tailnet-wide peer reachability, writes a timestamped `sweep-<UTC>.txt` report to the repo root, and exits non-zero on FAIL (`--quiet` for just the verdict). It never mutates routing/PF/DNS/containers, so it is safe against a live gateway. See its entry in Part 3.
+
 ---
 
 ## Part 1: macOS Main Scripts
@@ -324,6 +326,20 @@ the macOS dual-mode body. All formatting/timeout helpers come from `common.sh`.
 - WARP health check via cdn-cgi/trace (another instance)
 - iptables dual-backend pattern (for-loop over `iptables iptables-legacy`)
 
+### scripts/sweep.sh (331 lines, 18KB)
+
+**Purpose:** Read-only post-restart health sweep — answers "after a toggle/restart/wake, is the gateway actually healthy end-to-end?" Never mutates routing, PF, DNS, or containers, so it is safe to run against a live gateway at any time (including from a remote session). `errexit` is deliberately OFF: probes are *expected* to fail on an unhealthy gateway and each exit status is recorded as the diagnostic signal.
+
+**The 6 checks** (each recorded PASS/WARN/FAIL; exit 0 only when nothing FAILs, so it can gate CI/launchd/post-restart hooks):
+1. **Containers** — `docker compose ps`: warp/adguardhome/tailscale/tor/routing-fix up (warp + adguardhome additionally `healthy`).
+2. **Double-tunnel/leak** — container WARP egress IP == host egress IP, both `warp=on` (gluetun ships wget not curl, so the in-container trace falls back to wget).
+3. **Host↔container path** — the gateway peer line in `tailscale status` shows `direct <ip:port>`; WARNs on a DERP relay.
+4. **AdGuard filtering** — `compiled_rules.txt` block counts present + live interception (`dig @` the gateway IP from `.gateway_ip`).
+5. **PF kill-switch** — `pfctl` reports Enabled AND anchor `com.apple/nullexit` carries rules (needs passwordless sudo, else WARN).
+6. **Tailnet reachability** (added 2026-07-17) — every peer `tailscale status` reports online (self and `offline` peers skipped; a `-` status means online-but-idle and is kept) must answer `tailscale ping --timeout=3s --c 1 --until-direct=false` (TSMP — probes the WireGuard data path even on devices that drop ICMP). All pong → PASS; some unreachable → WARN; none → FAIL. DERP-relayed pongs count as reachable (direct-only enforcement stays in check 3, which covers the gateway).
+
+**Output:** coloured stdout summary + a timestamped plain-text report `sweep-<TIMESTAMP>.txt` in the repo root (one file per run, so runs can be diffed); `--quiet` prints only the verdict. Signed in `.signatures` — re-run `bash scripts/crypto.sh --sign` after editing it.
+
 ### scripts/watcher.sh (269 lines, 13KB)
 
 **Purpose:** Long-running launchd daemon for post-wake/post-roam recovery.
@@ -453,7 +469,7 @@ When the user invokes this verb, the agent MUST perform a full end-to-end connec
 5. **Tailscale Mesh Validation:**
    - Run `ping -c 1 100.100.21.8` to ensure the gateway is reachable.
    - Run `tailscale status` to identify all active/online nodes in the mesh.
-   - For every online peer returned in the status output, execute a ping check (`ping -c 1 <peer-ip>`) to verify bidirectional connectivity and confirm healthy routing to all active mesh devices.
+   - For every online peer returned in the status output, execute `tailscale ping --timeout=3s --c 1 --until-direct=false <peer-ip>` (TSMP — probes the WireGuard data path and works even on phones that drop ICMP) to verify connectivity and confirm healthy routing to all active mesh devices. `bash scripts/sweep.sh` automates this as its check 6/6 and reports each peer's path (direct endpoint vs `DERP(...)`) and latency.
 6. **Log Audit:** Run `tail -n 100 output.log | grep -iE "(error|fail|warn)"` to catch any underlying component failures or warnings.
 
 ### `/latex` (or `generate latex`)
