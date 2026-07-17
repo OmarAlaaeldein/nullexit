@@ -1,19 +1,20 @@
 #!/bin/bash
 # scripts/sweep.sh — nullexit gateway health sweep
 #
-# Automates the 5-check post-restart health sweep documented in sweep.md §1.
+# Automates the 6-check post-restart health sweep (sweep.md §1 + tailnet ping).
 # It answers one question: "after a toggle/restart/wake, is the gateway
 # actually healthy end-to-end — no leak, direct P2P, DNS filtering live,
 # kill-switch armed?" It is READ-ONLY: it never mutates routing, PF, DNS,
 # or containers, so it is safe to run against a live gateway at any time
 # (including from a remote session — see the caveat in agent.md L16).
 #
-# The 5 checks (mirroring sweep.md §1):
+# The 6 checks (1-5 mirror sweep.md §1):
 #   1. Containers          — warp, adguardhome, tailscale, tor, routing-fix up/healthy
 #   2. Double-tunnel/leak  — container WARP exit IP == host exit IP, both warp=on
 #   3. Host↔container path  — Tailscale exit-node is a DIRECT P2P conn, not DERP relay
 #   4. AdGuard filtering    — compiled rule counts present + live DNS interception
 #   5. PF kill-switch       — pfctl Enabled + anchor com.apple/nullexit carries rules
+#   6. Tailnet reachability — every ONLINE Tailscale peer answers a tailscale ping
 #
 # A timestamped report is written to the project root (one file per run, so
 # runs can be diffed). stdout carries a coloured summary + a final PASS/FAIL
@@ -42,7 +43,7 @@ REPORT_FILE="$PROJECT_ROOT/sweep-$TIMESTAMP.txt"
 QUIET=false
 case "${1:-}" in
   --quiet|-q) QUIET=true ;;
-  --help|-h)  sed -n '2,26p' "$0"; exit 0 ;;
+  --help|-h)  sed -n '2,27p' "$0"; exit 0 ;;
   "")         : ;;
   *)          echo "Unknown argument: $1" >&2
               echo "Run with --help for usage." >&2
@@ -95,7 +96,7 @@ fi
 GATEWAY_TS_IP="$(read_adguard_ip)"   # gateway Tailscale IP from .gateway_ip
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "1/5  Containers"
+section "1/6  Containers"
 # ═══════════════════════════════════════════════════════════════════════════
 # All five services must be running; warp + adguardhome additionally expose a
 # healthcheck and must be 'healthy'. `docker compose ps` is the source of truth.
@@ -128,7 +129,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "2/5  Double-tunnel / IP-leak"
+section "2/6  Double-tunnel / IP-leak"
 # ═══════════════════════════════════════════════════════════════════════════
 # The container's WARP egress and the host's egress must be the SAME public IP
 # with warp=on for both. Equal IPs ⇒ all host traffic is exiting through the
@@ -162,7 +163,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "3/5  Host ↔ container path (direct P2P, not DERP relay)"
+section "3/6  Host ↔ container path (direct P2P, not DERP relay)"
 # ═══════════════════════════════════════════════════════════════════════════
 # `tailscale status` annotates each peer with 'direct <ip:port>' or
 # 'relay "<derp>"'. The gateway peer should be DIRECT — a DERP relay hop adds
@@ -193,7 +194,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "4/5  AdGuard filtering"
+section "4/6  AdGuard filtering"
 # ═══════════════════════════════════════════════════════════════════════════
 # Two signals: (a) the compiled ruleset exists with a non-trivial block count,
 # (b) the gateway resolver actually answers a query (live interception).
@@ -234,7 +235,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "5/5  PF kill-switch"
+section "5/6  PF kill-switch"
 # ═══════════════════════════════════════════════════════════════════════════
 # PF must be Enabled AND the com.apple/nullexit anchor must carry rules.
 # An empty/absent anchor means the fail-closed lane is not actually armed.
@@ -257,6 +258,49 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
+section "6/6  Tailnet reachability (ping all online devices)"
+# ═══════════════════════════════════════════════════════════════════════════
+# Every peer the coordination server reports as ONLINE should answer a
+# `tailscale ping` (TSMP probes the WireGuard data path; ICMP is avoided since
+# phones/laptops often drop it). Offline peers and this host are skipped.
+# An online-but-unreachable peer means control plane and data path disagree.
+if ! command -v tailscale >/dev/null 2>&1; then
+  fail "tailscale CLI not on PATH"
+  record FAIL "tailnet"
+else
+  SELF_TS_IP=$(run_with_timeout 6 tailscale ip -4 2>>"$LOG_FILE")
+  [ -n "${TS_OUT:-}" ] || TS_OUT=$(run_with_timeout 6 tailscale status 2>>"$LOG_FILE")
+  # Online peers = rows starting with a Tailscale IP, minus self and 'offline'.
+  # (A '-' status column means online-but-idle, so it is kept.)
+  PEERS=$(printf '%s\n' "$TS_OUT" | awk -v self="$SELF_TS_IP" \
+          '$1 ~ /^100\./ && $1 != self && $0 !~ /(^|[[:space:]])offline(,|;|[[:space:]]|$)/ {print $1, $2}')
+  if [ -z "$PEERS" ]; then
+    warn "no online peers to ping (everything else in the tailnet is offline)"
+    record WARN "tailnet"
+  else
+    unreached=0
+    while read -r peer_ip peer_name; do
+      PONG=$(run_with_timeout 10 tailscale ping --timeout=3s --c 1 --until-direct=false "$peer_ip" 2>>"$LOG_FILE")
+      if printf '%s' "$PONG" | grep -q '^pong'; then
+        detail=$(printf '%s\n' "$PONG" | head -1 | sed -E 's/^pong from [^ ]+ \([^)]+\) //')
+        ok "$peer_name ($peer_ip) — pong $detail"
+      else
+        fail "$peer_name ($peer_ip) — no pong (online per control plane, data path dead)"
+        unreached=$((unreached+1))
+      fi
+    done <<< "$PEERS"
+    n_peers=$(printf '%s\n' "$PEERS" | wc -l | tr -d '[:space:]')
+    if [ "$unreached" -eq 0 ]; then
+      record PASS "tailnet"
+    elif [ "$unreached" -lt "$n_peers" ]; then
+      record WARN "tailnet"
+    else
+      record FAIL "tailnet"
+    fi
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
 section "VERDICT"
 # ═══════════════════════════════════════════════════════════════════════════
 pass=0; warnc=0; failc=0
@@ -273,7 +317,7 @@ for r in "${RESULTS[@]}"; do
 done
 emit ""
 if [ "$failc" -eq 0 ] && [ "$warnc" -eq 0 ]; then
-  emit "${GREEN}${BOLD}SWEEP PASS — gateway healthy (${pass}/5 checks green)${NC}"
+  emit "${GREEN}${BOLD}SWEEP PASS — gateway healthy (${pass}/${#RESULTS[@]} checks green)${NC}"
   EXIT=0
 elif [ "$failc" -eq 0 ]; then
   emit "${YELLOW}${BOLD}SWEEP PASS with warnings — ${pass} pass, ${warnc} warn, 0 fail${NC}"
