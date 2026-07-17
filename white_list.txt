@@ -230,4 +230,6 @@ media-bos5-1.cdn.whatsapp.net
 media-yyz1-1.cdn.whatsapp.net
 webtp.whatsapp.net
 mmg.whatsapp.net
+g.whatsapp.net
+g-fallback.whatsapp.net
 
