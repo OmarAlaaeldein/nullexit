@@ -243,6 +243,33 @@ launchctl load -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 ```
 See `devref.md §15.5.1` for the full deep dive.
 
+### Cover traffic / dummy padding (macOS — optional, opt-in)
+`scripts/noise.sh` emits verifiable-random UDP padding toward the exit so a passive
+on-path observer sees a continuously varying encrypted flow instead of your real
+traffic envelope (a metadata / traffic-flow correlation defence). Unlike the rest
+of the toolkit it is **active** — it puts traffic on the wire — so it stays inert
+unless you opt in. **One switch controls everything:** set `NOISE_ENABLED=true` in
+`.env`. There is no separate "persistent vs one-shot" option — installing the
+LaunchAgent below simply means padding auto-starts whenever `NOISE_ENABLED=true`,
+and the job is a clean no-op whenever it is `false`.
+
+```bash
+# One-off (this session only):
+bash scripts/noise.sh verify   # prove the noise is statistically random (entropy/monobit/chi-square)
+bash scripts/noise.sh start    # arm padding now;  `status` / `stop` to manage
+
+# Persistent (survives reboot/login) — install the LaunchAgent once:
+cp ./launchd/com.nullexit.noise.plist ~/Library/LaunchAgents/
+sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|" ~/Library/LaunchAgents/com.nullexit.noise.plist
+launchctl load -w ~/Library/LaunchAgents/com.nullexit.noise.plist
+# To stop persisting:  launchctl bootout gui/$UID/com.nullexit.noise
+```
+Tunables (rate, packet size, jitter, target) live in `.env` under the
+`NOISE_PAD_*` keys; defaults are a modest 64 kbps toward the gateway. Honest
+limits: this is one-way random padding — it blurs uplink volume + timing, not a
+full traffic-analysis-resistant shaper. See the `noise.sh` / `Cover Traffic &
+Padding` notes in the knowledge graph.
+
 ---
 
 ## 7. Networking Notes

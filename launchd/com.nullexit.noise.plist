@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nullexit.noise</string>
+
+    <!-- Same install-agnostic pattern as com.nullexit.wake-recovery: WorkingDirectory
+         is __NULLEXIT_HOME__ (substitute your absolute install root at install time
+         via sed), and the program arg is scripts/noise.sh RELATIVE to it, so
+         BASH_SOURCE still resolves SCRIPT_DIR correctly. -->
+    <key>WorkingDirectory</key>
+    <string>__NULLEXIT_HOME__</string>
+
+    <!-- `__boot`: governed SOLELY by NOISE_ENABLED in .env. It exits 0 cleanly when
+         disabled (so KeepAlive never tight-loops) and runs the padding loop in the
+         foreground when enabled. Loading this plist adds NO new option — it just means
+         "auto-start cover traffic whenever NOISE_ENABLED=true". -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>scripts/noise.sh</string>
+        <string>__boot</string>
+    </array>
+
+    <!-- Start immediately on launchctl load and re-run at every login/boot. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Same restart policy rationale as wake-recovery:
+         SuccessfulExit=false → a clean exit 0 (the disabled-idle path) is NOT
+                                relaunched, so a disabled job doesn't spin.
+         Crashed=false        → a SIGTERM from `launchctl bootout` is not treated as
+                                a relaunch trigger, so stopping is clean and loop-free.
+         Net effect: load once → padding runs at boot when enabled; bootout stops it. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <false/>
+    </dict>
+
+    <!-- Cover traffic must not be suspended by App Nap when the user is idle. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/nullexit-noise.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/nullexit-noise.err.log</string>
+</dict>
+</plist>

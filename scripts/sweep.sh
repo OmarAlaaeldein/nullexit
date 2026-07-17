@@ -301,6 +301,22 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Cover traffic (opt-in) — informational only, NOT a scored check.
+# Shown solely when NOISE_ENABLED=true so the sweep stays read-only and the
+# 6-check verdict is unchanged. Reports whether the padding daemon is alive.
+NOISE_ON=$(read_env_var "NOISE_ENABLED" | tr '[:upper:]' '[:lower:]')
+if [ "$NOISE_ON" = "true" ]; then
+  section "Cover traffic (opt-in, informational)"
+  NOISE_PID_FILE="/tmp/nullexit-noise.pid"
+  npid="$(cat "$NOISE_PID_FILE" 2>/dev/null)"
+  if [ -n "$npid" ] && kill -0 "$npid" 2>/dev/null; then
+    ok "dummy-padding daemon running (pid $npid) — see 'bash scripts/noise.sh status'"
+  else
+    warn "NOISE_ENABLED=true but no padding daemon running — start it: bash scripts/noise.sh start"
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
 section "VERDICT"
 # ═══════════════════════════════════════════════════════════════════════════
 pass=0; warnc=0; failc=0
