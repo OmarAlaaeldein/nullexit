@@ -67,3 +67,6 @@ nullexit-knowledge-graph/
 
 # .env backups written by profiles.sh (contain secrets — never commit)
 .env.bak*
+
+# device-scramble saved real identity (never commit)
+.device-identity.orig
