@@ -257,7 +257,7 @@ bash scripts/profiles.sh apply home     # write it (backs up .env; never restart
 ```
 
 Profiles: **campus** (AP-isolated enterprise, conservative) · **home** (trusted, fast —
-direct P2P, FaceTime + LAN Pi-hole) · **paranoid** (cover traffic + Tor bridges, no
+direct P2P, FaceTime + LAN Pi-hole) · **hardened** (cover traffic + Tor bridges, no
 real-IP exposure).
 
 ### Cover traffic / dummy padding (macOS — optional, opt-in)

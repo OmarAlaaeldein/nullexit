@@ -16,7 +16,7 @@
 #   bash scripts/profiles.sh apply <name>    # write the profile to .env (backs up; never restarts)
 #
 # Profiles: campus (AP-isolated enterprise, conservative) · home (trusted, fast) ·
-#           paranoid (max privacy: cover traffic + Tor bridges, no real-IP exposure)
+#           hardened (max privacy: cover traffic + Tor bridges, no real-IP exposure)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -34,14 +34,14 @@ PROFILES = {
                "PIHOLE_LAN_MODE":"false","NOISE_ENABLED":"false","TOR_USE_BRIDGES":"false","WARP_FAIL_THRESHOLD":"6"},
   "home":     {"KILL_SWITCH":"true","TAILSCALE_ALLOW_LAN_P2P":"true","FACETIME_SPLIT_ROUTE":"true",
                "PIHOLE_LAN_MODE":"true","NOISE_ENABLED":"false","TOR_USE_BRIDGES":"false","WARP_FAIL_THRESHOLD":"6"},
-  "paranoid": {"KILL_SWITCH":"true","TAILSCALE_ALLOW_LAN_P2P":"false","FACETIME_SPLIT_ROUTE":"false",
+  "hardened": {"KILL_SWITCH":"true","TAILSCALE_ALLOW_LAN_P2P":"false","FACETIME_SPLIT_ROUTE":"false",
                "PIHOLE_LAN_MODE":"false","NOISE_ENABLED":"true","NOISE_PAD_MODE":"topup",
                "TOR_USE_BRIDGES":"true","WARP_FAIL_THRESHOLD":"3"},
 }
 DESC = {
   "campus":"AP-isolated enterprise/campus: DERP (no SNAT poisoning), everything conservative, no real-IP exposure.",
   "home":"Trusted network: direct LAN P2P (fast), FaceTime split-route + LAN Pi-hole on, no cover-traffic battery cost.",
-  "paranoid":"Max privacy on a hostile net: cover traffic (topup) + Tor bridges, fail-fast WARP, never expose the real IP.",
+  "hardened":"Max privacy on a hostile net: cover traffic (topup) + Tor bridges, fail-fast WARP, never expose the real IP.",
 }
 META = {
   "KILL_SWITCH":"PF fail-closed kill-switch (forced true — never negotiable)",
