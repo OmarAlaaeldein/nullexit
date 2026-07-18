@@ -270,6 +270,28 @@ limits: this is one-way random padding — it blurs uplink volume + timing, not 
 full traffic-analysis-resistant shaper. See the `noise.sh` / `Cover Traffic &
 Padding` notes in the knowledge graph.
 
+### LAN Pi-hole mode (macOS — optional, opt-in)
+nullexit is already a Pi-hole for **mesh** devices — AdGuard Home filters DNS for
+everything that routes through the gateway over Tailscale. This mode extends that
+filtering to **non-Tailscale** devices on the same LAN (a smart TV, a guest, IoT):
+point their DNS server at this Mac's IP and they get the same ad/tracker/threat
+blocking. It reuses `dns-proxy.py` bound to the LAN interface, forwarding to
+AdGuard.
+
+```bash
+# .env: PIHOLE_LAN_MODE=true   (default false)
+sudo bash scripts/pihole-mode.sh enable    # bind the LAN DNS forwarder (:53 needs root)
+bash scripts/pihole-mode.sh test           # prove it resolves clean + sinkholes blocked
+bash scripts/pihole-mode.sh status         # running? listen addr, AdGuard reachability
+sudo bash scripts/pihole-mode.sh disable
+```
+
+Honest limits: it only works on a **trusted, non-isolated** network — on
+AP-isolated WPA2-Enterprise (the same isolation that forces phones onto DERP)
+other devices can't reach this Mac at all. And it's **DNS filtering only** — it
+does not route those devices through WARP. See the `pihole-mode.sh` note in the
+knowledge graph.
+
 ---
 
 ## 7. Networking Notes
