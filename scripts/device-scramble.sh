@@ -28,6 +28,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT" || exit 1
 IFACE=en0
 SAVE="$PROJECT_ROOT/.device-identity.orig"   # gitignored
+WARP_INHIBIT="/tmp/nullexit-warp-inhibit.marker"   # WARP Watcher skips shutdown while this exists
 
 rand_mac() {  # locally-administered (0x02) + unicast (clear 0x01) first octet
   printf '%02x:%02x:%02x:%02x:%02x:%02x' \
@@ -108,6 +109,13 @@ cmd_restore() {
 # (This is the fix for the naive first attempt that set it while connected.)
 cmd_test_mac() {
   need_root test-mac
+  # Protect the running gateway: inhibit the WARP Watcher so the brief Wi-Fi blip
+  # isn't counted as tunnel death (which would auto-shutdown a healthy gateway).
+  # Only manage the marker if we created it — don't clobber recover.sh's.
+  local owned_inhibit=0
+  if [ ! -f "$WARP_INHIBIT" ]; then touch "$WARP_INHIBIT" && owned_inhibit=1; fi
+  trap '[ "$owned_inhibit" = 1 ] && rm -f "$WARP_INHIBIT"' EXIT INT TERM
+  echo "gateway guard: WARP Watcher inhibited during the test (containers stay up regardless)."
   local orig; orig=$(cur_mac)
   [ -n "$orig" ] || { echo "no $IFACE MAC found"; exit 1; }
   echo "$orig" > /tmp/nullexit-mac.orig
