@@ -35,7 +35,7 @@ GATEWAY_MSS=1120
 GATEWAY_HIJACK_HOST=true
 GATEWAY_USE_EXIT_NODE=true
 WARP_FAIL_THRESHOLD=6              # consecutive warp=off polls before auto-shutdown (default 6 = 30s)
-KILL_SWITCH=false                  # enforce strict PF lock that breaks SSH if VPN fails
+KILL_SWITCH=true                   # enforce strict PF lock that breaks SSH if VPN fails. Leave true — this is the core leak guarantee.
 # On campus/enterprise networks (WPA2-Enterprise / 802.1x), AP Client Isolation blocks direct
 # LAN traffic between devices. Tailscale attempts a local P2P upgrade anyway, which causes
 # macOS gvproxy to SNAT-mangle the reply's source port — poisoning the phone's WireGuard
@@ -47,7 +47,7 @@ TAILSCALE_ALLOW_LAN_P2P=false     # auto-managed; true only on trusted hotspots/
 ADGUARD_USER=admin                 # Username for AdGuard Home (defaults to admin if not set)
 ADGUARD_PASSWORD=nullexit          # Shared password for AdGuard Home and Tor ControlPort (defaults to nullexit if not set)
 BLOCKED_COUNTRIES="kp il"          # dynamically block country IP ranges via ipdeny.com
-TOR_EXCLUDE_EXIT_NODES=""          # comma-separated country codes to exclude as Tor exit nodes (e.g. {us},{gb})
+TOR_EXCLUDE_EXIT_NODES={us},{gb},{fr},{de},{it},{ca},{jp},{kp},{il}  # comma-separated country codes to exclude as Tor exit nodes
 DEBUG_TRACE=false                  # true = mirror a full command-by-command trace of the toggle to output.log (see §9)
 ```
 

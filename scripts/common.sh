@@ -689,6 +689,17 @@ enable_killswitch() {
     local pf_conf_path
     pf_conf_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pf.conf"
 
+    # Keep the host's scrub max-mss in sync with GATEWAY_MSS (same variable that drives
+    # post-rules.txt's --set-mss for the container). The host egresses through the same
+    # double-tunnel (Tailscale+WARP) as forwarded phone traffic, so it needs the same
+    # empirically-safe clamp — a stale/higher value here reproduces the §15.3.2 stalling
+    # bug for the host's own connections (see devref.md).
+    local gateway_mss
+    gateway_mss=$(read_env_var GATEWAY_MSS)
+    if [[ "$gateway_mss" =~ ^[0-9]+$ ]]; then
+      sed -i '' "s/max-mss [0-9]*/max-mss ${gateway_mss}/g" "$pf_conf_path" 2>/dev/null || true
+    fi
+
     echo -e "\nEnabling macOS Packet Filter (PF) Kill-Switch on $ext_if..."
 
     # Enable PF and capture the reference token

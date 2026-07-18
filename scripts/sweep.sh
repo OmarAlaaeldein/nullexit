@@ -1,20 +1,30 @@
 #!/bin/bash
 # scripts/sweep.sh — nullexit gateway health sweep
 #
-# Automates the 6-check post-restart health sweep (sweep.md §1 + tailnet ping).
-# It answers one question: "after a toggle/restart/wake, is the gateway
-# actually healthy end-to-end — no leak, direct P2P, DNS filtering live,
-# kill-switch armed?" It is READ-ONLY: it never mutates routing, PF, DNS,
-# or containers, so it is safe to run against a live gateway at any time
-# (including from a remote session — see the caveat in agent.md L16).
+# Automates the 7-check post-restart health sweep (sweep.md §1 + tailnet ping
+# + throughput). It answers one question: "after a toggle/restart/wake, is
+# the gateway actually healthy end-to-end — no leak, direct P2P, DNS
+# filtering live, kill-switch armed, and fast enough to actually use?" It is
+# READ-ONLY with respect to gateway state: it never mutates routing, PF, DNS,
+# or containers (the throughput check only pulls a test file over curl — the
+# same kind of traffic any app already sends, nothing is exec'd into or
+# installed in the container), so it is safe to run against a live gateway at
+# any time (including from a remote session — see the caveat in agent.md L16).
 #
-# The 6 checks (1-5 mirror sweep.md §1):
+# The 7 checks (1-5 mirror sweep.md §1):
 #   1. Containers          — warp, adguardhome, tailscale, tor, routing-fix up/healthy
 #   2. Double-tunnel/leak  — container WARP exit IP == host exit IP, both warp=on
 #   3. Host↔container path  — Tailscale exit-node is a DIRECT P2P conn, not DERP relay
 #   4. AdGuard filtering    — compiled rule counts present + live DNS interception
 #   5. PF kill-switch       — pfctl Enabled + anchor com.apple/nullexit carries rules
 #   6. Tailnet reachability — every ONLINE Tailscale peer answers a tailscale ping
+#      (DERP-relayed peers are flagged as throughput-degraded, not a failure)
+#   7. Throughput           — host path vs. WARP-only baseline (via the container's
+#      SOCKS5 proxy, no exec/install inside the container). Catches "slow AND
+#      dropping mid-transfer" that a one-shot ping/latency check can't see.
+#      Real per-device (phone) throughput can't be measured without an agent
+#      running on the device, so mesh peers get a path/latency flag instead
+#      (see check 6).
 #
 # A timestamped report is written to the project root (one file per run, so
 # runs can be diffed). stdout carries a coloured summary + a final PASS/FAIL
@@ -96,7 +106,7 @@ fi
 GATEWAY_TS_IP="$(read_adguard_ip)"   # gateway Tailscale IP from .gateway_ip
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "1/6  Containers"
+section "1/7  Containers"
 # ═══════════════════════════════════════════════════════════════════════════
 # All five services must be running; warp + adguardhome additionally expose a
 # healthcheck and must be 'healthy'. `docker compose ps` is the source of truth.
@@ -129,7 +139,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "2/6  Double-tunnel / IP-leak"
+section "2/7  Double-tunnel / IP-leak"
 # ═══════════════════════════════════════════════════════════════════════════
 # The container's WARP egress and the host's egress must be the SAME public IP
 # with warp=on for both. Equal IPs ⇒ all host traffic is exiting through the
@@ -163,7 +173,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "3/6  Host ↔ container path (direct P2P, not DERP relay)"
+section "3/7  Host ↔ container path (direct P2P, not DERP relay)"
 # ═══════════════════════════════════════════════════════════════════════════
 # `tailscale status` annotates each peer with 'direct <ip:port>' or
 # 'relay "<derp>"'. The gateway peer should be DIRECT — a DERP relay hop adds
@@ -194,7 +204,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "4/6  AdGuard filtering"
+section "4/7  AdGuard filtering"
 # ═══════════════════════════════════════════════════════════════════════════
 # Two signals: (a) the compiled ruleset exists with a non-trivial block count,
 # (b) the gateway resolver actually answers a query (live interception).
@@ -235,7 +245,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "5/6  PF kill-switch"
+section "5/7  PF kill-switch"
 # ═══════════════════════════════════════════════════════════════════════════
 # PF must be Enabled AND the com.apple/nullexit anchor must carry rules.
 # An empty/absent anchor means the fail-closed lane is not actually armed.
@@ -258,7 +268,7 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "6/6  Tailnet reachability (ping all online devices)"
+section "6/7  Tailnet reachability (ping all online devices)"
 # ═══════════════════════════════════════════════════════════════════════════
 # Every peer the coordination server reports as ONLINE should answer a
 # `tailscale ping` (TSMP probes the WireGuard data path; ICMP is avoided since
@@ -283,7 +293,11 @@ else
       PONG=$(run_with_timeout 10 tailscale ping --timeout=3s --c 1 --until-direct=false "$peer_ip" 2>>"$LOG_FILE")
       if printf '%s' "$PONG" | grep -q '^pong'; then
         detail=$(printf '%s\n' "$PONG" | head -1 | sed -E 's/^pong from [^ ]+ \([^)]+\) //')
-        ok "$peer_name ($peer_ip) — pong $detail"
+        if printf '%s' "$detail" | grep -q 'DERP'; then
+          ok "$peer_name ($peer_ip) — pong $detail — relayed, expect degraded throughput (see check 7)"
+        else
+          ok "$peer_name ($peer_ip) — pong $detail"
+        fi
       else
         fail "$peer_name ($peer_ip) — no pong (online per control plane, data path dead)"
         unreached=$((unreached+1))
@@ -297,6 +311,91 @@ else
     else
       record FAIL "tailnet"
     fi
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
+section "7/7  Throughput (host path vs. WARP-only baseline)"
+# ═══════════════════════════════════════════════════════════════════════════
+# A single ping only proves the path is UP, not that it stays up under real
+# load — devref.md §15.3.1 documents sustained-transfer bufferbloat/reset
+# behavior a quick latency check can't see. Pulls a real test file twice:
+# once over the host's normal route (full double-tunnel: Tailscale exit-node
+# wrap + WARP) and once straight through the warp container's own SOCKS5
+# proxy (WARP only, no Tailscale wrap) — port read from the live
+# /tmp/nullexit-ports.env, so this never execs into or installs anything in
+# the container (sweep stays read-only w.r.t. gateway state). Comparing the
+# two shows whether slowness/resets come from WARP itself or from the extra
+# Tailscale-wrap hop. Skip with SWEEP_SKIP_THROUGHPUT=true in .env.
+THROUGHPUT_SKIP=$(read_env_var "SWEEP_SKIP_THROUGHPUT" | tr '[:upper:]' '[:lower:]')
+if [ "$THROUGHPUT_SKIP" = "true" ]; then
+  warn "skipped (SWEEP_SKIP_THROUGHPUT=true)"
+  record WARN "throughput"
+else
+  TP_URL="${SWEEP_THROUGHPUT_URL:-http://speedtest.tele2.net/10MB.zip}"
+  TP_TIMEOUT="${SWEEP_THROUGHPUT_TIMEOUT:-30}"
+  TP_MIN_BYTES=1000000   # a "failure" below this size is a mid-transfer stall, not just slow
+
+  measure() {   # $1 = extra curl args (word-split; may be empty)
+    run_with_timeout "$TP_TIMEOUT" curl -sS --max-time "$TP_TIMEOUT" $1 -o /dev/null \
+      -w 'code=%{http_code} size=%{size_download} time=%{time_total} bps=%{speed_download}' \
+      "$TP_URL" 2>>"$LOG_FILE"
+  }
+  leg_verdict() {   # $1=http_code $2=bytes_downloaded -> ok|stall|blocked|unknown
+    [ -z "$1" ] && { echo unknown; return; }
+    [ "$1" != "200" ] && { echo blocked; return; }
+    [ -n "$2" ] && [ "$2" -lt "$TP_MIN_BYTES" ] 2>/dev/null && { echo stall; return; }
+    echo ok
+  }
+  to_mbps() { awk -v b="${1:-}" 'BEGIN{ if (b=="") print "?"; else printf "%.1f", (b*8)/1000000 }'; }
+
+  HOST_TP=$(measure "")
+  HOST_CODE=$(printf '%s' "$HOST_TP" | grep -oE 'code=[0-9]+' | cut -d= -f2)
+  HOST_SIZE=$(printf '%s' "$HOST_TP" | grep -oE 'size=[0-9]+' | cut -d= -f2)
+  HOST_TIME=$(printf '%s' "$HOST_TP" | grep -oE 'time=[0-9.]+' | cut -d= -f2)
+  HOST_BPS=$(printf '%s' "$HOST_TP"  | grep -oE 'bps=[0-9.]+'  | cut -d= -f2)
+  HOST_VERDICT=$(leg_verdict "$HOST_CODE" "$HOST_SIZE")
+  HOST_MBPS=$(to_mbps "$HOST_BPS")
+  case "$HOST_VERDICT" in
+    ok)      ok   "host path: ${HOST_MBPS} Mbps (${HOST_SIZE:-0} bytes in ${HOST_TIME:-?}s)" ;;
+    stall)   warn "host path: connection reset mid-transfer after ${HOST_SIZE:-0} bytes — sustained-load drop, see devref.md §15.3.1" ;;
+    blocked) warn "host path: test endpoint returned HTTP ${HOST_CODE:-?} (egress IP likely flagged) — inconclusive, not a gateway fault" ;;
+    unknown) warn "host path: no response (timeout after ${TP_TIMEOUT}s)" ;;
+  esac
+
+  SOCKS_PROXY_PORT=""
+  [ -f /tmp/nullexit-ports.env ] && SOCKS_PROXY_PORT=$(grep -oE 'SOCKS_PROXY_PORT=[0-9]+' /tmp/nullexit-ports.env | cut -d= -f2)
+  if [ -z "$SOCKS_PROXY_PORT" ]; then
+    warn "WARP-only baseline: SOCKS_PROXY_PORT unknown (no /tmp/nullexit-ports.env — gateway not started via toggle.sh?)"
+    CTR_VERDICT=unknown
+  else
+    CTR_TP=$(measure "--socks5-hostname 127.0.0.1:$SOCKS_PROXY_PORT")
+    CTR_CODE=$(printf '%s' "$CTR_TP" | grep -oE 'code=[0-9]+' | cut -d= -f2)
+    CTR_SIZE=$(printf '%s' "$CTR_TP" | grep -oE 'size=[0-9]+' | cut -d= -f2)
+    CTR_TIME=$(printf '%s' "$CTR_TP" | grep -oE 'time=[0-9.]+' | cut -d= -f2)
+    CTR_BPS=$(printf '%s' "$CTR_TP"  | grep -oE 'bps=[0-9.]+'  | cut -d= -f2)
+    CTR_VERDICT=$(leg_verdict "$CTR_CODE" "$CTR_SIZE")
+    CTR_MBPS=$(to_mbps "$CTR_BPS")
+    case "$CTR_VERDICT" in
+      ok)      ok   "WARP-only baseline: ${CTR_MBPS} Mbps (${CTR_SIZE:-0} bytes in ${CTR_TIME:-?}s)" ;;
+      stall)   warn "WARP-only baseline: connection reset mid-transfer after ${CTR_SIZE:-0} bytes — bug is in WARP itself, not the Tailscale wrap" ;;
+      blocked) warn "WARP-only baseline: test endpoint returned HTTP ${CTR_CODE:-?} — inconclusive" ;;
+      unknown) warn "WARP-only baseline: no response (timeout after ${TP_TIMEOUT}s)" ;;
+    esac
+  fi
+
+  if [ "$HOST_VERDICT" = "ok" ] && [ "$CTR_VERDICT" = "ok" ]; then
+    if [ "$HOST_MBPS" != "?" ] && [ "$CTR_MBPS" != "?" ]; then
+      DELTA=$(awk -v h="$HOST_MBPS" -v c="$CTR_MBPS" 'BEGIN{ if (c<=0) print 0; else printf "%.0f", 100*(c-h)/c }')
+      [ "$DELTA" -ge 30 ] 2>/dev/null && warn "host is ${DELTA}% slower than the WARP-only baseline — the Tailscale exit-node wrap is the added cost here, not WARP"
+    fi
+    record PASS "throughput"
+  elif [ "$HOST_VERDICT" = "stall" ] || [ "$CTR_VERDICT" = "stall" ]; then
+    record WARN "throughput"
+  elif [ "$HOST_VERDICT" = "unknown" ] && [ "$CTR_VERDICT" = "unknown" ]; then
+    record FAIL "throughput"
+  else
+    record WARN "throughput"
   fi
 fi
 
