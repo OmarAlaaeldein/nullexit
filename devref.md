@@ -172,6 +172,16 @@ To fix this, we use `FIREWALL_OUTBOUND_SUBNETS=192.168.0.0/16,172.16.0.0/12,10.0
 - **172.16.0.0/12** is especially critical because many modern Wi-Fi routers (and Docker itself) assign IPs in this block (e.g., `172.17.x.x`). 
 - This bypass allows Tailscale's UDP packets to reach devices on the same Wi-Fi directly, establishing a fast peer-to-peer connection while the actual web traffic inside the tunnel remains fully routed through WARP.
 
+#### 5.1.1 Why This Matters: Untrusted, Non-Enterprise Networks
+
+Most public/consumer hotspots — hotels, cafes, airports, a friend's home router — are **untrusted** (any other guest is a stranger, no admin-enforced isolation) but **not** enterprise-hardened the way WPA2-Enterprise/802.1x campus networks are (see §15.7.1's SNAT poisoning analysis for why *those specifically* get P2P disabled). Because open networks usually lack AP client isolation, `watcher.sh`'s `detect_lan_p2p_mode()` probe (a ping to the default gateway — see §16.4) typically finds them P2P-capable and flips `TAILSCALE_ALLOW_LAN_P2P` on automatically.
+
+This is the scenario where nullexit's mesh-first design pays off over a conventional single-device VPN app:
+
+1. **Encryption doesn't depend on P2P succeeding.** Every packet between mesh devices is WireGuard-encrypted whether it goes direct or via DERP. An open network's *lack* of isolation is itself the risk — anyone else on that hotel Wi-Fi can reach your device at L2 — but it doesn't expose your traffic's content, only its existence/metadata to that local segment.
+2. **Zero configuration per network.** The device only needs to be Tailscale-enrolled once, ever. `watcher.sh` re-runs its isolation probe on every Wi-Fi change (`scutil n.watch` on `State:/Network/Global/IPv{4,6}`, §15.5.1) and rewrites `.lan_p2p_detected` accordingly, which `routing-fix.sh` picks up within 30s — no app to reopen, no profile to import, no manual toggle per hotspot. The same phone gets DERP-only (safe, no SNAT risk) on an isolated campus network and fast direct P2P (safe, isolation genuinely absent) at a hotel that night, entirely automatically.
+3. **The auto-detection is what makes this safe to leave alone.** A user who manually forced `TAILSCALE_ALLOW_LAN_P2P=true` globally and never touched it again would carry the P2P attempt onto the *next* enterprise network they visit, reproducing the §15.7.1 SNAT-poisoning blackout. The watcher's per-network re-probe is what lets the setting behave correctly on untrusted-but-open networks without that risk following the user everywhere.
+
 ---
 
 ### 5.2 Firewalling & Per-Device Access Control
