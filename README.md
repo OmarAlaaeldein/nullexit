@@ -29,7 +29,9 @@ WIREGUARD_PUBLIC_KEY=<Generated>
 WIREGUARD_ADDRESSES=<Generated>
 TS_AUTHKEY=tskey-auth-...
 GATEWAY_RULE_PROFILE=medium        # light | medium | heavy
-# Safe MSS for double-tunneled traffic (Tailscale + WARP). Change to 1180 if you experience slow speeds and have a healthy path.
+# Safe MSS for double-tunneled traffic (Tailscale + WARP). Don't raise this —
+# devref.md §15.3.2 found 1180 (and even 1160) still too large and causes the
+# exact mysterious mid-transfer stalls this value exists to prevent.
 GATEWAY_MSS=1120                   
 # Set to false to run as a 'Headless Server' (Docker acts as an exit node, but the host Mac/Linux's own internet is NOT hijacked).
 GATEWAY_HIJACK_HOST=true
@@ -214,7 +216,7 @@ Optional `.env` settings (common subset; the full canonical table lives in `devr
 - `GATEWAY_BYPASS_PING=true` — proceed even if pre-flight connectivity checks fail.
 - `GATEWAY_USE_EXIT_NODE=false` — DNS-only mode, skip exit-node routing.
 - `GATEWAY_HIJACK_HOST=false` — skip DNS hijacking on the host (provides VPN/adblocking only to external Tailscale peers).
-- `GATEWAY_MSS=1180` — override the TCP MSS clamp for the double-tunnel (default `1120`; raise to `1180` for more speed on a healthy path).
+- `GATEWAY_MSS` — override the TCP MSS clamp for the double-tunnel. Default (and only validated-safe value) is `1120`; devref.md §15.3.2 found 1180 — and even 1160 — still too large for the Tailscale+WARP double-encapsulation overhead, causing the exact mid-transfer stalls this clamp exists to prevent. Applies to both the container (`post-rules.txt`) and the host (`pf.conf`) — they're kept in sync automatically.
 - `HOST_MTU=1200` — override the host Tailscale interface MTU. Defaults to 1200 to fit inside the 1280-byte WARP tunnel.
 - `KILL_SWITCH=true` — enforce strict network lock that breaks SSH if the VPN fails.
 - `STOP_COLIMA_ON_EXIT=true` — fully shut down the Colima VM on toggle-off (saves battery on dedicated hosts).
@@ -241,7 +243,14 @@ cp ./launchd/com.nullexit.wake-recovery.plist ~/Library/LaunchAgents/
 sed -i '' "s|__NULLEXIT_HOME__|$(pwd)|" ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 launchctl load -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 ```
-See `devref.md §15.5.1` for the full deep dive.
+Wi-Fi roams and network changes are caught reliably. Lid-close/wake is
+**best-effort on macOS Sonoma+** — Apple suspends LaunchAgents during forced
+sleep rather than re-triggering them on every wake, so the watcher can miss
+the specific wake event (other self-healing — the DNS Watcher, Tailscale's
+DERP fallback, gluetun's healthcheck — still recovers within ~30-60s
+regardless). If lid-wake responsiveness matters more than that window,
+`brew install sleepwatcher` and hook `recover.sh --post-wake` to `~/.wake`
+instead. See `devref.md §15.5.1` for the full deep dive.
 
 ### Config profiles — taming the flag sprawl
 The opt-in features below add up to several interacting `.env` switches. Rather than
@@ -360,7 +369,7 @@ See `devref.md §9` for the full threat model, Snowden programme analysis, and t
   - Every run now records lifecycle breadcrumbs regardless of `DEBUG_TRACE`: an `EXEC:` / `EXIT <code>:` line brackets each heavyweight command (`colima start`, `docker compose up -d --build`, `docker compose down`), and an `EXIT: code=<N> phase=<init|stop|start>` line is written when the script exits **for any reason** — including a killed terminal, `pkill`, or OOM. This closes a prior blind spot where an interrupted **START** (e.g. a `--restart` race while Wi-Fi was re-associating) left the log ending abruptly after the teardown with no indication of what failed. If a toggle "does nothing" or the gateway ends up half-up, `grep -E 'EXEC:|EXIT ' output.log | tail` shows the last command run and its result.
 - **`DEBUG_TRACE=true`** (in `.env`) — Full command-by-command execution trace of `toggle.sh`, mirrored to `output.log` for deep post-mortems of intermittent failures. Each traced line is timestamped and tagged with `file:line:function` (via a custom `PS4`), so you can follow the *exact* code path a run took — including subshells, Docker/Colima calls, and where it aborted. Off by default because it is verbose (the log grows quickly); enable it only while reproducing a specific problem, then set it back to `false`. Implementation note: it prefers bash's `BASH_XTRACEFD` (bash ≥ 4.1, e.g. most Linux) to send the trace to the log while keeping your terminal clean; on macOS's stock `/bin/bash` 3.2 it transparently falls back to teeing stderr to the log (trace also appears in the terminal). It never uses the dynamic-fd (`exec {var}>>`) form, so it is safe on 3.2. To read a trace: `grep -nE '^\+ ' output.log`.
 - **`bash scripts/diagnose-host-leak.sh`** — One-shot host-routing diagnostic. Runs 8 checks and classifies your state into one of four known scenarios (System Extension conflict, SOCKS5 fallback, IPv6 leak, route-table freeze) or OK, and prints the exact fix command. Check 5 uses `route -n get 1.1.1.1` to ask the kernel which interface real traffic actually resolves through (more accurate than `netstat -rn | grep default` on macOS). Pass `--fix` to apply the remediation automatically. Pass `--watch` (or `--watch 30`) to run a full baseline diagnostic then continuously monitor warp/IPv6/default-route for leaks, alerting on any state change.
-- **`bash scripts/sweep.sh`** — One-shot, read-only gateway health sweep. Runs 6 checks — containers up/healthy, double-tunnel/IP-leak (host egress == container egress with `warp=on`), direct P2P to the gateway (no DERP relay), AdGuard compiled-rule counts + live DNS interception, PF kill-switch armed, and tailnet reachability (a `tailscale ping` to every online peer) — then rolls them into a PASS/WARN/FAIL verdict. Writes a timestamped `sweep-<UTC>.txt` report to the repo root (diffable across runs) and exits non-zero on FAIL, so it can gate launchd hooks or CI. Pass `--quiet` for just the verdict line. It never mutates routing, PF, DNS, or containers — safe to run against a live gateway at any time.
+- **`bash scripts/sweep.sh`** — One-shot, read-only gateway health sweep. Runs 7 checks — containers up/healthy, double-tunnel/IP-leak (host egress == container egress with `warp=on`), direct P2P to the gateway (no DERP relay), AdGuard compiled-rule counts + live DNS interception, PF kill-switch armed, tailnet reachability (a `tailscale ping` to every online peer, flagging DERP-relayed peers as throughput-degraded), and real throughput (host path vs. a WARP-only baseline via the container's SOCKS5 proxy, against a fast CDN — no exec/install inside the container) — then rolls them into a PASS/WARN/FAIL verdict. Writes a timestamped `sweep-<UTC>.txt` report to the repo root (diffable across runs) and exits non-zero on FAIL, so it can gate launchd hooks or CI. Pass `--quiet` for just the verdict line. It never mutates routing, PF, DNS, or containers — safe to run against a live gateway at any time.
 - **`bash scripts/fix-docker-bridge-collision.sh`** — One-shot fix for Docker bridge IP conflicts. If your local Wi-Fi router assigns you an IP in the `172.17.0.0/16` range, it will violently collide with Docker's default internal bridge, permanently killing your internet. This script detects the collision and auto-patches your Colima VM to use a safe subnet (e.g. `10.200.0.1/24`).
 - **`devref.md`** — Complete architecture reference, routing deep-dives, and full resolved-issues log. Read this before modifying any routing or firewall logic.
 
@@ -385,6 +394,7 @@ GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 
 ## 13. Changelog
 
+- **July 18, 2026** — Fixed two real bugs surfaced by live sweep evidence: the QUIC/DoT `REJECT` rules in `post-rules.txt` were shadowed by an earlier blanket `ACCEPT` (0 packets ever matched — the intended Instagram/QUIC-fragmentation fix from `devref.md §15.3.3` was never actually enforced), now reordered ahead of it; and the host-side `pf.conf` MSS clamp was stuck at the pre-`§15.3.2` value of `1160` while the container had already moved to `1120` — `scripts/common.sh` now syncs both from `GATEWAY_MSS` so they can't drift apart again. Also fixed `setup.sh`/`scripts/setup-common.sh` never generating `NULLEXIT_SEED` (every fresh install hard-failed its first `toggle.sh` on a missing-seed crypto error) and defaulting `KILL_SWITCH` to `false` for new installs — see `devref.md §15.12.23`. `scripts/sweep.sh` gained a 7th check (**throughput**, host path vs. a WARP-only baseline against a fast CDN) — see `devref.md §15.3.6` for why the target choice matters and `§9` below for the check itself.
 - **July 17, 2026** — `scripts/sweep.sh` (the read-only automated health sweep added July 15, mirroring `sweep.md §1`) gained a 6th check: **tailnet reachability** — every Tailscale peer reported online is probed with `tailscale ping` (TSMP, so it works even on phones that drop ICMP) and rolled into the PASS/WARN/FAIL verdict. Documented in §9 above.
 - **July 12, 2026** — Tor ControlPort dynamic password authentication (unified with `ADGUARD_PASSWORD`), enabling live circuit inspection via `/sweep`. See `devref.md §15.10.2`.
 - **July 11, 2026** — Tor container hardening: `obfs4proxy` restored (base image → `debian:bookworm-slim`), robust bridge-file validation, and image pinning. See `devref.md §15.10.1`.

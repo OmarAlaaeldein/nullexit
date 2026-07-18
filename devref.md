@@ -232,7 +232,7 @@ To add a new country to the blocklist:
 | `GATEWAY_BYPASS_PING` | (Optional) `true` to proceed even if pre-flight checks fail |
 | `GATEWAY_USE_EXIT_NODE` | (Optional) `false` to skip exit node, DNS-only mode |
 | `GATEWAY_HIJACK_HOST` | (Optional) `false` to skip DNS hijacking on the host (VPN/adblocking for Tailscale peers only) |
-| `GATEWAY_MSS` | (Optional) TCP MSS clamp value (default 1120); 1180 for speed on healthy paths |
+| `GATEWAY_MSS` | (Optional) TCP MSS clamp value. Default and only validated-safe value is `1120` — §15.3.2 found 1180 (and 1160) still too large for the double-encapsulation overhead and causes mid-transfer stalls. Applied to both the container (`post-rules.txt`) and the host (`pf.conf`), kept in sync. |
 | `WARP_FAIL_THRESHOLD` | (Optional) Consecutive `warp=off` polls before auto-shutdown (default 6 = 30s; 3 = 15s) |
 | `WARP_ENDPOINT_1` | (Optional) Override Cloudflare WARP WireGuard endpoint IP 1 (default `162.159.192.1`) |
 | `WARP_ENDPOINT_2` | (Optional) Override Cloudflare WARP WireGuard endpoint IP 2 (default `162.159.193.1`) |
@@ -983,7 +983,7 @@ The marker file path is hardcoded to `/tmp/nullexit-warp-inhibit.marker` in both
 
 **Analysis:** The cellular network (or the Tailscale DERP relay) enforces a strict MTU of 1280 bytes. Critically, it acts as a "PMTUD Blackhole" — it silently drops packets larger than 1280 bytes instead of returning an ICMP "Fragmentation Needed" warning. If the exit node tries to send a standard 1500-byte internet packet to the phone over this link, it vanishes, causing web pages to stall permanently.
 
-**Conclusion:** This empirically validates the absolute necessity of the TCP MSS clamping rule in `post-rules.txt`. By artificially clamping the MSS to `1120` (or `1180`), we ensure the TCP payload + headers + double-WireGuard overhead never exceeds the strict 1280-byte ceiling of the cellular mesh link.
+**Conclusion:** This empirically validates the absolute necessity of the TCP MSS clamping rule in `post-rules.txt`. By artificially clamping the MSS to `1120` (the value §15.3.2 above found necessary — `1180` measured too large), we ensure the TCP payload + headers + double-WireGuard overhead never exceeds the strict 1280-byte ceiling of the cellular mesh link.
 
 #### 15.3.5 Low Gateway Throughput (DERP Relay & MTU Fragmentation) — Fixed
 **Problem:** The host Mac's internet throughput through the gateway dropped significantly (e.g., from 34Mbps raw to 2.1Mbps via gateway). This was caused by a combination of two bottlenecks:
@@ -1006,6 +1006,17 @@ The host's Tailscale interface (`utun5`) defaulted to an MTU of 1280. The WARP t
 > - **What genuinely *doesn't* work on a VM host is UDP hole-punching to arbitrary *external* peers** (see §15.13). That is a real limitation of userspace VM networking, and it is why remote peers fall back to DERP unless bridged mode is enabled on a trusted LAN. Direct host↔container P2P is the one case that works regardless — because both endpoints live on the same physical machine, no hole-punching is needed at all. It was verified `direct 172.17.52.223` even in plain user-mode networking (no `--network-address`).
 >
 > In short: the DROP is the deliberate policy, the RETURN is a surgical exception for same-machine traffic, and the whole thing is standard bridge networking — not a Docker bug and not an exploit.
+
+#### 15.3.6 The "~4Mbps Ceiling" Was a Benchmark Artifact, Not a Tunnel Bottleneck (July 18, 2026)
+**Symptom:** Repeated throughput tests against `speedtest.tele2.net` from both the host (full double-tunnel) and the `warp` container (isolated via its own SOCKS5 proxy) consistently landed around 3.3-4.7 Mbps, regardless of which leg was tested. This looked like a hard nullexit-imposed ceiling and was the leading suspect for the Instagram/general-slowness symptoms in §15.3.3-15.3.4.
+
+**Investigation:** Before accepting "the tunnel caps at ~4Mbps," the same target was measured **raw** — gateway fully stopped, plain ISP egress, no tunnel at all — and it *still* came back at ~3.2 Mbps. A second raw test against a fast, nearby CDN (Cloudflare) returned ~32.2 Mbps on the same physical connection. `speedtest.tele2.net` was the bottleneck, not nullexit; it's a slow/distant target that happened to be the first thing tried.
+
+**Confirmation:** Re-measured through the tunnel against a fast CDN that (unlike Cloudflare's own speed-test endpoint, which 403s WARP's shared/CGNAT egress IPs as abuse-prevention) doesn't flag WARP IPs — Hetzner's public speed-test files. Result: **15.8-26.4 Mbps** tunneled, in the same ballpark as the 32.2 Mbps raw baseline (roughly 20-50% overhead from the double WireGuard encapsulation, normal for this architecture). CPU and memory on the Colima VM were also checked during sustained transfers (`colima ssh -- top -bn1` / `free -m`) and ruled out as a bottleneck — load average stayed near 0.00-0.07 and swap held flat around 250MB throughout, on both a run that completed cleanly and one that reset mid-transfer.
+
+**Fix:** `scripts/sweep.sh`'s throughput check (§9, check 7/7) now defaults to the Hetzner target instead of `speedtest.tele2.net`, so future sweeps report real tunnel performance instead of accidentally re-measuring a slow third-party server and misattributing it to nullexit.
+
+**Residual, unchanged:** the occasional mid-transfer connection reset (curl exit 56, `Recv failure: Connection reset by peer`) observed on maybe 1-in-6 to 1-in-8 attempts is still unexplained by CPU/memory and remains consistent with the gvproxy/UDP-fragmentation-under-load issue in §15.3.1 — a real, separate, and still-open question from the throughput-ceiling one this section resolves.
 
 ### 15.4 DNS Interception & Proxy
 
@@ -1977,9 +1988,16 @@ The root-cause leap, though, came from a **design-smell intuition, not the stack
 
 **Fix plan (chosen: Option 2 — narrow, always-on, opt-in split-route). Implemented and shipped — enabled by default:**
 - **Mechanism:** add more-specific host routes for FaceTime's Apple `/16`s via the **physical** gateway (`172.17.0.1`/`en0`). Longest-prefix match beats Tailscale's exit-node `0.0.0.0/1` + `128.0.0.0/1` routes, so only those `/16`s leave **direct** while everything else stays double-tunneled. Mirrors `add_warp_bypass_routes`.
-- **Wiring:** `add_apple_split_routes()` / `remove_apple_split_routes()` in `common.sh`; called in toggle START (after exit-node assert) + `recover.sh --post-wake` (survives roam) + removed on STOP; guarded by `FACETIME_SPLIT_ROUTE` in `.env` (default `true` — the privacy tradeoff below was accepted, so this ships on).
+- **Wiring:** `add_apple_split_routes()` / `remove_apple_split_routes()` in `common.sh`; called in toggle START (after exit-node assert) + `recover.sh --post-wake` (survives roam) + removed on STOP; guarded by `FACETIME_SPLIT_ROUTE` in `.env` — `.env.example` ships it `false` (opt-in, privacy-first default for new installs), enabled here after the tradeoff below was accepted and the CIDR verified against a real call.
 - **Privacy tradeoff:** whatever `/16`s go direct see the **real ISP IP** (not WARP). Apple already ties traffic to the Apple ID, so Apple-direct is the accepted scope; user chose **narrow** (FaceTime-infra `/16`s only) over all-`17.0.0.0/8` to minimise the surface.
 - **CIDR list — finalised from an empirical capture:** host-side `sudo tcpdump -n -i <exit-utun, e.g. utun6> net 17.0.0.0/8` during a real FaceTime call. The capture identified **`17.249.0.0/16`** as the load-bearing media/relay range — this is the value shipped in `.env.example`'s `FACETIME_DIRECT_SUBNETS`, verified working end-to-end on a real call. (Earlier DNS-only guesses — `17.57/16` APNs push/ringing, `17.248/16` iCloud/FaceTime gateway, `17.253/16` aaplimg push CDN, `17.157/16` GSA auth — were signaling-only ranges and did not carry media; the capture superseded them.) See P2P note §16.4.
+
+#### 15.12.23 setup.sh Never Generated NULLEXIT_SEED — Every Fresh Install Hard-Failed Its First toggle.sh (July 18, 2026)
+**Symptom:** README §"Cryptographic Integrity Verification" and this doc's own `.env` variable table both claimed `NULLEXIT_SEED` is "generated by `setup.sh`." It wasn't. `scripts/setup-common.sh`'s `.env`-writing step never referenced `NULLEXIT_SEED` at all, and `.env.example` only offered a placeholder telling the user to run `openssl rand -hex 32` by hand. `.signatures` is committed to git (tracking the maintainer's own local seed), so a fresh clone's `toggle.sh` would call `scripts/crypto.sh --verify`, find no `NULLEXIT_SEED` in the new `.env` at all, and hard-fail with a cryptic seed error on the very first run — with nothing in the setup flow or its closing instructions telling the user a `crypto.sh --sign` step was needed, or why.
+
+**Compounding bug found in the same code path:** `setup-common.sh`'s `.env` writer also defaulted `KILL_SWITCH` to `"false"` for brand-new installs (`EXISTING_KILL="false"`, only overridden if an `.env` already existed with a different value) — the exact inverse of the "leave true, this is the core leak guarantee" invariant enforced everywhere else (`.env.example`, `scripts/profiles.sh`). Every fresh install would have shipped with the kill-switch off by default, not just failed on first boot.
+
+**Fix:** `setup-common.sh` now generates `NULLEXIT_SEED` via `openssl rand -hex 32` when `.env` doesn't already have one (preserving it on re-runs, same pattern as every other preserved flag), writes it into the new `.env`, and calls `scripts/crypto.sh --sign` immediately after writing `.env` — so a fresh install's first `toggle.sh` finds a valid seed and matching signatures instead of failing cold. `EXISTING_KILL` now defaults to `"true"`.
 
 ---
 
