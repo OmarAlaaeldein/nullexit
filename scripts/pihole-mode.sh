@@ -92,10 +92,20 @@ cmd_enable() {
     exit 1
   fi
   echo "pihole-lan: starting LAN DNS forwarder on ${addr}:53 → AdGuard 127.0.0.1:${ADGUARD_PORT}…"
-  # :53 needs root. Capture the child PID from inside the privileged shell.
-  sudo -n bash -c "LISTEN_ADDR='$addr' LISTEN_PORT=53 TARGET_HOST=127.0.0.1 TARGET_PORT='$ADGUARD_PORT' \
-      nohup '$(command -v python3)' '$DNS_PROXY' >>'$LOG_FILE' 2>&1 & echo \$! > '$PID_FILE'" || {
-    echo "pihole-lan: failed to start (need passwordless sudo to bind :53)." >&2; exit 1; }
+  # :53 needs root. The shipped sudoers NOPASSWD rule only covers the literal
+  # `python3 dns-proxy.py` command — no bash -c wrapper, no env prefix — so
+  # config is dropped in a file dns-proxy.py reads itself, not via env vars
+  # that `sudo -n` would strip. See dns-proxy.py's own comment for why.
+  {
+    echo "LISTEN_ADDR=$addr"
+    echo "LISTEN_PORT=53"
+    echo "TARGET_HOST=127.0.0.1"
+    echo "TARGET_PORT=$ADGUARD_PORT"
+  } > /tmp/nullexit-dns-proxy.conf
+  chmod 600 /tmp/nullexit-dns-proxy.conf 2>/dev/null || true
+  nohup sudo -n "$(command -v python3)" "$DNS_PROXY" >>"$LOG_FILE" 2>&1 &
+  disown "$!" 2>/dev/null || true
+  echo "$!" > "$PID_FILE"
   sleep 0.4
   if running; then
     log "enabled on ${addr}:53 → 127.0.0.1:${ADGUARD_PORT}"
@@ -114,6 +124,7 @@ cmd_disable() {
     echo "pihole-lan: not running."
   fi
   sudo -n rm -f "$PID_FILE" 2>/dev/null || rm -f "$PID_FILE" 2>/dev/null || true
+  rm -f /tmp/nullexit-dns-proxy.conf 2>/dev/null || true
 }
 
 cmd_status() {

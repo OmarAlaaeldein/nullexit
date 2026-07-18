@@ -19,6 +19,31 @@ LISTEN_PORT = int(os.environ.get("LISTEN_PORT", 53))
 TARGET_HOST = os.environ.get("TARGET_HOST", "127.0.0.1")
 TARGET_PORT = int(os.environ.get("TARGET_PORT", 5354))
 
+# When invoked via `sudo -n`, custom env vars set by the caller are stripped by
+# sudo's env_reset unless allowlisted in sudoers — which the shipped NOPASSWD
+# rule for this exact script (no bash -c wrapper, no env prefix) does not do.
+# A caller that needs non-default values drops them here *before* sudo'ing the
+# literal whitelisted command; this process picks them up on top of the
+# env-var/default values above. Same bounded local-TOCTOU class already
+# accepted for /tmp/nullexit-ports.env (see devref.md §15.9.5) — restrictive
+# perms, not a hard security boundary against a co-resident attacker.
+_CONF = "/tmp/nullexit-dns-proxy.conf"
+if os.path.isfile(_CONF):
+    with open(_CONF) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith("#") or "=" not in _line:
+                continue
+            _k, _v = _line.split("=", 1)
+            if _k == "LISTEN_ADDR":
+                LISTEN_ADDR = _v
+            elif _k == "LISTEN_PORT":
+                LISTEN_PORT = int(_v)
+            elif _k == "TARGET_HOST":
+                TARGET_HOST = _v
+            elif _k == "TARGET_PORT":
+                TARGET_PORT = int(_v)
+
 
 def handle_query(data: bytes, client_addr: tuple, sock: socket.socket) -> None:
     """Forward a single DNS query over TCP and send the response back via UDP."""

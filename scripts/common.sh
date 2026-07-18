@@ -968,6 +968,7 @@ stop_local_dns_proxy() {
   fi
   # Clean up any stale Python DNS proxy processes
   sudo -n pkill -f "dns-proxy.py" 2>/dev/null || true
+  rm -f /tmp/nullexit-dns-proxy.conf 2>/dev/null || true
 }
 
 # Start local DNS proxy (Python)
@@ -986,7 +987,13 @@ start_local_dns_proxy() {
   stop_local_dns_proxy
 
   echo -n "  Starting local DNS proxy via Python (UDP:53 → TCP:${DNS_PROXY_PORT})... "
-  sudo -n bash -c "TARGET_PORT=$DNS_PROXY_PORT \"$DNS_PROXY_BIN\" \"$DNS_PROXY_SCRIPT\"" &
+  # The shipped sudoers NOPASSWD rule only covers the literal `python3
+  # dns-proxy.py` command — no bash -c wrapper, no env prefix — so sudo -n's
+  # env_reset strips TARGET_PORT before it ever reaches the script. Drop it in
+  # a file dns-proxy.py reads itself instead (see its own comment for why).
+  echo "TARGET_PORT=$DNS_PROXY_PORT" > /tmp/nullexit-dns-proxy.conf
+  chmod 600 /tmp/nullexit-dns-proxy.conf 2>/dev/null || true
+  sudo -n "$DNS_PROXY_BIN" "$DNS_PROXY_SCRIPT" &
   DNS_PROXY_PID=$!
   disown "$DNS_PROXY_PID" 2>/dev/null || true
 

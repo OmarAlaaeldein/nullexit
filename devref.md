@@ -1672,6 +1672,17 @@ ls -la <FILE>             # mode should be 0644
 <your normal validation command>
 ```
 
+#### 15.9.7 sudo -n bash -c Silently Breaks the Scoped NOPASSWD Grant for dns-proxy.py (Fixed 2026-07-18)
+**Symptom:** Found while verifying `scripts/pihole-mode.sh` actually works, not from a reported failure — `bash scripts/pihole-mode.sh enable` hung on an interactive password prompt despite passwordless sudo being correctly configured and working for every other privileged call (`pfctl`, `networksetup`, etc. all succeeded fine under `sudo -n`).
+
+**Root cause:** `sudo -l` shows the live NOPASSWD grant for the DNS proxy is scoped to the *literal* command `/usr/bin/python3 /Users/.../scripts/dns-proxy.py` (plus Homebrew-path variants) — no shell wrapper, no env-var prefix. But `pihole-mode.sh`'s `cmd_enable()` invoked it as `sudo -n bash -c "LISTEN_ADDR=... TARGET_PORT=... python3 dns-proxy.py & echo $! > pidfile"`. sudoers matches the *literal argv* passed to `sudo`; here that's `bash -c "<string>"`, which doesn't match a rule scoped to `python3 <path>` at all — so it silently fell through to requiring interactive auth. Even fixing just the wrapper wouldn't be enough: `dns-proxy.py` reads its config (`LISTEN_ADDR`, `LISTEN_PORT`, `TARGET_HOST`, `TARGET_PORT`) purely from environment variables, and `sudo`'s `env_reset` (macOS default) strips any custom env var not in `env_keep` — none of these four are in the default `env_keep` list, and the sudoers rule carries no `SETENV` tag.
+
+**Same bug, dormant, in the primary codebase:** `scripts/common.sh`'s `start_local_dns_proxy()` — the SOCKS5-fallback DNS path used when exit-node pre-flight checks fail — used the identical `sudo -n bash -c "TARGET_PORT=$DNS_PROXY_PORT ..."` pattern. Never caught because this session (like most) achieves exit-node mode every time, so the fallback path never actually runs. Had it ever been needed, the one thing meant to keep DNS working when the primary path fails would have hung on a password prompt with no TTY to answer it.
+
+**Fix:** Rather than fight `sudo`'s env-passing restrictions (which would require editing the live sudoers file — a change requiring a password I can't supply non-interactively, and not something to script unprompted), `dns-proxy.py` now optionally reads `/tmp/nullexit-dns-proxy.conf` (written `0600` by the caller, checked on top of the existing env-var/default values) if present. Both callers now write their overrides to that file, then invoke `sudo -n "$PYTHON" "$DNS_PROXY_SCRIPT"` directly — the exact, unwrapped, already-whitelisted command, no `bash -c`, no env prefix. Both `stop_local_dns_proxy()` and `pihole-mode.sh disable` clean up the conf file. Verified end-to-end: `enable` → no password prompt → `test` → resolves clean domains, sinkholes `doubleclick.net` → `0.0.0.0` → PASS → `disable` removes both the process and the conf file.
+
+**Threat model note:** the conf file is a bounded local-TOCTOU surface, same class already accepted for `/tmp/nullexit-ports.env` (§15.9.5) — restrictive perms, not a hard boundary against a co-resident attacker who could already do more damage with local code execution than redirect a DNS forwarder.
+
 ### 15.10 Tor Container
 
 #### 15.10.1 July 11, 2026: Tor Container Hardening & obfs4proxy Restoration
