@@ -519,6 +519,9 @@ if [ "$POST_WAKE" = "true" ]; then
   else
     add_warp_bypass_routes "$ACTIVE_IF"
   fi
+  # Re-assert the opt-in FaceTime split-route so it survives roam/wake
+  # (no-op unless FACETIME_SPLIT_ROUTE=true). Physical gateway is known here.
+  add_apple_split_routes "${PHYSICAL_GW:-}"
 
   # Also re-apply the default route pointing to the Tailscale interface
   ts_iface=$(ifconfig 2>> output.log | grep -B4 "inet 100." | grep -E '^[a-z0-9]+' | cut -d: -f1 | head -n 1)

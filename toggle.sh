@@ -1483,6 +1483,7 @@ cleanup_network_state() {
     sudo -n route delete -net 128.0.0.0/1 >> output.log 2>&1 || true
   fi
   remove_warp_bypass_routes
+  remove_apple_split_routes
   disable_killswitch
   echo "  Routing table and firewall flushed."
 
@@ -2048,6 +2049,9 @@ else
         add_warp_bypass_routes
         setup_exit_node_routing
         enable_killswitch
+        # Opt-in FaceTime split-route (no-op unless FACETIME_SPLIT_ROUTE=true).
+        # After the kill-switch so the com.apple/nullexit anchor + table exist.
+        add_apple_split_routes
       else
         echo "[Warning] Failed to set exit node."
         SKIP_EXIT_NODE=true

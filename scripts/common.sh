@@ -573,6 +573,60 @@ remove_warp_bypass_routes() {
   fi
 }
 
+# ─── FaceTime / real-time P2P split-route (opt-in, default OFF) ──────────────
+# Mitigation for the FaceTime Double-Tunnel bug (§15.12.22). Adds more-specific
+# host routes for Apple's FaceTime media/relay /16s via the PHYSICAL gateway, so
+# longest-prefix match beats the exit-node 0.0.0.0/1 + 128.0.0.0/1 and ONLY those
+# /16s leave direct — real-time media can then hole-punch from the real IP instead
+# of dying behind WARP's symmetric NAT. Mirrors add_warp_bypass_routes.
+#
+# ⚠️ PRIVACY: the direct /16s expose the real ISP IP (not WARP) for that traffic —
+# a deliberate, narrow hole in the Double-Tunnel promise, scoped to Apple infra
+# (which already ties traffic to your Apple ID). Inert unless FACETIME_SPLIT_ROUTE
+# =true. Needs BOTH a route AND a PF pass: 'block out on en0 all' would otherwise
+# drop the packets, so we populate the <apple_direct> table pf.conf permits.
+facetime_split_enabled() {
+  [ "$(read_env_var FACETIME_SPLIT_ROUTE | tr '[:upper:]' '[:lower:]')" = "true" ]
+}
+
+facetime_direct_subnets() {
+  local s; s=$(read_env_var FACETIME_DIRECT_SUBNETS)
+  echo "${s:-17.249.0.0/16}"
+}
+
+add_apple_split_routes() {
+  facetime_split_enabled || return 0
+  [[ "$OSTYPE" == "darwin"* ]] || return 0
+  local gw="${1:-}"
+  if [ -z "$gw" ]; then
+    # The physical default route survives alongside the exit-node /1 override,
+    # so the real gateway is still the 'default' entry in the table.
+    gw=$(netstat -rn -f inet 2>/dev/null | awk '$1=="default"{print $2; exit}')
+  fi
+  if [ -z "$gw" ] || [[ "$gw" =~ ^utun ]] || [[ "$gw" =~ ^link ]]; then
+    echo "  [FaceTime split-route] could not resolve a physical gateway — skipping."
+    return 0
+  fi
+  local subnets; subnets=$(facetime_direct_subnets)
+  echo -e "\n[FaceTime split-route] routing Apple subnets DIRECT via $gw (real IP exposed for these): $subnets"
+  for net in $subnets; do
+    sudo -n route delete -net "$net" >> output.log 2>&1 || true
+    sudo -n route add -net "$net" "$gw" >> output.log 2>&1 || true
+    # Kill-switch pass: the <apple_direct> table is what pf.conf lets out on en0.
+    sudo -n pfctl -a com.apple/nullexit -t apple_direct -T add "$net" >> output.log 2>&1 || true
+  done
+}
+
+remove_apple_split_routes() {
+  [[ "$OSTYPE" == "darwin"* ]] || return 0
+  local subnets; subnets=$(facetime_direct_subnets)
+  for net in $subnets; do
+    sudo -n route delete -net "$net" >> output.log 2>&1 || true
+  done
+  # Flush the whole table so no direct Apple exception lingers after teardown.
+  sudo -n pfctl -a com.apple/nullexit -t apple_direct -T flush >> output.log 2>&1 || true
+}
+
 bounce_wifi_interfaces() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
     local wifi_port

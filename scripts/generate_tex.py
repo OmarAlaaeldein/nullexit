@@ -4,8 +4,11 @@ import os
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
 IGNORE_DIRS = {'.git', '.github', 'adguard', '__pycache__', 'Recover Gateway.app', 'Toggle Gateway.app', 'Sweep Gateway.app','nullexit-knowledge-graph'}
-IGNORE_FILES = {'.env', 'nullexit_unified.tex', 'nullexit_unified.pdf', 'output.log', 'blocked.log', '.DS_Store', '.lan_p2p_detected', '.signatures', '.gateway_ip', 'TUNNEL_FAILED_CLOSED.marker','.host_ips','refactor.md','sweep.md','.build_hash','.rules_hash','knowledge-graph.html'}
+IGNORE_FILES = {'.env', 'nullexit_unified.tex', 'nullexit_unified.pdf', 'output.log', 'blocked.log', '.DS_Store', '.lan_p2p_detected', '.signatures', '.gateway_ip', 'TUNNEL_FAILED_CLOSED.marker','.host_ips','refactor.md','sweep.md','.build_hash','.rules_hash','knowledge-graph.html','.dns_baseline.json'}
 IGNORE_EXTS = {'.pdf', '.tex', '.png', '.jpg', '.jpeg', '.zip', '.tar', '.gz', '.log', '.aux', '.fls', '.fdb_latexmk', '.out', '.toc', '.xdv', '.synctex(busy)'}
+# Transient runtime reports (timestamped names) carry live egress/peer IPs — never
+# embed them in the published quine. Matched by filename prefix.
+IGNORE_PREFIXES = ('sweep-', 'host-leak-diagnostic-')
 
 # Exclude from code block inclusion, but keep in tree
 SKIP_CONTENT_FILES = {'LICENSE'}
@@ -126,6 +129,8 @@ nullexit/
         dirs[:] = sorted([d for d in dirs if d not in IGNORE_DIRS])
         for file in sorted(files):
             if file in IGNORE_FILES or file in SKIP_CONTENT_FILES or os.path.splitext(file)[1].lower() in IGNORE_EXTS:
+                continue
+            if file.startswith(IGNORE_PREFIXES):
                 continue
             
             filepath = os.path.join(root, file)

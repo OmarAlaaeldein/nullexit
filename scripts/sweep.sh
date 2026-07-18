@@ -317,6 +317,36 @@ if [ "$NOISE_ON" = "true" ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
+# DNS anomaly scan (informational, read-only, NOT a scored check — the 6-check
+# verdict is unchanged). It only READS the AdGuard querylog; never blocks DNS.
+# It FAILS LOUD: a broken detector (crash, corrupt model, empty log, failing
+# self-test) shows a red ✗ with the reason — it is NEVER silently reported as
+# clean, and an untrained detector is announced rather than skipped in silence.
+QUERYLOG="$PROJECT_ROOT/adguard/work/data/querylog.json"
+DNS_TOOL="$SCRIPT_DIR/dns_anomaly_detector.py"
+if command -v python3 >/dev/null 2>&1 && [ -f "$DNS_TOOL" ]; then
+  section "DNS anomaly scan (informational)"
+  # 1) Prove the detection logic itself works before trusting any "clean".
+  ST_ERR=$(python3 "$DNS_TOOL" selftest 2>&1 >/dev/null); ST_RC=$?
+  if [ "$ST_RC" -ne 0 ]; then
+    fail "DNS detector SELF-TEST FAILED (rc=$ST_RC) — detector is broken, do NOT trust results: ${ST_ERR:-see stderr}"
+  elif [ ! -f "$PROJECT_ROOT/.dns_baseline.json" ]; then
+    warn "DNS detector NOT trained (no .dns_baseline.json) — not protecting; run: python3 scripts/dns_anomaly_detector.py learn"
+  elif [ ! -f "$QUERYLOG" ]; then
+    warn "DNS detector trained but querylog absent ($QUERYLOG) — nothing to scan"
+  else
+    # 2) Real scan. Capture stderr + exit code; do NOT swallow failures.
+    DNS_ERR=$(python3 "$DNS_TOOL" scan --quiet 2>&1 >/tmp/nullexit-dns-scan.out); DNS_RC=$?
+    DNS_OUT=$(cat /tmp/nullexit-dns-scan.out 2>/dev/null); rm -f /tmp/nullexit-dns-scan.out
+    case "$DNS_RC" in
+      0) ok   "no DNS-tunneling / DGA signatures — $DNS_OUT" ;;
+      1) warn "$DNS_OUT — review: python3 scripts/dns_anomaly_detector.py scan" ;;
+      *) fail "DNS scan FAILED to run (rc=$DNS_RC) — NOT a clean result: ${DNS_ERR:-unknown error}" ;;
+    esac
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════════════════════
 section "VERDICT"
 # ═══════════════════════════════════════════════════════════════════════════
 pass=0; warnc=0; failc=0
