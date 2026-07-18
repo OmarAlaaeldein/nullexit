@@ -243,6 +243,23 @@ launchctl load -w ~/Library/LaunchAgents/com.nullexit.wake-recovery.plist
 ```
 See `devref.md §15.5.1` for the full deep dive.
 
+### Config profiles — taming the flag sprawl
+The opt-in features below add up to several interacting `.env` switches. Rather than
+hand-tune them, `scripts/profiles.sh` bundles the intent-level flags into three
+known-good presets. It is **config-only** — it just edits `.env`, never touches the
+live gateway — so changes apply on your next `./toggle.sh --restart`, and it forces
+`KILL_SWITCH=true` in every profile.
+
+```bash
+bash scripts/profiles.sh show           # the whole current config, grouped + explained
+bash scripts/profiles.sh preview home   # exactly what 'apply' would change (read-only)
+bash scripts/profiles.sh apply home     # write it (backs up .env; never restarts)
+```
+
+Profiles: **campus** (AP-isolated enterprise, conservative) · **home** (trusted, fast —
+direct P2P, FaceTime + LAN Pi-hole) · **paranoid** (cover traffic + Tor bridges, no
+real-IP exposure).
+
 ### Cover traffic / dummy padding (macOS — optional, opt-in)
 `scripts/noise.sh` emits verifiable-random UDP padding toward the exit so a passive
 on-path observer sees a continuously varying encrypted flow instead of your real
