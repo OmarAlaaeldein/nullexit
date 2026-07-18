@@ -75,10 +75,11 @@ cmd_scramble() {
   dscacheutil -flushcache 2>/dev/null || true
   if [ "${1:-}" = "--mac" ]; then
     local m; m=$(rand_mac)
-    echo "device-scramble: MAC → $m (cycling Wi-Fi)"
+    echo "device-scramble: MAC → $m (disassociate → set → reconnect)"
+    networksetup -setairportpower "$IFACE" off; sleep 3   # can't set MAC while associated
     ifconfig "$IFACE" ether "$m" 2>/dev/null
-    [ "$(cur_mac)" = "$m" ] || echo "  [!] MAC did not change (Apple Silicon may block ifconfig spoofing)"
-    networksetup -setairportpower "$IFACE" off; sleep 2; networksetup -setairportpower "$IFACE" on
+    [ "$(cur_mac)" = "$m" ] || echo "  [!] MAC did not change — this driver refuses ifconfig spoofing on this hardware"
+    networksetup -setairportpower "$IFACE" on
   fi
   echo "done. Restore your real identity with: sudo bash $0 restore"
 }
@@ -93,14 +94,18 @@ cmd_restore() {
   [ -n "$lh" ] && scutil --set LocalHostName  "$lh"
   [ -n "$hn" ] && scutil --set HostName       "$hn"
   if [ -n "$mac" ] && [ "$(cur_mac)" != "$mac" ]; then
+    networksetup -setairportpower "$IFACE" off; sleep 3   # disassociate before setting MAC
     ifconfig "$IFACE" ether "$mac" 2>/dev/null
-    networksetup -setairportpower "$IFACE" off; sleep 2; networksetup -setairportpower "$IFACE" on
+    networksetup -setairportpower "$IFACE" on
   fi
   rm -f "$SAVE"
   echo "restored: ComputerName=$cn  MAC=$(cur_mac)"
 }
 
 # The safe experiment: does THIS network accept a random MAC? Always reverts.
+# CRITICAL: macOS refuses to change the MAC while the interface is ASSOCIATED to
+# an SSID, so we disassociate (Wi-Fi radio off) BEFORE setting it, then reconnect.
+# (This is the fix for the naive first attempt that set it while connected.)
 cmd_test_mac() {
   need_root test-mac
   local orig; orig=$(cur_mac)
@@ -108,23 +113,29 @@ cmd_test_mac() {
   echo "$orig" > /tmp/nullexit-mac.orig
   local rnd; rnd=$(rand_mac)
   echo "original MAC: $orig  →  trying random: $rnd"
+  echo "step 1: disassociate (Wi-Fi off) — you can't set the MAC while connected…"
+  networksetup -setairportpower "$IFACE" off; sleep 3
+  echo "step 2: set MAC while disassociated…"
   ifconfig "$IFACE" ether "$rnd" 2>/dev/null
-  if [ "$(cur_mac)" != "$rnd" ]; then
-    echo "RESULT: MAC did NOT change (still $(cur_mac)). Apple Silicon blocks ifconfig spoofing here — network untouched."
-    ifconfig "$IFACE" ether "$orig" 2>/dev/null; exit 0
+  local after; after=$(cur_mac)
+  if [ "$after" != "$rnd" ]; then
+    echo "RESULT: MAC still $after even when disassociated — this driver refuses ifconfig spoofing on neo."
+    echo "        (Only Apple's native 'Private Wi-Fi Address' or a USB Wi-Fi adapter would work.)"
+    networksetup -setairportpower "$IFACE" on; exit 0
   fi
-  echo "MAC changed; cycling Wi-Fi to re-authenticate with it..."
-  networksetup -setairportpower "$IFACE" off; sleep 2; networksetup -setairportpower "$IFACE" on
-  local ip=""; for _ in $(seq 1 12); do sleep 2; ip=$(cur_ip); [ -n "$ip" ] && break; done
+  echo "  → MAC CHANGED to $after with disassociate-first. Reconnecting to test the network…"
+  networksetup -setairportpower "$IFACE" on
+  local ip=""; for _ in $(seq 1 15); do sleep 2; ip=$(cur_ip); [ -n "$ip" ] && break; done
   if [ -n "$ip" ]; then
-    echo "RESULT: ✅ SUCCESS — random MAC got IP $ip. This network does NOT gate on your registered MAC; device-scramble --mac works here."
+    echo "RESULT: ✅ SUCCESS — random MAC works AND got IP $ip. neo can spoof + this network accepts it."
   else
-    echo "RESULT: ⛔ random MAC REJECTED (no IP in ~24s). This network gates on your registered MAC."
+    echo "RESULT: ⚠️  MAC spoof works, but no IP in ~30s — this network gates on your registered MAC (or 802.1X re-auth needed)."
   fi
-  echo "restoring original MAC $orig ..."
+  echo "restoring original MAC $orig …"
+  networksetup -setairportpower "$IFACE" off; sleep 3
   ifconfig "$IFACE" ether "$orig" 2>/dev/null
-  networksetup -setairportpower "$IFACE" off; sleep 2; networksetup -setairportpower "$IFACE" on
-  ip=""; for _ in $(seq 1 12); do sleep 2; ip=$(cur_ip); [ -n "$ip" ] && break; done
+  networksetup -setairportpower "$IFACE" on
+  ip=""; for _ in $(seq 1 15); do sleep 2; ip=$(cur_ip); [ -n "$ip" ] && break; done
   echo "restored: MAC=$(cur_mac)  IP=${ip:-<reconnecting>}"
 }
 
