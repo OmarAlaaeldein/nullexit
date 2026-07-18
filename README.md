@@ -309,6 +309,17 @@ other devices can't reach this Mac at all. And it's **DNS filtering only** — i
 does not route those devices through WARP. See the `pihole-mode.sh` note in the
 knowledge graph.
 
+### Device Scramble Mode (macOS — optional, opt-in)
+Randomizes the identifiers a network/observer uses to fingerprint your device (hostname and MAC address). This is useful on open / no-auth Wi-Fi (café, hotel, airport) where these IDs are the only handle on you.
+* Note: MAC spoofing requires root. The `test-mac` command is fail-safe and detects Apple-Silicon spoof-blocking without stranding you.
+
+```bash
+bash scripts/device-scramble.sh status            # show current + saved identity
+sudo bash scripts/device-scramble.sh scramble     # random hostname (add --mac to also rotate MAC)
+sudo bash scripts/device-scramble.sh restore      # put your real identity back
+sudo bash scripts/device-scramble.sh test-mac     # safe test to see if this network takes a random MAC
+```
+
 ---
 
 ## 7. Networking Notes

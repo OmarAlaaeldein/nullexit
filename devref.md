@@ -1766,7 +1766,13 @@ P2P detect: security='Enterprise' → allow=false (reason: 802.1x-enterprise)
 - The underlying Tailscale `100.x.x.x` IPv4 address will remain exactly the same.
 - The **MagicDNS name** will change to match the new hostname. Users must remember to update their SFTP/SSH clients to use the new MagicDNS address.
 
-#### 15.11.8 Shell-Language Landmines: macOS `/bin/bash` 3.2 + `set -e` (Field Notes)
+#### 15.11.8 macOS MAC Address Spoofing (Apple Silicon)
+**Observation:** macOS prevents setting a new MAC address (`ifconfig en0 ether <mac>`) while the Wi-Fi interface is actively associated with an SSID. Additionally, some drivers on Apple Silicon completely reject spoofed MAC addresses via `ifconfig`, effectively ignoring the command and retaining the hardware MAC.
+**Workaround / Fix:** 
+1. **Disassociate First:** The Wi-Fi interface must be turned off (`networksetup -setairportpower en0 off`) before attempting to set the MAC address, and turned back on afterward. This allows the OS to accept the change.
+2. **Fail-Safe Testing:** The `scripts/device-scramble.sh test-mac` command was implemented to safely verify if the underlying hardware and the current network will accept a randomized MAC address, as behavior varies significantly between Intel Macs (usually permissive) and Apple Silicon Macs (often restrictive).
+
+#### 15.11.9 Shell-Language Landmines: macOS `/bin/bash` 3.2 + `set -e` (Field Notes)
 
 This project's lifecycle scripts (`toggle.sh`, `recover.sh`, `common.sh`, …) run under `#!/bin/bash`, which on macOS is **GNU bash 3.2.57 (2007)** — Apple has never shipped a newer bash because bash 4+ is GPLv3. (Homebrew's bash 5 lives at `/opt/homebrew/bin/bash` but is *not* the shebang target, and cannot be assumed on PATH — a bare `bash --version` on a stock Mac reports 3.2.) Every script here also runs `set -e` (exit-on-error) with an `ERR`/`INT`/`TERM`/`HUP` trap. That combination — **ancient bash + `set -e` + traps + `set -x` xtrace redirection** — is a minefield. The traps below were all hit and fixed during development; document them so they are not re-discovered.
 

@@ -304,6 +304,14 @@ the macOS dual-mode body. All formatting/timeout helpers come from `common.sh`.
 - `resolve_active_iface()` — same interface detection as diagnose-host-leak.sh
 - Color codes, step()/ok()/warn()/fail()/die() formatting helpers
 
+### scripts/device-scramble.sh (159 lines, 7.8KB)
+
+**Purpose:** Randomizes hostname and MAC address for Wi-Fi anonymity. Includes fail-safe MAC test and disassociate-first logic.
+
+**Duplicated logic:**
+- `need_root()` — same sudo check as other scripts
+- `WARP_INHIBIT` marker — interacts with watcher.sh to prevent gateway shutdown during Wi-Fi blip
+
 ### scripts/fix-ssh-delay.sh (63 lines, 2.7KB)
 
 **Purpose:** One-shot fix for ~20s SSH delay. Standalone, minimal duplication (uses hardcoded ✓/✗ instead of color functions).
