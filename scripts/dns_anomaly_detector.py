@@ -45,12 +45,27 @@ import os
 import random
 import re
 import sys
+import time
 from collections import defaultdict
 
 DEFAULT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "..", "adguard", "work", "data", "querylog.json")
 DEFAULT_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "..", ".dns_baseline.json")
+OUTPUT_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "output.log")
+
+
+def log_fail(msg):
+    """Persist a hard failure to output.log (besides stderr) so a broken detector
+    is on the record even when run headless (launchd/sweep/CI). Heisenbug-safe by
+    construction: it only ever APPENDS to a separate file — it touches neither
+    stdout/stderr (which sweep captures) nor any detection state, and a logging
+    error is swallowed so it can never change what the detector does or returns."""
+    try:
+        with open(OUTPUT_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [dns-anomaly] FAIL: {msg}\n")
+    except OSError:
+        pass
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789-_"
 AIDX = {c: i for i, c in enumerate(ALPHABET)}
@@ -281,9 +296,10 @@ def scan(log_path, model_path, recent, quiet):
                 or any(not isinstance(r, list) or len(r) != NSYM for r in counts)):
             raise ValueError("bigram matrix has the wrong shape")
     except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
-        print(f"scan: FAILED to load a usable baseline model at {model_path} "
-              f"({type(e).__name__}: {e}). Run 'dns_anomaly_detector.py learn' first.",
-              file=sys.stderr)
+        msg = (f"could not load a usable baseline model at {model_path} "
+               f"({type(e).__name__}: {e}) — run 'learn' first")
+        print(f"scan: FAILED to {msg}.", file=sys.stderr)
+        log_fail(msg)
         return 2
     logp = finalize_logp(counts)
     allow = set(model.get("allowlist", []))
@@ -310,9 +326,10 @@ def scan(log_path, model_path, recent, quiet):
                     a[6] = 1
 
     if not agg:
-        print(f"scan: FAILED — the querylog at {log_path} yielded 0 parseable DNS "
-              f"records. The detector did NOT run; this is NOT a clean result.",
-              file=sys.stderr)
+        msg = (f"the querylog at {log_path} yielded 0 parseable DNS records — "
+               f"the detector did NOT run; this is NOT a clean result")
+        print(f"scan: FAILED — {msg}.", file=sys.stderr)
+        log_fail(msg)
         return 2
 
     findings = []
@@ -428,6 +445,7 @@ def selftest():
         print("SELFTEST FAILED — detector is not working:", file=sys.stderr)
         for f in fails:
             print(f"  - {f}", file=sys.stderr)
+        log_fail("selftest — detector is not working: " + "; ".join(fails))
         return 3
     print("selftest OK — flags hex/base32 payloads + improbable labels, clears known-good.")
     return 0
