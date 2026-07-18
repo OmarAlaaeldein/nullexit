@@ -327,34 +327,49 @@ section "7/7  Throughput (host path vs. WARP-only baseline)"
 # the container (sweep stays read-only w.r.t. gateway state). Comparing the
 # two shows whether slowness/resets come from WARP itself or from the extra
 # Tailscale-wrap hop. Skip with SWEEP_SKIP_THROUGHPUT=true in .env.
+#
+# Target: a fast, high-bandwidth CDN, not a slow/distant one. speedtest.net-style
+# test hosts (e.g. speedtest.tele2.net) were tried first and turned out to be the
+# bottleneck themselves — even RAW, gateway-off ISP speed to tele2.net was ~3.2
+# Mbps, vs ~32 Mbps raw to a fast CDN — so a slow test target would have silently
+# blamed nullexit for a benchmark artifact. Cloudflare's own speed-test endpoint
+# 403s WARP egress IPs specifically (abuse-prevention on shared/CGNAT IPs), so
+# Hetzner (also fast, does not flag WARP IPs) is used instead.
 THROUGHPUT_SKIP=$(read_env_var "SWEEP_SKIP_THROUGHPUT" | tr '[:upper:]' '[:lower:]')
 if [ "$THROUGHPUT_SKIP" = "true" ]; then
   warn "skipped (SWEEP_SKIP_THROUGHPUT=true)"
   record WARN "throughput"
 else
-  TP_URL="${SWEEP_THROUGHPUT_URL:-http://speedtest.tele2.net/10MB.zip}"
+  TP_URL="${SWEEP_THROUGHPUT_URL:-https://ash-speed.hetzner.com/100MB.bin}"
   TP_TIMEOUT="${SWEEP_THROUGHPUT_TIMEOUT:-30}"
-  TP_MIN_BYTES=1000000   # a "failure" below this size is a mid-transfer stall, not just slow
 
   measure() {   # $1 = extra curl args (word-split; may be empty)
-    run_with_timeout "$TP_TIMEOUT" curl -sS --max-time "$TP_TIMEOUT" $1 -o /dev/null \
+    # curl's own --max-time must win the race against run_with_timeout's outer
+    # SIGTERM watcher — a process killed by signal never reaches its own -w
+    # output, so if both timers were equal, the watcher could kill curl right
+    # before it prints stats, and every leg would misreport as "no response".
+    # The outer timeout is a dead-man's-switch (+5s), not the real budget.
+    run_with_timeout $((TP_TIMEOUT + 5)) curl -sS --max-time "$TP_TIMEOUT" $1 -o /dev/null \
       -w 'code=%{http_code} size=%{size_download} time=%{time_total} bps=%{speed_download}' \
       "$TP_URL" 2>>"$LOG_FILE"
   }
-  leg_verdict() {   # $1=http_code $2=bytes_downloaded -> ok|stall|blocked|unknown
-    [ -z "$1" ] && { echo unknown; return; }
-    [ "$1" != "200" ] && { echo blocked; return; }
-    [ -n "$2" ] && [ "$2" -lt "$TP_MIN_BYTES" ] 2>/dev/null && { echo stall; return; }
-    echo ok
+  leg_verdict() {   # $1=curl_rc $2=http_code -> ok|stall|blocked|unknown
+    [ -z "$2" ] && { echo unknown; return; }
+    [ "$2" != "200" ] && { echo blocked; return; }
+    case "$1" in
+      0|28) echo ok ;;     # 0=completed; 28=hit our own --max-time while still healthy
+      56)   echo stall ;;  # curl's actual "Recv failure: Connection reset by peer"
+      *)    echo unknown ;;
+    esac
   }
   to_mbps() { awk -v b="${1:-}" 'BEGIN{ if (b=="") print "?"; else printf "%.1f", (b*8)/1000000 }'; }
 
-  HOST_TP=$(measure "")
+  HOST_TP=$(measure ""); HOST_RC=$?
   HOST_CODE=$(printf '%s' "$HOST_TP" | grep -oE 'code=[0-9]+' | cut -d= -f2)
   HOST_SIZE=$(printf '%s' "$HOST_TP" | grep -oE 'size=[0-9]+' | cut -d= -f2)
   HOST_TIME=$(printf '%s' "$HOST_TP" | grep -oE 'time=[0-9.]+' | cut -d= -f2)
   HOST_BPS=$(printf '%s' "$HOST_TP"  | grep -oE 'bps=[0-9.]+'  | cut -d= -f2)
-  HOST_VERDICT=$(leg_verdict "$HOST_CODE" "$HOST_SIZE")
+  HOST_VERDICT=$(leg_verdict "$HOST_RC" "$HOST_CODE")
   HOST_MBPS=$(to_mbps "$HOST_BPS")
   case "$HOST_VERDICT" in
     ok)      ok   "host path: ${HOST_MBPS} Mbps (${HOST_SIZE:-0} bytes in ${HOST_TIME:-?}s)" ;;
@@ -369,12 +384,12 @@ else
     warn "WARP-only baseline: SOCKS_PROXY_PORT unknown (no /tmp/nullexit-ports.env — gateway not started via toggle.sh?)"
     CTR_VERDICT=unknown
   else
-    CTR_TP=$(measure "--socks5-hostname 127.0.0.1:$SOCKS_PROXY_PORT")
+    CTR_TP=$(measure "--socks5-hostname 127.0.0.1:$SOCKS_PROXY_PORT"); CTR_RC=$?
     CTR_CODE=$(printf '%s' "$CTR_TP" | grep -oE 'code=[0-9]+' | cut -d= -f2)
     CTR_SIZE=$(printf '%s' "$CTR_TP" | grep -oE 'size=[0-9]+' | cut -d= -f2)
     CTR_TIME=$(printf '%s' "$CTR_TP" | grep -oE 'time=[0-9.]+' | cut -d= -f2)
     CTR_BPS=$(printf '%s' "$CTR_TP"  | grep -oE 'bps=[0-9.]+'  | cut -d= -f2)
-    CTR_VERDICT=$(leg_verdict "$CTR_CODE" "$CTR_SIZE")
+    CTR_VERDICT=$(leg_verdict "$CTR_RC" "$CTR_CODE")
     CTR_MBPS=$(to_mbps "$CTR_BPS")
     case "$CTR_VERDICT" in
       ok)      ok   "WARP-only baseline: ${CTR_MBPS} Mbps (${CTR_SIZE:-0} bytes in ${CTR_TIME:-?}s)" ;;
