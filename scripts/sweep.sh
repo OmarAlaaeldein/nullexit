@@ -268,12 +268,23 @@ else
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════
-section "6/7  Tailnet reachability (ping all online devices)"
+section "6/7  Tailnet reachability (burst ping — loss % + jitter, all online devices)"
 # ═══════════════════════════════════════════════════════════════════════════
 # Every peer the coordination server reports as ONLINE should answer a
 # `tailscale ping` (TSMP probes the WireGuard data path; ICMP is avoided since
 # phones/laptops often drop it). Offline peers and this host are skipped.
 # An online-but-unreachable peer means control plane and data path disagree.
+#
+# A single ping only proves "reachable right now" — it can't see loss or
+# jitter, which is what actually determines whether a call/video/QUIC session
+# on that device holds up. There's no way to get a real bits-per-second number
+# for a phone without something running on it to receive/echo data (neither
+# phone has that), but TSMP ping is answered by the Tailscale client itself
+# with zero cooperation needed from the device — the one channel that works
+# identically over DERP or direct P2P. So: send a BURST instead of one ping,
+# and report loss % + RTT spread per peer, the closest honest signal to
+# "connection quality" available without an app/listener on the phone.
+PING_BURST="${SWEEP_PING_BURST:-8}"
 if ! command -v tailscale >/dev/null 2>&1; then
   fail "tailscale CLI not on PATH"
   record FAIL "tailnet"
@@ -288,23 +299,37 @@ else
     warn "no online peers to ping (everything else in the tailnet is offline)"
     record WARN "tailnet"
   else
-    unreached=0
+    unreached=0; lossy=0
     while read -r peer_ip peer_name; do
-      PONG=$(run_with_timeout 10 tailscale ping --timeout=3s --c 1 --until-direct=false "$peer_ip" 2>>"$LOG_FILE")
-      if printf '%s' "$PONG" | grep -q '^pong'; then
-        detail=$(printf '%s\n' "$PONG" | head -1 | sed -E 's/^pong from [^ ]+ \([^)]+\) //')
-        if printf '%s' "$detail" | grep -q 'DERP'; then
-          ok "$peer_name ($peer_ip) — pong $detail — relayed, expect degraded throughput (see check 7)"
-        else
-          ok "$peer_name ($peer_ip) — pong $detail"
-        fi
+      PONGS=$(run_with_timeout $((PING_BURST + 8)) tailscale ping --timeout=3s --c "$PING_BURST" --until-direct=false "$peer_ip" 2>>"$LOG_FILE")
+      n_ok=$(printf '%s\n' "$PONGS" | grep -c '^pong')
+      if [ "$n_ok" -eq 0 ]; then
+        fail "$peer_name ($peer_ip) — no pong in $PING_BURST attempts (online per control plane, data path dead)"
+        unreached=$((unreached+1))
+        continue
+      fi
+      path=$(printf '%s\n' "$PONGS" | grep -m1 '^pong' | sed -E 's/^pong from [^ ]+ \([^)]+\) via ([^ ]+).*/\1/')
+      loss_pct=$(( (PING_BURST - n_ok) * 100 / PING_BURST ))
+      read -r avg_ms min_ms max_ms <<< "$(printf '%s\n' "$PONGS" | grep '^pong' | grep -oE '[0-9]+ms' | tr -d 'ms' | awk '
+        { if (NR==1 || $1<min) min=$1; if (NR==1 || $1>max) max=$1; sum+=$1; n++ }
+        END { if (n>0) printf "%.0f %d %d", sum/n, min, max }')"
+      jitter_ms=$((max_ms - min_ms))
+      relay_note=""
+      case "$path" in
+        DERP*) relay_note=" — relayed, expect degraded throughput (see check 7)" ;;
+      esac
+      if [ "$loss_pct" -eq 0 ]; then
+        ok "$peer_name ($peer_ip) — $n_ok/$PING_BURST pong (0% loss), RTT ${min_ms}-${max_ms}ms avg ${avg_ms}ms (jitter ${jitter_ms}ms) via ${path}${relay_note}"
+      elif [ "$loss_pct" -lt 40 ]; then
+        warn "$peer_name ($peer_ip) — $n_ok/$PING_BURST pong (${loss_pct}% loss), RTT ${min_ms}-${max_ms}ms avg ${avg_ms}ms via ${path}${relay_note}"
+        lossy=$((lossy+1))
       else
-        fail "$peer_name ($peer_ip) — no pong (online per control plane, data path dead)"
+        fail "$peer_name ($peer_ip) — $n_ok/$PING_BURST pong (${loss_pct}% loss, unstable) via ${path}${relay_note}"
         unreached=$((unreached+1))
       fi
     done <<< "$PEERS"
     n_peers=$(printf '%s\n' "$PEERS" | wc -l | tr -d '[:space:]')
-    if [ "$unreached" -eq 0 ]; then
+    if [ "$unreached" -eq 0 ] && [ "$lossy" -eq 0 ]; then
       record PASS "tailnet"
     elif [ "$unreached" -lt "$n_peers" ]; then
       record WARN "tailnet"
