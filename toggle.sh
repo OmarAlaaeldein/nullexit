@@ -1105,6 +1105,12 @@ start_sleep_prevention() {
   # containers, restarting tailscaled, etc.) which takes too long and gets
   # terminated by macOS before it can reset the DNS. Instead, we surgically and
   # instantly restore normal DNS and proxy settings here.
+  #
+  # -i alone only blocks *idle* sleep — a stopped/crashed gateway process,
+  # a hung docker command, or any other assertion lapse still lets the Mac
+  # sleep and drop every mesh device's exit node. -s additionally blocks
+  # sleep outright whenever the Mac is on AC power (it's a no-op on battery,
+  # so unplugged runs still sleep normally and don't burn charge).
   nohup bash -c "
     trap '
       echo \"[Shutdown Trap] Reverting network settings...\" >> \"$PWD/output.log\" 2>&1
@@ -1130,7 +1136,7 @@ start_sleep_prevention() {
       echo \"[Shutdown Trap] Cleanup complete.\" >> \"$PWD/output.log\" 2>&1
       exit 0
     ' SIGTERM SIGINT SIGHUP
-    caffeinate -i &
+    caffeinate -i -s &
     wait \$!
   " >> output.log 2>&1 &
   local caffe_pid=$!
