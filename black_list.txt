@@ -72,3 +72,15 @@ datarouter-prod.ak.epicgames.com
 nel.cloudflare.com
 eu-mobile.events.data.microsoft.com
 stocks-analytics-events.apple.com
+settings-win.data.microsoft.com
+choice.microsoft.com
+watson.live.com$important
+gdmf.apple.com
+deviceenrollment.apple.com
+deviceservices-external.apple.com
+gpm.samsungqbe.com
+daisy.ubuntu.com
+popcon.ubuntu.com
+popcon.debian.org
+mdm-enrollment.googleapis.com$important
+device-provisioning.googleapis.com$important

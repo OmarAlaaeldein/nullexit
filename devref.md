@@ -83,8 +83,8 @@ TCP:  Apps → macOS SOCKS5 proxy (127.0.0.1:1080) → container → tun0 → WA
 | `scripts/reinstall-host-tailscale.sh` | ~740 | **Nuke-and-reinstall tool for host Tailscale.** Completely purges Tailscale, its settings, macOS Background Items (`.btm` database), and stale System Extensions. Wipes ALL Login Items via `sfltool reset-login-items` (requires sudo). Useful for crisis recovery but destructive to other login items. |
 | `scripts/fix-ssh-delay.sh` | ~100 | **Fixes SSH connection delays.** One-shot script to address SSH delays caused by DNS or routing issues, useful in crisis situations. |
 | `scripts/logger/` | ~100 | **Internal logger piped from `scripts/routing-fix.sh`** inside the `warp` container. Ported to Go from Python. Built via Docker multi-stage build. |
-| `black_list.txt` | 71 | Custom domains to block (ads, trackers, telemetry). Supports `$important` modifier. |
-| `white_list.txt` | 222 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
+| `black_list.txt` | 86 | Custom domains to block (ads, trackers, telemetry, cross-platform device-identification endpoints). Supports `$important` modifier. |
+| `white_list.txt` | 231 | Domains to force-allow (YouTube, Apple services, etc.). Always wins over blocks. |
 | `.env` | ~14 | WARP WireGuard keys, Tailscale auth key, rule profile. **Contains secrets & NULLEXIT_SEED.** |
 | `.gateway_ip` | 1 | Static gateway Tailscale IP (fallback for dynamic resolution). |
 | `scripts/unlock-files.sh` | ~20 | **One-shot stale-permission fix.** Uses atomic rename (`cp` + `mv`) to replace locked inodes (mode `000`/`0444` from old `chmod` decisions) with fresh writable ones — no `chmod` called. |
