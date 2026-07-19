@@ -1,6 +1,6 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
-> **Last updated:** July 12, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
+> **Last updated:** July 18, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
 
 **nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel — double-encrypting every packet, hiding your ISP metadata, and providing network-wide DNS ad-blocking (AdGuard Home) and kernel-level IP threat blocking (`ipset`/`iptables`) for every device on your mesh.
 
@@ -235,7 +235,7 @@ Optional `.env` settings (common subset; the full canonical table lives in `devr
 ```
 
 ### Sleep Prevention (macOS)
-When the gateway is ON, `caffeinate -i` runs in the background to prevent idle system sleep, keeping Docker and all services alive even on battery. The display can still sleep normally.
+When the gateway is ON, `caffeinate -i -s` runs in the background: `-i` blocks idle system sleep (even on battery), and `-s` additionally blocks sleep outright whenever the Mac is on AC power (a no-op on battery, so unplugged runs still sleep normally). The display can still sleep normally. Without `-s`, real idle-sleep cycles were still slipping through and dropping every mesh device's exit node until the next wake-recovery cycle — see `devref.md §15.5.8`.
 
 ### Auto-Recovery (macOS — post-wake / post-roam)
 Install the launchd LaunchAgent so the gateway self-heals after sleep/wake and Wi-Fi roams:
