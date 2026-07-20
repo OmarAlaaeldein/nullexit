@@ -1,6 +1,6 @@
 # nullexit — Development Reference & Resolved Issues
 
-> **Last updated:** July 18, 2026
+> **Last updated:** July 19, 2026
 > **Purpose:** Provide any LLM or developer with complete project understanding, debugging history, and resolved issues so they can make informed changes without re-reading every file.
 > **Diagrams:** See [`diagrams.md`](./diagrams.md) for system architecture, toggle.sh flowcharts, monitoring layer, traffic sequence, recover.sh decision tree, and the full failure→self-healing map.
 
@@ -1027,6 +1027,15 @@ The host's Tailscale interface (`utun5`) defaulted to an MTU of 1280. The WARP t
 **Fix:** `scripts/sweep.sh`'s throughput check (§9, check 7/7) now defaults to the Hetzner target instead of `speedtest.tele2.net`, so future sweeps report real tunnel performance instead of accidentally re-measuring a slow third-party server and misattributing it to nullexit.
 
 **Residual, unchanged:** the occasional mid-transfer connection reset (curl exit 56, `Recv failure: Connection reset by peer`) observed on maybe 1-in-6 to 1-in-8 attempts is still unexplained by CPU/memory and remains consistent with the gvproxy/UDP-fragmentation-under-load issue in §15.3.1 — a real, separate, and still-open question from the throughput-ceiling one this section resolves.
+
+#### 15.3.7 Field Test: Dense Cellular Congestion on a Mesh Device (July 19, 2026)
+**Setup:** An Android mesh device on cellular data, physically present in a very dense public crowd, exit-noded through `nullexit-gateway` for the whole session. Goal: see whether heavy local RF/tower congestion degrades the tunnel differently than normal cellular use.
+
+**Method:** Confirmed the device was actively routing live (not just tailnet-idle) via AdGuard's query log showing fresh DNS lookups from it seconds before the test. Then ran a large TSMP burst (`tailscale ping --until-direct=false`, the same mechanism as sweep.sh check 6/7 but a much larger sample) to get a real loss/jitter signal instead of a single ping.
+
+**Result:** Every probe got a pong back — 0% loss. The path was DERP-relayed for the entire burst, never direct, which is expected on cellular (carrier-grade NAT blocks Tailscale's UDP hole-punching regardless of crowd density, so this isn't specific to a busy area). RTT stayed in a tight, low band for the large majority of probes, with a couple of outlier spikes — consistent with intermittent RF contention/retransmission at the cell tower from the sheer device density, not a gateway-side problem. All 5 containers stayed healthy throughout; the WARP double-tunnel was confirmed live.
+
+**Conclusion:** nullexit was not the bottleneck under real-world dense-cellular congestion — zero packet loss is a strong result. The DERP-vs-direct baseline and the latency spikes both trace to the cellular/CGNAT layer, outside nullexit's control.
 
 ### 15.4 DNS Interception & Proxy
 
@@ -2123,6 +2132,7 @@ Switched the S24 to cellular (same physical location, different link) for a cont
 
 Reflects the current branch's state. Each entry is a one-line summary + commit hash; read the commit message (and the linked Incident Log entry) for full detail. Full post-mortems live in §15.
 
+- **July 19, 2026 — docs: dense-cellular field test** — Live burst-ping test of a mesh device on cellular in a very dense crowd: 0% loss, DERP-relayed the whole time (expected on cellular NAT, not congestion-related), a couple of RF-driven latency spikes traced to the cell tower rather than the gateway. See §15.3.7.
 - **July 18, 2026 — `fix(toggle): harden sleep prevention with caffeinate -s`** — Four real `Idle Sleep` cycles in a 38-minute window blacked out every mesh device's exit node because `caffeinate -i` alone doesn't reliably hold sleep off. Added `-s` (blocks sleep on AC power, no-op on battery) alongside the existing `-i`. See §15.5.8.
 - **July 18, 2026 — docs: honey-port pipe-hang incident** — Confirmed in practice (not just the known theoretical gotcha) that the Honey-Port subshell's inherited stdout/stderr keeps any `| reader` on `toggle.sh` blocked long after the script itself exits. Worked around by killing the reader; source fix still open. See §15.12.24.
 - **July 10, 2026 — `fix(race): suppress WARP Watcher during post-wake force-recreate`** — Fixed a race where switching Wi-Fi caused the host IP to leak as the raw ISP IP (`132.x`) on every roam; `recover.sh --post-wake`'s warp force-recreate tripped the WARP Watcher into a nuclear shutdown. Fixed via `/tmp/nullexit-warp-inhibit.marker`. See §15.2.7.
