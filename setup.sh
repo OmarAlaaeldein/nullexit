@@ -45,6 +45,17 @@ echo "  Windows: double-click Toggle-Gateway.bat"
 echo ""
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
+    # ─── Install Taildrop auto-receive watcher ────────────────────────────────
+    echo -e "\n${BOLD}Installing Taildrop auto-receive watcher...${NC}"
+    mkdir -p "$HOME/Library/LaunchAgents"
+    NULLEXIT_HOME="$(cd "$(dirname "$0")" && pwd)"
+    TAILDROP_PLIST="$HOME/Library/LaunchAgents/com.nullexit.taildrop-watch.plist"
+    launchctl unload "$TAILDROP_PLIST" >/dev/null 2>&1 || true
+    cp "$NULLEXIT_HOME/launchd/com.nullexit.taildrop-watch.plist" "$TAILDROP_PLIST"
+    sed -i '' "s|__NULLEXIT_HOME__|$NULLEXIT_HOME|" "$TAILDROP_PLIST"
+    launchctl load -w "$TAILDROP_PLIST"
+    echo "  → Incoming Taildrop files now land in ~/Downloads automatically."
+
     # LuLu localhost filtering check
     if [ -d "/Applications/LuLu.app" ] || systemextensionsctl list 2>/dev/null | grep -q "com.objective-see.lulu"; then
         echo -e "${YELLOW}${BOLD}LuLu Firewall Detected:${NC}"

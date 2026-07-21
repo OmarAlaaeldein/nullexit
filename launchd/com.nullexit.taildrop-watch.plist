@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nullexit.taildrop-watch</string>
+
+    <!-- Same install-agnostic pattern as com.nullexit.wake-recovery /
+         com.nullexit.noise: WorkingDirectory is __NULLEXIT_HOME__ (substituted
+         with the absolute install root at install time), and the program arg
+         is scripts/taildrop-watch.sh RELATIVE to it, so BASH_SOURCE inside the
+         script still resolves correctly. -->
+    <key>WorkingDirectory</key>
+    <string>__NULLEXIT_HOME__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>scripts/taildrop-watch.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Unlike noise/wake-recovery there's no "disabled, sit idle" exit path
+         here — `tailscale file get --loop` only returns on a real failure
+         (tailscaled restarting, socket briefly gone), so always respawning is
+         correct. launchd's built-in crash throttling covers a persistent
+         failure without spinning. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/nullexit-taildrop.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/nullexit-taildrop.err.log</string>
+</dict>
+</plist>
