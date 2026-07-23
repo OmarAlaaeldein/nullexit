@@ -41,7 +41,7 @@ graph TB
         end
 
         subgraph LAUNCHD["⏰ launchd (always-on)"]
-            WATCHER["scripts/watcher.sh\n(sleep/wake + Wi-Fi roam\n+ LAN P2P auto-detection)"]
+            WATCHER["scripts/watcher.sh\n(sleep/wake + Wi-Fi roam\n+ LAN P2P auto-detection\n+ Wi-Fi auto-rejoin — always on)"]
         end
     end
 
@@ -192,7 +192,7 @@ graph LR
         end
 
         subgraph D3["🔭 WARP Watcher"]
-            WARPW["Polls every 30s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nCounts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
+            WARPW["Polls every 30s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nChecks physical uplink first:\nno routable IP → PAUSE (rejoin Wi-Fi),\nnot a kill (§15.6.2)\n\nElse counts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
         end
 
     end
@@ -305,6 +305,7 @@ flowchart LR
         E4["toggle.sh crashes /\nCtrl-C / SIGTERM"]
         E5["Host-side leak\n(non-tunnel HOST NIC egress)"]
         E6["Silent NAT timeout\n(ping stops working)"]
+        E7["Wi-Fi uplink drops\n(auto-join off → no internet)"]
     end
 
     subgraph DETECTORS["Detector"]
@@ -317,13 +318,14 @@ flowchart LR
     end
 
     subgraph ACTIONS["Response"]
-        A1["≥ threshold consecutive off\n→ recover.sh (nuclear)"]
+        A1["uplink up + ≥ threshold off\n→ recover.sh (nuclear).\nuplink DOWN → PAUSE, not kill"]
         A2["recover.sh --post-wake\n(gentle refresh)"]
         A3["Re-hijack DNS\n(networksetup setdnsservers)"]
         A4["Stop all daemons\nReset DNS → 1.1.1.1\nTear down Tailscale"]
         A5["Non-tunnel egress blocked\nfail-closed at kernel;\n--watch alerts on state change"]
         A6["Blackhole internet traffic\n+ Drop TUNNEL_FAILED_CLOSED.marker"]
         A7["Push macOS Desktop Notification\n(via watcher.sh listener)"]
+        A8["watcher.sh Listener 4 →\nwifi-rejoin.sh: re-associate a\nremembered network (grace+backoff)"]
     end
 
     E1 --> D1 --> A1
@@ -332,6 +334,7 @@ flowchart LR
     E4 --> D4 --> A4
     E5 --> D5 --> A5
     E6 --> D6 --> A6
+    E7 --> D2 --> A8
     A6 -.->|"marker detected"| D2
     D2 --> A7
 

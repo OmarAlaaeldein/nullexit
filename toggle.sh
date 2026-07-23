@@ -1177,16 +1177,26 @@ start_warp_watcher() {
   fi
   local trigger_file="/tmp/nullexit-warp-shutdown-triggered"
   rm -f "$trigger_file"
-  echo "  Starting background WARP Watcher (polling every 30s [accelerating to 5s on failure], shutdown after ${threshold} consecutive failures)..."
+  # Resolve the physical uplink interface (Wi-Fi/Ethernet) once, same convention
+  # as wait_for_dhcp_settle(). The watcher uses it to tell "no uplink at all"
+  # (e.g. Wi-Fi dropped with auto-join off) apart from a genuine WARP failure,
+  # so a transient link loss can't false-trigger the nuclear gateway teardown.
+  local phys_iface
+  phys_iface=$(networksetup -listallhardwareports 2>/dev/null | awk '/Hardware Port: (Wi-Fi|Ethernet)/{getline; print $2; exit}')
+  [ -z "$phys_iface" ] && phys_iface="en0"
+  echo "  Starting background WARP Watcher (polling every 30s [accelerating to 5s on failure], shutdown after ${threshold} consecutive failures; paused while ${phys_iface} has no uplink)..."
   nohup bash -c "
     trap 'exit 0' SIGTERM SIGINT SIGHUP
     last_state='on'
     consec_off=0
+    paused=0
     threshold='$threshold'
     trigger_file='$trigger_file'
+    phys_iface='$phys_iface'
     out_log='$PWD/output.log'
     recover_bin='$PWD/recover.sh'
     inhibit_file='/tmp/nullexit-warp-inhibit.marker'
+    wifi_helper='$PWD/scripts/wifi-rejoin.sh'
     while true; do
       # ── Inhibit check ─────────────────────────────────────────────────
       # recover.sh --post-wake writes this marker while force-recreating the
@@ -1197,6 +1207,36 @@ start_warp_watcher() {
         consec_off=0
         sleep 5
         continue
+      fi
+
+      # ── Physical-uplink check ─────────────────────────────────────────
+      # If the Mac has no physical uplink (e.g. Wi-Fi dropped and auto-join
+      # is off), the cdn-cgi/trace probe below reads warp=off only because
+      # there's no internet — NOT because the WARP tunnel failed. With no
+      # uplink there is also no egress path, so nothing can leak. Pause
+      # failure-counting until the link returns instead of nuking a gateway
+      # that heals itself once Wi-Fi reconnects. (Link up + warp=off is a
+      # genuine failure and still trips the kill-switch below, unchanged.)
+      phys_ip=\$(ipconfig getifaddr \"\$phys_iface\" 2>/dev/null)
+      case \"\$phys_ip\" in
+        ''|169.254.*)
+          if [ \"\$paused\" = 0 ]; then
+            echo \"[\$(date -u +%FT%TZ)] WARP watcher PAUSED — no physical uplink on \$phys_iface (Wi-Fi down / auto-join off?). Not counting warp=off as a failure; gateway left intact until the link returns.\" >> \"\$out_log\"
+            paused=1
+          fi
+          # Re-associate ONLY the last-known-good network (never any other),
+          # after a grace period so a DHCP-only blip can self-heal first.
+          bash \"\$wifi_helper\" rejoin >/dev/null 2>&1 || true
+          consec_off=0
+          sleep 10
+          continue
+          ;;
+      esac
+      if [ \"\$paused\" = 1 ]; then
+        echo \"[\$(date -u +%FT%TZ)] WARP watcher RESUMED — physical uplink back on \$phys_iface (\$phys_ip). Normal WARP monitoring restored.\" >> \"\$out_log\"
+        paused=0
+        # Link is back — clear the drop-timer so the next drop re-arms the grace window.
+        bash \"\$wifi_helper\" reset >/dev/null 2>&1 || true
       fi
 
       state='off'

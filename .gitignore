@@ -40,6 +40,8 @@ tor-bridges.txt
 .lan_p2p_detected
 .build_hash
 .rules_hash
+.last_wifi_ssid
+.last_wifi_ssid.tmp
 .signatures
 TUNNEL_FAILED_CLOSED.marker
 

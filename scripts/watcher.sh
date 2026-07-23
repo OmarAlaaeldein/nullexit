@@ -279,6 +279,35 @@ detect_lan_p2p_mode
   done
 ) &
 
+# ─── Listener 4: Wi-Fi uplink keepalive ────────────────────────────────────
+# Re-associates a remembered network (scripts/wifi-rejoin.sh) whenever the
+# Wi-Fi interface has no routable IP. This lives HERE, in the always-on
+# wake-recovery daemon, on purpose: the WARP watcher (toggle.sh) that used to
+# be the ONLY driver of wifi-rejoin runs solely while the gateway is UP, so a
+# Wi-Fi drop while the gateway was down/off left the Mac "just sitting there
+# without internet" — nothing rejoined. This poller is independent of gateway
+# state, so it recovers Wi-Fi either way. Leak-safe: it only acts when the
+# interface has NO address (empty or 169.254.* self-assigned) — i.e. no egress
+# path exists, so there is nothing to leak. wifi-rejoin.sh enforces its own
+# grace period, backoff, and give-up cap, and only ever joins a network you
+# explicitly remembered. When the gateway IS up, the WARP watcher may also call
+# wifi-rejoin; the two share the same /tmp markers so they coordinate rather
+# than double-associate.
+(
+  WIFI_HELPER="$SCRIPT_DIR/wifi-rejoin.sh"
+  wifi_iface=$(networksetup -listallhardwareports 2>/dev/null \
+    | awk '/Hardware Port: Wi-Fi/{getline; print $2; exit}')
+  [ -z "$wifi_iface" ] && wifi_iface=en0
+  while :; do
+    phys_ip=$(ipconfig getifaddr "$wifi_iface" 2>/dev/null || true)
+    case "${phys_ip:-}" in
+      ''|169.254.*) bash "$WIFI_HELPER" rejoin >/dev/null 2>&1 || true ;;
+      *)            bash "$WIFI_HELPER" reset  >/dev/null 2>&1 || true ;;
+    esac
+    sleep 15
+  done
+) &
+
 # ─── Lifetime ──────────────────────────────────────────────────────────────
 # `wait` blocks until both background pipelines exit (which they normally
 # never do). launchctl `bootout`/SIGTERM triggers the trap, which kills the

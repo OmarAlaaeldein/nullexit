@@ -1,6 +1,6 @@
 # nullexit: Tailscale + Cloudflare WARP Docker Gateway
 
-> **Last updated:** July 18, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
+> **Last updated:** July 23, 2026 · [Architecture & Flow Diagrams →](./diagrams.md) · [Full Dev Reference →](./devref.md)
 
 **nullexit** is a chained network gateway that routes all Tailscale exit-node traffic through a Cloudflare WARP VPN tunnel — double-encrypting every packet, hiding your ISP metadata, and providing network-wide DNS ad-blocking (AdGuard Home) and kernel-level IP threat blocking (`ipset`/`iptables`) for every device on your mesh.
 
@@ -253,6 +253,32 @@ regardless). If lid-wake responsiveness matters more than that window,
 `brew install sleepwatcher` and hook `recover.sh --post-wake` to `~/.wake`
 instead. See `devref.md §15.5.1` for the full deep dive.
 
+### Wi-Fi auto-rejoin (macOS)
+If this Mac drops Wi-Fi and macOS **auto-join is off**, it will otherwise just sit
+there with no internet (and, if the gateway is up, the WARP Watcher would
+eventually mistake the dead uplink for a dead tunnel — see `devref.md §15.6.2`).
+The same always-on `watcher.sh` daemon now also re-associates your Wi-Fi for you.
+
+It never scans for or hops onto arbitrary networks — macOS hides the live SSID
+from every script unless you grant Location (which this project deliberately does
+not use; see `devref.md §15.11.10`), so instead you **remember** your network
+name(s) once and it only ever rejoins one of those:
+```bash
+bash scripts/wifi-rejoin.sh set  "Your-Wi-Fi-Name"   # remember a network
+bash scripts/wifi-rejoin.sh list               # show remembered networks
+bash scripts/wifi-rejoin.sh forget "Your-Wi-Fi-Name"  # stop remembering it
+```
+The remembered list lives in `.last_wifi_ssid` (one per line, gitignored). When
+the Wi-Fi interface has no routable IP, `watcher.sh` calls
+`scripts/wifi-rejoin.sh rejoin`, which waits a short grace period (let DHCP
+self-heal first), then re-associates a remembered network via
+`networksetup -setairportnetwork` — pulling the password from your Keychain — with
+progressive backoff and a give-up cap so it never churns a network that won't come
+up. It is leak-safe: it only acts when the interface has **no** address, i.e. no
+egress path exists. Because the driver is the always-on daemon (not the gateway's
+WARP Watcher), it reconnects you whether the gateway is up, down, or off. See
+`devref.md §15.5.9`.
+
 ### Config profiles — taming the flag sprawl
 The opt-in features below add up to several interacting `.env` switches. Rather than
 hand-tune them, `scripts/profiles.sh` bundles the intent-level flags into three
@@ -366,7 +392,7 @@ See `devref.md §9` for the full threat model, Snowden programme analysis, and t
 
 ## 9. Debugging
 
-- **`output.log`** — All stderr from `toggle.sh`, `recover.sh`, `setup.sh`, and the rule-compiler is written here. The WARP Watcher (`WARP_FAIL_THRESHOLD`) also writes its events here — `WARP DOWN`, `WARP RECOVERED`, and `WARP SHUTDOWN` notices. Check this first.
+- **`output.log`** — All stderr from `toggle.sh`, `recover.sh`, `setup.sh`, and the rule-compiler is written here. The WARP Watcher (`WARP_FAIL_THRESHOLD`) also writes its events here — `WARP DOWN`, `WARP RECOVERED`, and `WARP SHUTDOWN` notices, plus `WARP watcher PAUSED/RESUMED` when it detects the physical uplink is down (§15.6.2). The Wi-Fi auto-rejoin helper logs `wifi-rejoin:` lines (re-associate attempts, backoff, give-up). All timestamps are **UTC** (unified 2026-07-23 — the log used to mix UTC and local time). Check this first.
   - Every run now records lifecycle breadcrumbs regardless of `DEBUG_TRACE`: an `EXEC:` / `EXIT <code>:` line brackets each heavyweight command (`colima start`, `docker compose up -d --build`, `docker compose down`), and an `EXIT: code=<N> phase=<init|stop|start>` line is written when the script exits **for any reason** — including a killed terminal, `pkill`, or OOM. This closes a prior blind spot where an interrupted **START** (e.g. a `--restart` race while Wi-Fi was re-associating) left the log ending abruptly after the teardown with no indication of what failed. If a toggle "does nothing" or the gateway ends up half-up, `grep -E 'EXEC:|EXIT ' output.log | tail` shows the last command run and its result.
 - **`DEBUG_TRACE=true`** (in `.env`) — Full command-by-command execution trace of `toggle.sh`, mirrored to `output.log` for deep post-mortems of intermittent failures. Each traced line is timestamped and tagged with `file:line:function` (via a custom `PS4`), so you can follow the *exact* code path a run took — including subshells, Docker/Colima calls, and where it aborted. Off by default because it is verbose (the log grows quickly); enable it only while reproducing a specific problem, then set it back to `false`. Implementation note: it prefers bash's `BASH_XTRACEFD` (bash ≥ 4.1, e.g. most Linux) to send the trace to the log while keeping your terminal clean; on macOS's stock `/bin/bash` 3.2 it transparently falls back to teeing stderr to the log (trace also appears in the terminal). It never uses the dynamic-fd (`exec {var}>>`) form, so it is safe on 3.2. To read a trace: `grep -nE '^\+ ' output.log`.
 - **`bash scripts/diagnose-host-leak.sh`** — One-shot host-routing diagnostic. Runs 8 checks and classifies your state into one of four known scenarios (System Extension conflict, SOCKS5 fallback, IPv6 leak, route-table freeze) or OK, and prints the exact fix command. Check 5 uses `route -n get 1.1.1.1` to ask the kernel which interface real traffic actually resolves through (more accurate than `netstat -rn | grep default` on macOS). Pass `--fix` to apply the remediation automatically. Pass `--watch` (or `--watch 30`) to run a full baseline diagnostic then continuously monitor warp/IPv6/default-route for leaks, alerting on any state change.
@@ -395,6 +421,7 @@ GNU Affero General Public License v3. See [LICENSE](./LICENSE).
 
 ## 13. Changelog
 
+- **July 23, 2026** — Wi-Fi resilience + logging cleanup. (1) **Wi-Fi auto-rejoin**: if the Mac drops Wi-Fi with auto-join off it no longer just sits there — the always-on `watcher.sh` daemon re-associates a *remembered* network (`scripts/wifi-rejoin.sh`; no Location, no SSID scanning) with a grace period, backoff, and give-up cap. Driven by the always-on daemon, not the gateway's WARP Watcher, so it works whether the gateway is up, down, or off. See `README §6` and `devref.md §15.5.9`. (2) **WARP Watcher no longer false-kills the gateway on a Wi-Fi drop**: it now checks the physical uplink before counting a `warp=off` as a tunnel failure and PAUSEs (leak-safe: no routable IP = no egress) instead of nuking the gateway — root cause of the 2026-07-22 outage. See `devref.md §15.6.2`. (3) **Logging unified to UTC** — `output.log`, `blocked.log`, and the AdGuard query log previously mixed UTC and local (EDT); everything is now UTC. See `devref.md §15.12.26`.
 - **July 18, 2026** — Fixed two real bugs surfaced by live sweep evidence: the QUIC/DoT `REJECT` rules in `post-rules.txt` were shadowed by an earlier blanket `ACCEPT` (0 packets ever matched — the intended Instagram/QUIC-fragmentation fix from `devref.md §15.3.3` was never actually enforced), now reordered ahead of it; and the host-side `pf.conf` MSS clamp was stuck at the pre-`§15.3.2` value of `1160` while the container had already moved to `1120` — `scripts/common.sh` now syncs both from `GATEWAY_MSS` so they can't drift apart again. Also fixed `setup.sh`/`scripts/setup-common.sh` never generating `NULLEXIT_SEED` (every fresh install hard-failed its first `toggle.sh` on a missing-seed crypto error) and defaulting `KILL_SWITCH` to `false` for new installs — see `devref.md §15.12.23`. `scripts/sweep.sh` gained a 7th check (**throughput**, host path vs. a WARP-only baseline against a fast CDN) — see `devref.md §15.3.6` for why the target choice matters and `§9` below for the check itself. Check 6 (tailnet reachability) was upgraded from a single ping to a **burst** (loss % + RTT jitter per peer) — a peer can be 100% reachable and still have real quality problems a single ping hides; caught live on an S24 over DERP (0% loss, 665ms jitter). Confirmed that jitter isn't gateway-fixable (mobile-radio power state + DERP's TCP-relay timing, verified via a Wi-Fi-vs-cellular comparison) and that forcing P2P through confirmed AP isolation isn't possible either (Layer 2 block, below anything Tailscale operates at) — see `devref.md §16.4`.
 - **July 17, 2026** — `scripts/sweep.sh` (the read-only automated health sweep added July 15, mirroring `sweep.md §1`) gained a 6th check: **tailnet reachability** — every Tailscale peer reported online is probed with `tailscale ping` (TSMP, so it works even on phones that drop ICMP) and rolled into the PASS/WARN/FAIL verdict. Documented in §9 above.
 - **July 12, 2026** — Tor ControlPort dynamic password authentication (unified with `ADGUARD_PASSWORD`), enabling live circuit inspection via `/sweep`. See `devref.md §15.10.2`.

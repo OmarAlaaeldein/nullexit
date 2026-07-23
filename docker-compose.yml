@@ -15,7 +15,7 @@ services:
       - "127.0.0.1:${TOR_SOCKS_PORT:-9050}:9050/tcp"  # Tor SOCKS5 proxy (procedurally generated)
       - "127.0.0.1:${TOR_CONTROL_PORT:-9051}:9051/tcp"  # Tor Control port (procedurally generated)
     environment:
-      - TZ=America/New_York
+      - TZ=UTC
       - VPN_SERVICE_PROVIDER=custom
       - VPN_TYPE=wireguard
       - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
@@ -80,7 +80,7 @@ services:
       - net.ipv4.ip_forward=1
       - net.ipv6.conf.all.forwarding=1
     environment:
-      - TZ=America/New_York
+      - TZ=UTC
       - TS_EXTRA_ARGS=--advertise-exit-node
       - PORT=41642
       - TS_USERSPACE=false
@@ -126,7 +126,7 @@ services:
       # toggle.sh before `up` (§15.8.8). This service boots on the existing
       # compiled_rules.txt / ip_blocklist.ipset already present in ./adguard/work.
     environment:
-      - TZ=America/New_York
+      - TZ=UTC
       - WARP_ENDPOINT=${WARP_ENDPOINT_1:-162.159.192.1}
       - BLOCKED_COUNTRIES=${BLOCKED_COUNTRIES}
       - TAILSCALE_ALLOW_LAN_P2P=${TAILSCALE_ALLOW_LAN_P2P:-false}
@@ -161,7 +161,7 @@ services:
       # toggle.sh before `up` (§15.8.8). This service boots on the existing
       # compiled_rules.txt / ip_blocklist.ipset already present in ./adguard/work.
     environment:
-      - TZ=America/New_York
+      - TZ=UTC
     healthcheck:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 5335 || exit 1"]
       interval: 2s
@@ -205,7 +205,7 @@ services:
       warp:
         condition: service_healthy
     environment:
-      - TZ=America/New_York
+      - TZ=UTC
       - TOR_USE_BRIDGES=${TOR_USE_BRIDGES:-false}
       - TOR_BRIDGE_LINES_FILE=${TOR_BRIDGE_LINES_FILE:-./tor-bridges.txt}
       - TOR_PASSWORD=${ADGUARD_PASSWORD:-nullexit}

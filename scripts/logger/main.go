@@ -19,7 +19,11 @@ const (
 )
 
 func logMessage(msg string) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	// Always log in UTC with an explicit marker. The routing-fix image is
+	// Alpine (no tzdata), so time.Now() already fell back to UTC — but pin it
+	// so the format can't silently flip to local time if tzdata is ever added.
+	// AdGuard's querylog.json is now UTC too (TZ=UTC in docker-compose.yml).
+	timestamp := time.Now().UTC().Format("2006-01-02 15:04:05") + " UTC"
 	formattedMsg := fmt.Sprintf("%s %s\n", timestamp, msg)
 	fmt.Print(formattedMsg)
 

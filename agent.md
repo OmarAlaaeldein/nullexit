@@ -349,9 +349,9 @@ the macOS dual-mode body. All formatting/timeout helpers come from `common.sh`.
 
 **Output:** coloured stdout summary + a timestamped plain-text report `sweep-<TIMESTAMP>.txt` in the repo root (one file per run, so runs can be diffed); `--quiet` prints only the verdict. Signed in `.signatures` — re-run `bash scripts/crypto.sh --sign` after editing it.
 
-### scripts/watcher.sh (269 lines, 13KB)
+### scripts/watcher.sh (320 lines, 15KB)
 
-**Purpose:** Long-running launchd daemon for post-wake/post-roam recovery.
+**Purpose:** Long-running launchd daemon (`com.nullexit.wake-recovery`) for post-wake/post-roam recovery. Runs independently of the gateway. Four backgrounded listeners: (1) WAKE via `log stream`, (2) NETWORK via `scutil n.watch`, (3) `TUNNEL_FAILED_CLOSED.marker` poll, (4) **Wi-Fi uplink keepalive** (added 2026-07-23).
 
 **Key function — `detect_lan_p2p_mode()`:**
 Added July 10, 2026. Called on startup and on every network state change (Listener 2 NET: events). Determines whether the current Wi-Fi network safely allows direct Tailscale LAN P2P connections:
@@ -360,9 +360,16 @@ Added July 10, 2026. Called on startup and on every network state change (Listen
 3. **Output:** Writes `'true'` or `'false'` to `.lan_p2p_detected` in the repo root.
 4. **Consumer:** `routing-fix.sh` reads this file every 30 seconds and enforces/relaxes the RFC1918 DROP rule accordingly — no restart required.
 
+**Listener 4 — Wi-Fi uplink keepalive (added 2026-07-23, devref §15.5.9):**
+Polls the Wi-Fi interface every 15s. When it has no routable IP (empty or `169.254.*`) → `bash scripts/wifi-rejoin.sh rejoin`; when it has one → `... reset`. This is the always-on driver for Wi-Fi auto-rejoin — the WARP Watcher (`toggle.sh`) that used to be the only driver runs solely while the gateway is up, so a Wi-Fi drop with the gateway down/off left the Mac stranded. Leak-safe: only acts when there is no routable address (no egress path).
+
 **Duplicated logic:**
 - PATH export (similar to toggle.sh/recover.sh)
 - Marker file pattern (`/tmp/nullexit-gateway-active.marker`)
+
+### scripts/wifi-rejoin.sh (130 lines) — unsigned helper
+
+**Purpose:** Re-associates ONLY user-remembered Wi-Fi networks (never arbitrary APs). Subcommands: `set`/`forget`/`list` manage `.last_wifi_ssid` (gitignored, one SSID per line); `rejoin`/`reset` are internal, called by `watcher.sh` Listener 4 (and the WARP Watcher while the gateway is up). `rejoin` enforces a 15s grace, progressive backoff (30→…→cap 300s), and a give-up cap (`MAX_TRIES=6`) via `/tmp/nullexit-wifi-*` markers, and joins by name via `sudo -n networksetup -setairportnetwork` (Keychain password). No Location, no live-SSID read (devref §15.11.10). NOT in the crypto `.signatures` list.
 
 ### scripts/dns-proxy.py (92 lines, 2.9KB) — ✅ Clean, standalone
 
