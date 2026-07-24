@@ -1209,31 +1209,54 @@ start_warp_watcher() {
         continue
       fi
 
-      # ── Physical-uplink check ─────────────────────────────────────────
-      # If the Mac has no physical uplink (e.g. Wi-Fi dropped and auto-join
-      # is off), the cdn-cgi/trace probe below reads warp=off only because
-      # there's no internet — NOT because the WARP tunnel failed. With no
-      # uplink there is also no egress path, so nothing can leak. Pause
-      # failure-counting until the link returns instead of nuking a gateway
-      # that heals itself once Wi-Fi reconnects. (Link up + warp=off is a
-      # genuine failure and still trips the kill-switch below, unchanged.)
+      # ── Physical-uplink + link-state check ────────────────────────────
+      # If the Mac has no *working* uplink (Wi-Fi dropped, or an 802.1x
+      # de-auth/roam left en0 holding a stale DHCP lease it can no longer
+      # route through), the cdn-cgi/trace probe below reads warp=off only
+      # because there's no internet — NOT because the WARP tunnel failed.
+      # The PF kill-switch means there's no egress path to leak through
+      # either, so PAUSE failure-counting until the link returns instead of
+      # nuking a gateway that heals itself once Wi-Fi reconnects. (A working
+      # link + warp=off is a genuine failure and still trips the shutdown
+      # below, unchanged.)
+      #
+      # 'Has an IP' is NOT 'has egress': on an enterprise-Wi-Fi de-auth macOS
+      # keeps the stale lease on en0 for a while — so a bare getifaddr check
+      # passed while the link was already dead and the gateway got nuked
+      # anyway (recurred 2026-07-23; see devref §15.6.2 pt 5 / §15.12.27).
+      # After confirming a routable IP we therefore also read the driver's
+      # link-layer association state (\`ifconfig ... status:\`). We deliberately
+      # do NOT ping the router: on this AP-isolated, kill-switched network the
+      # gateway drops ICMP even when the tunnel is perfectly healthy, so a
+      # ping probe would false-PAUSE a live gateway. 'status: active' =
+      # associated; 'inactive' = link down under a stale lease. Fail OPEN
+      # (trust the lease) for any other/absent status so an unexpected driver
+      # string can't strand the watcher.
       phys_ip=\$(ipconfig getifaddr \"\$phys_iface\" 2>/dev/null)
+      uplink_dead=0
       case \"\$phys_ip\" in
         ''|169.254.*)
-          if [ \"\$paused\" = 0 ]; then
-            echo \"[\$(date -u +%FT%TZ)] WARP watcher PAUSED — no physical uplink on \$phys_iface (Wi-Fi down / auto-join off?). Not counting warp=off as a failure; gateway left intact until the link returns.\" >> \"\$out_log\"
-            paused=1
-          fi
-          # Re-associate ONLY the last-known-good network (never any other),
-          # after a grace period so a DHCP-only blip can self-heal first.
-          bash \"\$wifi_helper\" rejoin >/dev/null 2>&1 || true
-          consec_off=0
-          sleep 10
-          continue
-          ;;
+          uplink_dead=1 ;;                        # no routable IP at all
+        *)
+          link_status=\$(ifconfig \"\$phys_iface\" 2>/dev/null | awk '/status:/{print \$2; exit}')
+          case \"\$link_status\" in
+            inactive|none) uplink_dead=1 ;;        # stale lease over a dead link
+          esac ;;
       esac
+      if [ \"\$uplink_dead\" = 1 ]; then
+        if [ \"\$paused\" = 0 ]; then
+          echo \"[\$(date -u +%FT%TZ)] WARP watcher PAUSED — no working uplink on \$phys_iface (link down / not associated, or stale lease). Not counting warp=off as a failure; gateway left intact until the link returns.\" >> \"\$out_log\"
+          paused=1
+        fi
+        # Re-associate ONLY the last-known-good network (never any other),
+        # after a grace period so a DHCP-only blip can self-heal first.
+        bash \"\$wifi_helper\" rejoin >/dev/null 2>&1 || true
+        consec_off=0
+        sleep 10
+        continue
+      fi
       if [ \"\$paused\" = 1 ]; then
-        echo \"[\$(date -u +%FT%TZ)] WARP watcher RESUMED — physical uplink back on \$phys_iface (\$phys_ip). Normal WARP monitoring restored.\" >> \"\$out_log\"
+        echo \"[\$(date -u +%FT%TZ)] WARP watcher RESUMED — working uplink back on \$phys_iface (\$phys_ip). Normal WARP monitoring restored.\" >> \"\$out_log\"
         paused=0
         # Link is back — clear the drop-timer so the next drop re-arms the grace window.
         bash \"\$wifi_helper\" reset >/dev/null 2>&1 || true

@@ -144,7 +144,7 @@ Whenever modifications are made to the gateway scripts, routing, or containers, 
 | honey-port `nc -l localhost $PORT` (disowned) | L1695 | `pkill -f "nc -l localhost"` | port-scan tripwire |
 | `caffeinate` | L2130 | `/tmp/nullexit-caffeinate.pid` | prevent system sleep |
 | DNS watcher loop | L2134 | `/tmp/nullexit-dns-watcher.pid` | re-hijack DNS every 30s (Wi-Fi roam) |
-| WARP watcher loop | L2138 | `/tmp/nullexit-warp-watcher.pid` | monitor warp; fire recover.sh after N fails |
+| WARP watcher loop | L2138 | `/tmp/nullexit-warp-watcher.pid` | monitor warp; PAUSE if uplink down / link `inactive` (§15.6.2 / §15.12.27), else fire recover.sh after N fails |
 | local DNS proxy `dns-proxy.py` | L2089 | (killed by `stop_local_dns_proxy`) | UDP:53 → gateway DNS fallback |
 
 Separately, the **launchd `scripts/watcher.sh`** daemon (post-wake / post-roam recovery) runs independently of toggle and invokes `recover.sh --post-wake`; toggle does **not** spawn it.

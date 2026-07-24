@@ -192,7 +192,7 @@ graph LR
         end
 
         subgraph D3["🔭 WARP Watcher"]
-            WARPW["Polls every 30s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nChecks physical uplink first:\nno routable IP → PAUSE (rejoin Wi-Fi),\nnot a kill (§15.6.2)\n\nElse counts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
+            WARPW["Polls every 30s via:\ndocker compose exec warp wget cdn-cgi/trace\nPID: /tmp/nullexit-warp-watcher.pid\n\nChecks uplink first (link-state):\nno IP, or link 'inactive' (stale lease)\n→ PAUSE (rejoin Wi-Fi), not a kill\n(§15.6.2 / §15.12.27)\n\nElse counts consecutive warp=off\n≥ WARP_FAIL_THRESHOLD (default 6=30s)\n→ runs recover.sh (nuclear)\n→ output.log"]
         end
 
     end
